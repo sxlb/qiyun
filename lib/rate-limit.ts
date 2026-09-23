@@ -27,8 +27,8 @@ export function isRateLimited(key: string, max = DEFAULT_MAX, windowMs = DEFAULT
         cleaned = true;
       }
     }
-    // 清理后仍满：标记为限流状态，拒绝新 key 写入（被动防御）
-    if (cleaned && buckets.size >= MAX_BUCKETS) {
+    // 无论能否清理出空间，只要 Map 已占满就拒绝新 key 写入（被动防御）
+    if (buckets.size >= MAX_BUCKETS) {
       return true;
     }
   }
