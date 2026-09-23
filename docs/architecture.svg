@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 500" width="960" height="500" role="img" aria-label="栖云系统分层架构图">
+  <title>栖云 · 请求生命周期与系统分层</title>
+
+  <!-- 画布 -->
+  <rect width="960" height="500" rx="16" fill="#f8fafc" stroke="#e2e8f0"/>
+
+  <!-- 标题 -->
+  <text x="48" y="50" font-family="system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif" font-size="19" font-weight="700" fill="#0f172a">请求生命周期与系统分层</text>
+  <text x="48" y="74" font-family="system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif" font-size="13" fill="#64748b">从浏览器请求到数据落库，四层各司其职</text>
+
+  <!-- ① 客户端 -->
+  <rect x="48" y="98" width="864" height="68" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <circle cx="92" cy="132" r="15" fill="#2563eb" opacity="0.12"/>
+  <text x="92" y="137" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif" font-size="14" font-weight="700" fill="#2563eb">1</text>
+  <text x="124" y="137" font-family="system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif" font-size="15" font-weight="600" fill="#0f172a">客户端</text>
+  <line x1="280" y1="112" x2="280" y2="152" stroke="#e2e8f0"/>
+  <text x="304" y="137" font-family="system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif" font-size="13" fill="#475569">Next.js SSR / ISR · NextAuth JWT · 访问统计</text>
+
+  <!-- 箭头 1→2 -->
+  <line x1="480" y1="170" x2="480" y2="190" stroke="#94a3b8" stroke-width="2"/>
+  <path d="M476 188 L480 196 L484 188 Z" fill="#94a3b8"/>
+
+  <!-- ② 请求守卫 -->
+  <rect x="48" y="200" width="864" height="68" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <circle cx="92" cy="234" r="15" fill="#7c3aed" opacity="0.12"/>
+  <text x="92" y="239" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif" font-size="14" font-weight="700" fill="#7c3aed">2</text>
+  <text x="124" y="239" font-family="system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif" font-size="15" font-weight="600" fill="#0f172a">请求守卫</text>
+  <line x1="280" y1="214" x2="280" y2="254" stroke="#e2e8f0"/>
+  <text x="304" y="239" font-family="system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif" font-size="13" fill="#475569">身份认证 · Zod 参数校验 · 频率限流 · SSRF 白名单</text>
+
+  <!-- 箭头 2→3 -->
+  <line x1="480" y1="272" x2="480" y2="292" stroke="#94a3b8" stroke-width="2"/>
+  <path d="M476 290 L480 298 L484 290 Z" fill="#94a3b8"/>
+
+  <!-- ③ 业务与数据 -->
+  <rect x="48" y="302" width="864" height="68" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <circle cx="92" cy="336" r="15" fill="#059669" opacity="0.12"/>
+  <text x="92" y="341" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif" font-size="14" font-weight="700" fill="#059669">3</text>
+  <text x="124" y="341" font-family="system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif" font-size="15" font-weight="600" fill="#0f172a">业务与数据</text>
+  <line x1="280" y1="316" x2="280" y2="356" stroke="#e2e8f0"/>
+  <text x="304" y="341" font-family="system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif" font-size="13" fill="#475569">API Route Handlers · Prisma ORM · SQLite 单文件</text>
+
+  <!-- 箭头 3→4 -->
+  <line x1="480" y1="374" x2="480" y2="394" stroke="#94a3b8" stroke-width="2"/>
+  <path d="M476 392 L480 400 L484 392 Z" fill="#94a3b8"/>
+
+  <!-- ④ 外部服务 -->
+  <rect x="48" y="404" width="864" height="68" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <circle cx="92" cy="438" r="15" fill="#d97706" opacity="0.12"/>
+  <text x="92" y="443" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif" font-size="14" font-weight="700" fill="#d97706">4</text>
+  <text x="124" y="443" font-family="system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif" font-size="15" font-weight="600" fill="#0f172a">外部服务</text>
+  <line x1="280" y1="418" x2="280" y2="458" stroke="#e2e8f0"/>
+  <text x="304" y="443" font-family="system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif" font-size="13" fill="#475569">必应壁纸 · 音乐接口 · 高德 / 腾讯天气</text>
+</svg>
