@@ -20,11 +20,9 @@ export function isRateLimited(key: string, max = DEFAULT_MAX, windowMs = DEFAULT
 
   // 桶过多时先清理过期条目，避免无界增长
   if (buckets.size >= MAX_BUCKETS) {
-    let cleaned = false;
     for (const [k, b] of buckets) {
       if (now - b.windowStart >= DEFAULT_WINDOW_MS) {
         buckets.delete(k);
-        cleaned = true;
       }
     }
     // 无论能否清理出空间，只要 Map 已占满就拒绝新 key 写入（被动防御）

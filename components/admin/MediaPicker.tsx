@@ -2,7 +2,7 @@
 
 /**
  * 统一媒体选择器（后台用）
- * - 支持 iconfont 图标库选择
+ * - 支持 FontAwesome 图标库选择（fa6-solid / fa6-brands，通过 Iconify 获取）
  * - 支持 lucide 图标库选择
  * - 支持手动输入网络图片 URL / 本地图片路径
  * - 支持 Iconify 在线图标（prefix:name）
@@ -10,10 +10,10 @@
  * - 支持关键词随机图（loremflickr，无需 API Key）
  * - 支持 Openverse API 搜索（Creative Commons 开放版权图片）
  * - 值格式：
- *   - iconfont 图标：纯名称（如 "github"）
+ *   - FontAwesome 图标："fa6-solid:图标名" | "fa6-brands:图标名"
  *   - lucide 图标："lucide:图标名"（如 "lucide:github"）
  *   - 网络图片：http(s)://... URL；本地图片：/images/xxx.png、/api/uploads/...
- *   - Iconify 图标："prefix:name"（如 "fa:github"、"mdi:home"）
+ *   - Iconify 图标："prefix:name"（如 "mdi:home"）
  *   - 内联 SVG：以 "<svg" 开头的整段代码（阿里 iconfont 直接复制）
  *   - 随机图："random:关键词"（如 "random:nature"；旧写法 "unsplash:关键词" 仍兼容识别）
  *
@@ -27,8 +27,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Image as ImageIcon, Link, Sparkles, Search, Loader2, Code2, Cloud } from "lucide-react";
-import IconfontPicker from "./IconfontPicker";
 import LucideIconPicker, { LUCIDE_PREFIX, extractLucideIconName } from "./LucideIconPicker";
+import FaIconPicker from "./FaIconPicker";
 import { resolveLucideIcon, getLucideIconByName } from "@/components/lucideIconResolver";
 import { useIconfontSymbols } from "@/components/Iconfont";
 import IconifyIcon from "@/components/IconifyIcon";
@@ -75,6 +75,11 @@ function MediaPreview({ value, className = "h-10 w-10" }: { value: string; class
   const iconfontSymbols = useIconfontSymbols();
 
   if (!value) return null;
+
+  // FontAwesome 图标（fa6-solid:xxx / fa6-brands:xxx）— 使用 Iconify 渲染
+  if (/^fa6-(solid|brands):/.test(value)) {
+    return <IconifyIcon icon={value} size={28} className={`${className} text-muted-foreground`} />;
+  }
 
   // 内联 SVG 代码（阿里 iconfont 直接复制的一整段 <svg>…</svg>）
   if (isInlineSvgValue(value)) {
@@ -152,7 +157,7 @@ const ICONIFY_SAMPLES = ["fa:github", "mdi:home", "tabler:brand-bilibili", "simp
 
 /** Tab 切换时需要值格式的映射表（空串表示当前 value 不匹配该 tab，需清空或跳过） */
 const TAB_VALID_VALUE_CHECKS: Record<string, (v: string) => boolean> = {
-  iconfont: (v) => !v.startsWith(LUCIDE_PREFIX) && !/^https?:\/\//i.test(v) && !isRandomImageValue(v) && !isInlineSvgValue(v) && !isIconifyValue(v),
+  "fa-icons": (v) => /^fa6-(solid|brands):/.test(v),
   lucide: (v) => v.startsWith(LUCIDE_PREFIX),
   iconify: isIconifyValue,
   svg: isInlineSvgValue,
@@ -169,14 +174,16 @@ export default function MediaPicker({
   id,
   iconOnly = false,
 }: Props) {
-  type PickerTab = "url" | "iconfont" | "lucide" | "iconify" | "svg" | "random" | "openverse";
+  type PickerTab = "url" | "lucide" | "fa-icons" | "iconify" | "svg" | "random" | "openverse";
   const [tab, setTab] = useState<PickerTab>(() => {
     if (isInlineSvgValue(value)) return "svg";
     if (isIconifyValue(value)) return "iconify";
     if (isRandomImageValue(value)) return iconOnly ? "url" : "random";
     if (/^https?:\/\//i.test(value) || isLocalImagePath(value)) return "url";
     if (value.startsWith(LUCIDE_PREFIX)) return "lucide";
-    return "iconfont";
+    // fa6-solid:xxx / fa6-brands:xxx
+    if (/^fa6-(solid|brands):/.test(value)) return "fa-icons";
+    return "lucide"; // 默认 Lucide（零依赖，最快加载）
   });
   const [randomKeyword, setRandomKeyword] = useState(() => extractRandomKeyword(value));
 
@@ -293,12 +300,26 @@ export default function MediaPicker({
             id={id}
             value={value}
             onChange={(e) => {
-              onChange(e.target.value);
-              if (isRandomImageValue(e.target.value)) {
-                setRandomKeyword(extractRandomKeyword(e.target.value));
+              const v = e.target.value;
+              onChange(v);
+              // 随机图关键词需同步到内部 state（供「随机图」Tab 输入框回显）
+              if (isRandomImageValue(v)) {
+                setRandomKeyword(extractRandomKeyword(v));
               }
+              // 自动切换 Tab：检测到 fa6-solid: / fa6-brands: 前缀 → 切到 FontAwesome
+              if (/^fa6-(solid|brands):/.test(v)) setTab("fa-icons");
+              // 检测到 lucide: 前缀 → 切到 Lucide
+              else if (v.startsWith(LUCIDE_PREFIX)) setTab("lucide");
+              // 检测到 Iconify 格式 prefix:name → 切到 Iconify
+              else if (isIconifyValue(v)) setTab("iconify");
+              // 检测到 random: → 切到随机图
+              else if (isRandomImageValue(v)) setTab("random");
+              // URL → 切到 URL/路径
+              else if (/^https?:\/\//i.test(v) || isLocalImagePath(v)) setTab("url");
             }}
             placeholder={placeholder}
+            spellCheck={false}
+            autoComplete="off"
             className="h-10 sm:h-9 min-w-0 flex-1"
           />
         </div>
@@ -306,35 +327,35 @@ export default function MediaPicker({
 
       {/* Tab 选择器：移动端固定成三列，≥sm 四列（末项不会被拉伸成整行） */}
       <div className="flex flex-wrap gap-1.5 rounded-lg border bg-muted/30 p-1 sm:gap-1">
-        {(["url", "iconfont", "lucide", "iconify", "svg", ...(iconOnly ? [] : ["random", "openverse"])] as PickerTab[]).map((t) => (
+        {(["url", "lucide", "fa-icons", "iconify", "svg", ...(iconOnly ? [] : ["random", "openverse"])] as PickerTab[]).map((t) => (
           <button
             key={t}
             type="button"
             onClick={() => handleTabChange(t)}
-            className={`flex basis-[calc((100%-0.75rem)/3)] items-center justify-center gap-1 whitespace-nowrap rounded-md px-1.5 py-2 text-xs transition-colors sm:basis-[calc((100%-1.125rem)/4)] sm:py-1 ${
+            className={`flex basis-[calc((100%-0.75rem)/4)] items-center justify-center gap-1 whitespace-nowrap rounded-md px-1.5 py-2 text-xs transition-colors sm:basis-[calc((100%-1.125rem)/5)] sm:py-1 ${
               tab === t ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
             }`}
           >
             {t === "url" && <Link className="h-3 w-3 shrink-0" />}
-            {t === "iconfont" && <Sparkles className="h-3 w-3 shrink-0" />}
             {t === "lucide" && <ImageIcon className="h-3 w-3 shrink-0" />}
+            {t === "fa-icons" && <Sparkles className="h-3 w-3 shrink-0" />}
             {t === "iconify" && <Cloud className="h-3 w-3 shrink-0" />}
             {t === "svg" && <Code2 className="h-3 w-3 shrink-0" />}
             {t === "random" && <Sparkles className="h-3 w-3 shrink-0" />}
             {t === "openverse" && <Search className="h-3 w-3 shrink-0" />}
             {t === "url"
               ? "URL/路径"
-              : t === "iconfont"
-                ? "图标库"
-                : t === "lucide"
-                  ? "Lucide"
+              : t === "lucide"
+                ? "Lucide"
+                : t === "fa-icons"
+                  ? "FontAwesome"
                   : t === "iconify"
                     ? "Iconify"
                     : t === "svg"
                       ? "SVG代码"
                       : t === "random"
                         ? "随机图"
-                        : "Openverse"}
+                        : "搜索图"}
           </button>
         ))}
       </div>
@@ -346,23 +367,6 @@ export default function MediaPicker({
             在上方输入框粘贴图片地址：支持 http(s) 网络图片，也支持本地/媒体路径（/images/xxx.png、上传后得到的 /api/uploads/...）。
           </p>
         )}
-        {tab === "iconfont" && (
-          <IconfontPicker
-            value={
-              value.startsWith(LUCIDE_PREFIX) ||
-              /^https?:\/\//i.test(value) ||
-              isRandomImageValue(value) ||
-              isInlineSvgValue(value) ||
-              isIconifyValue(value)
-                ? ""
-                : value
-            }
-            onChange={(name) => {
-              onChange(name);
-              setTab("iconfont");
-            }}
-          />
-        )}
         {tab === "lucide" && (
           <LucideIconPicker
             value={value.startsWith(LUCIDE_PREFIX) ? value : ""}
@@ -372,12 +376,21 @@ export default function MediaPicker({
             }}
           />
         )}
+        {tab === "fa-icons" && (
+          <FaIconPicker
+            value={value.startsWith("fa6-") ? value : ""}
+            onChange={(v: string) => {
+              onChange(v);
+              setTab("fa-icons");
+            }}
+          />
+        )}
         {tab === "iconify" && (
           <div className="space-y-2">
             <Input
               value={isIconifyValue(value) ? value : ""}
               onChange={(e) => onChange(e.target.value.trim())}
-              placeholder="输入 prefix:name，如 fa:github、mdi:home"
+              placeholder="输入 prefix:name，如 mdi:home、simple-icons:bilibili"
               spellCheck={false}
               className="h-10 sm:h-8 font-mono text-xs"
             />

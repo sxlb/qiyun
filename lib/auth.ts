@@ -333,15 +333,19 @@ export async function isSessionRevoked(
 
 /**
  * 登录成功后触发版本缓存按需刷新（fire-and-forget）。
- * 懒加载避免 auth 与 version 模块在启动期强耦合；任何异常都不影响登录流程。
+ * - 懒加载避免 auth 与 version 模块在启动期强耦合
+ * - 不 await、不阻塞登录响应：任何异常都只影响后台「检测更新」提示，不影响登录流程
+ * - 同步 await 会让每次登录多等一次出网请求（实测 2~5s），故刻意保持 fire-and-forget
  */
-async function refreshLoginVersionCache(): Promise<void> {
-  try {
-    const { refreshVersionCacheOnLogin } = await import("@/lib/version");
-    await refreshVersionCacheOnLogin();
-  } catch {
-    // 刷新失败（出网/写盘异常）仅影响"检测更新"提示，不影响登录
-  }
+function refreshLoginVersionCache(): void {
+  void (async () => {
+    try {
+      const { refreshVersionCacheOnLogin } = await import("@/lib/version");
+      await refreshVersionCacheOnLogin();
+    } catch {
+      // 刷新失败（出网/写盘异常）仅影响"检测更新"提示，不影响登录
+    }
+  })();
 }
 
 // ===== 两步验证 TOTP（合并自 totp.ts） =====

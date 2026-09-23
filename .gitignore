@@ -5,6 +5,9 @@ node_modules/
 .next/
 out/
 
+# TypeScript 增量编译信息（tsc --noEmit / next build 生成）
+*.tsbuildinfo
+
 # production
 /build
 

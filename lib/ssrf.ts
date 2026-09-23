@@ -96,17 +96,30 @@ export function isPrivateAddress(address: string): boolean {
   return false;
 }
 
+/** DNS 解析超时时间（毫秒）：防止解析器挂起长期占用事件循环 */
+const DNS_TIMEOUT_MS = 8000;
+
 /** 解析域名的全部 A/AAAA 记录；解析失败抛 UnsafeUrlError */
 async function lookupAll(hostname: string): Promise<string[]> {
+  let timer: NodeJS.Timeout | undefined;
   try {
-    // all: true 时恒返回地址数组；增加 AbortSignal.timeout 防止 DNS 解析挂起阻塞事件循环（Critical）
-    const timeoutSignal = AbortSignal.timeout(8000);
-    const addresses = await dns.promises.lookup(hostname, { all: true, signal: timeoutSignal });
+    // 说明：Node 的 dns.lookup 不支持 AbortSignal（LookupOptions 无 signal 字段），
+    // 故改用 Promise.race 自行施加超时，避免 DNS 解析挂起导致请求长期阻塞（Critical）。
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`DNS 解析超时（${DNS_TIMEOUT_MS}ms）`)), DNS_TIMEOUT_MS);
+    });
+    // all: true 时恒返回地址数组
+    const addresses = await Promise.race([
+      dns.promises.lookup(hostname, { all: true }),
+      timeout,
+    ]);
     return addresses.map((item) => item.address);
   } catch (e) {
     throw new UnsafeUrlError(
       `DNS 解析失败，无法确认目标地址安全性: ${hostname}（${e instanceof Error ? e.message : String(e)}）`
     );
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

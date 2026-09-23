@@ -2,18 +2,29 @@ import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
 import MediaPicker from "@/components/admin/MediaPicker";
 
-const TAB_NAMES = ["URL/路径", "图标库", "Lucide", "Iconify", "SVG代码", "随机图", "Openverse"];
+const TAB_NAMES = ["URL/路径", "Lucide", "FontAwesome", "Iconify", "SVG代码", "随机图", "搜索图"];
 
 const INLINE_SVG =
   '<svg t="1789304190843" class="icon" viewBox="0 0 1024 1024" width="200" height="200"><path d="M1 2" fill="#FAAD08"/></svg>';
 
-describe("MediaPicker 图标来源（六种来源的后台入口）", () => {
-  it("渲染全部来源 Tab（含新增的 Iconify / SVG代码）", () => {
+describe("MediaPicker 图标来源（多种来源的后台入口）", () => {
+  it("渲染全部来源 Tab（含新增的 FontAwesome / Iconify / SVG代码）", () => {
     render(<MediaPicker value="" onChange={() => {}} />);
     const texts = Array.from(document.querySelectorAll("button")).map((b) => b.textContent?.trim() ?? "");
     for (const name of TAB_NAMES) {
       expect(texts).toContain(name);
     }
+  });
+
+  it("不再渲染已移除的「图标库」Tab", () => {
+    render(<MediaPicker value="" onChange={() => {}} />);
+    const texts = Array.from(document.querySelectorAll("button")).map((b) => b.textContent?.trim() ?? "");
+    expect(texts).not.toContain("图标库");
+  });
+
+  it("FontAwesome 值（fa6-solid:）默认落在「FontAwesome」Tab 并渲染图标容器", () => {
+    const { container } = render(<MediaPicker value="fa6-solid:user" onChange={() => {}} />);
+    expect(container.querySelector('[data-testid="iconify-icon"]')).not.toBeNull();
   });
 
   it("内联 SVG 值默认落在「SVG代码」Tab，并用多行 Textarea 编辑", () => {

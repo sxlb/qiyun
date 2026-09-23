@@ -187,8 +187,9 @@ export async function POST(request: NextRequest) {
 
       // ===== 第三阶段：用户账号处理 =====
       const user = txMap.user as Record<string, unknown>;
-      const findUniqueFn = typeof user?.findUnique === "function" ? (user.findUnique as (where: { username: string }) => Promise<{ id: number } | null>).bind(user) : undefined;
-      const adminUser = await findUniqueFn?.({ username: "admin" });
+      // ⚠️ Transaction 中的 findUnique 仅支持唯一标识符(主键/_id)，username 虽 @unique 但需改用 findFirst
+      const findFirstFn = typeof user?.findFirst === "function" ? (user.findFirst as (where: { where?: { username: string } }) => Promise<{ id: number } | null>).bind(user) : undefined;
+      const adminUser = await findFirstFn?.({ where: { username: "admin" } });
       if (adminUser) {
         // 【Critical 修复】重置密码改用更安全的 bcrypt 轮次（12，原为 10）+ 弱口令提示
         // mustChangePassword 强制首次登录立即改密，防止弱口令残留

@@ -150,7 +150,9 @@ describe("POST /api/reset-default", () => {
         delete: vi.fn().mockResolvedValue(undefined),
       },
       user: {
-        findUnique: vi.fn().mockResolvedValue({ id: 1 }),
+        // 事务内按 username 查管理员：Prisma 事务客户端不支持 findUnique 的非主键唯一字段，
+        // 故实现侧统一使用 findFirst，测试 mock 与之保持一致
+        findFirst: vi.fn().mockResolvedValue({ id: 1 }),
         update: vi.fn().mockResolvedValue({}),
       },
     };
