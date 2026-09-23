@@ -20,21 +20,16 @@ export function isRateLimited(key: string, max = DEFAULT_MAX, windowMs = DEFAULT
 
   // 桶过多时先清理过期条目，避免无界增长
   if (buckets.size >= MAX_BUCKETS) {
+    let cleaned = false;
     for (const [k, b] of buckets) {
-      if (now - b.windowStart >= DEFAULT_WINDOW_MS) buckets.delete(k);
-    }
-    // 清理后仍满：驱逐最旧的一个 bucket（非当前 key），为新 key 腾出空间
-    // 而非直接拒绝——防止攻击者用长窗口 key 塞满 Map 造成内存 DoS 同时误杀正常用户
-    if (buckets.size >= MAX_BUCKETS) {
-      let oldestKey = "";
-      let oldestTime = Infinity;
-      for (const [k, b] of buckets) {
-        if (k !== key && b.windowStart < oldestTime) {
-          oldestKey = k;
-          oldestTime = b.windowStart;
-        }
+      if (now - b.windowStart >= DEFAULT_WINDOW_MS) {
+        buckets.delete(k);
+        cleaned = true;
       }
-      if (oldestKey) buckets.delete(oldestKey);
+    }
+    // 清理后仍满：标记为限流状态，拒绝新 key 写入（被动防御）
+    if (cleaned && buckets.size >= MAX_BUCKETS) {
+      return true;
     }
   }
 
