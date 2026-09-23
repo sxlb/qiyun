@@ -47,3 +47,10 @@ sxlb-ui-design.svg
 # temp
 tmp/
 temp/
+
+# CI 发布时由 .github/scripts/release-notes.py 生成，不入库
+RELEASE_NOTES.md
+
+# Python 字节码（.github/scripts 下的发布脚本产物）
+__pycache__/
+*.pyc
