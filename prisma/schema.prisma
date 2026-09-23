@@ -1,0 +1,251 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Profile {
+  id                   Int      @id @default(autoincrement())
+  avatar               String   @default("")
+  siteIcon             String   @default("")
+  nickname             String   @default("无名")
+  bio                  String   @default("这个人很懒，什么都没写")
+  github               String   @default("")
+  email                String   @default("")
+  bgApi                String   @default("")
+  weatherProvider      String   @default("tencent")
+  amapKey              String   @default("")
+  amapSecretKey        String   @default("") // 高德私钥（数字签名用，key 开启签名时必填，未开启可留空）
+  weatherCity          String   @default("")
+  txWeatherKey         String   @default("")
+  txWeatherSk          String   @default("") // 腾讯位置服务密钥（数字签名用，key 开启签名时必填）
+  coverType            String   @default("bing")
+  autoBGSwitchInterval Int      @default(0)
+  wallpaperRefresh     Int      @default(0) // 壁纸缓存刷新间隔（分钟）：0=不刷新 / 3 / 10 / 30
+  theme                String   @default("system")
+  songApi              String   @default("")
+  songServer           String   @default("netease")
+  songId               String   @default("")
+  // 音乐自动播放开关：开启后前台歌单加载完成即尝试自动播放（浏览器拦截时静默放弃）
+  musicAutoplay        Boolean  @default(false)
+  siteUrl              String   @default("")
+  siteIcp              String   @default("")
+  siteMps              String   @default("")
+  siteStart            String   @default("")
+  siteLinksTitle       String   @default("我的网站")
+  siteLinksIcon        String   @default("link")
+  friendLinksTitle     String   @default("友情链接")
+  iconfontUrl          String   @default("") // 阿里云矢量图标库 symbol 模式脚本地址（https://at.alicdn.com/...），供社交/网站链接选择图标
+  logoArtFont          Boolean  @default(true)
+  customFontEnabled      Boolean  @default(false) // 自定义字体总开关
+  customFontFamily       String   @default("") // 自定义字体名（CSS font-family，如 "PingFang SC"）
+  customFontScope        String   @default("nickname") // 自定义字体应用范围：nickname / all
+  loadingScreen        Boolean  @default(true)
+  clickEffect          Boolean  @default(true)
+  consoleEgg           Boolean  @default(true)
+  showStats            Boolean  @default(true)
+  dynamicTitle         Boolean  @default(true)
+  topProgressBar       Boolean  @default(true)
+  seasonalEffectEnabled Boolean  @default(false) // 季节装饰特效开关（萤火虫/雪花/灯笼）
+  useRandomAvatar      Boolean  @default(false)
+  commandPalette       Boolean  @default(true) // 全局命令面板（Ctrl/Cmd+K 呼出）
+  welcomeEnabled         Boolean  @default(true)
+  welcomeIndex           Int      @default(0)
+  welcomeMessages        String   @default("[\"欢迎来到本站～\",\"很高兴遇见你，祝你愉快！\",\"愿时光温柔，伴你左右\",\"相逢即是缘分，欢迎光临\",\"欢迎回来，好久不见\"]")
+  // ===== 高级配置（后台可改，无需重新构建） =====
+  siteTitle              String   @default("") // SEO：站点标题（空则用默认"个人主页"）
+  siteDescription        String   @default("") // SEO：站点描述
+  siteKeywords           String   @default("") // SEO：站点关键词（逗号分隔）
+  accentColor            String   @default("") // 主题强调色（空则用默认天蓝 #7dd3fc）
+  glassOpacity           Int      @default(28) // 玻璃卡片不透明度 0-80（黑底 alpha 百分比）
+  glassBlur              Int      @default(16) // 玻璃卡片模糊强度 0-40（px）
+  analyticsScript        String   @default("") // 统计代码（百度统计/Umami/51LA 等，<script> 片段）
+  headScript             String   @default("") // 自定义 head 脚本（站长验证/第三方插件）
+  timeFormat             String   @default("24") // 时钟格式：24 / 12
+  showSeconds            Boolean  @default(true) // 时钟是否显示秒
+  dateFormat             String   @default("YYYY年M月D日 dddd") // 日期格式（YYYY/MM/M/DD/D/dddd/ddd）
+  hitokotoType           String   @default("") // 一言类型：空=随机，a动画 b漫画 c游戏 d文学 e原创 f网络 g其他 h影视 i诗词 j网易云 k哲学 l抖机灵
+  bgOverlay              Int      @default(0) // 背景遮罩暗化强度 0-80（%）
+  avatarShape            String   @default("circle") // 头像形状：circle / rounded / square
+  avatarBorderColor      String   @default("") // 头像边框颜色（空则用默认白色半透明）
+  siteFooterHtml         String   @default("") // 页脚自定义 HTML（管理员可信内容，显示在版权行上方）
+  createdAt              DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+model User {
+  id                 Int      @id @default(autoincrement())
+  username           String   @unique
+  password           String
+  mustChangePassword Boolean  @default(false) // 是否需强制改密（默认账号首次登录提示改密，改密成功后置 false）
+  twoFactorSecret    String   @default("") // TOTP 密钥（base32，开启 2FA 时生成）
+  twoFactorEnabled   Boolean  @default(false) // 是否启用两步验证
+  // 会话版本号：改密 / 重置默认时自增，使已签发的旧 JWT 全部失效
+  // （JWT 策略下 token 默认 30 天有效，没有该字段就无法"改密后踢出其它设备"）
+  sessionVersion     Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model SocialLink {
+  id        Int      @id @default(autoincrement())
+  name      String
+  icon      String
+  url       String
+  tip       String   @default("")
+  sort      Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SiteLink {
+  id        Int      @id @default(autoincrement())
+  name      String
+  icon      String
+  url       String
+  sort      Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model FriendLink {
+  id          Int      @id @default(autoincrement())
+  name        String
+  url         String
+  icon        String   @default("")
+  description String   @default("")
+  sort        Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// 作品/项目集（首页展示，后台可管理；封面图可复用 ImageAsset 或外链）
+model Project {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String   @default("")
+  url         String   @default("") // 项目链接（空则不跳转）
+  image       String   @default("") // 封面图（媒体库相对路径或 http 外链）
+  tags        String   @default("") // 逗号分隔标签
+  featured    Boolean  @default(false) // 是否置顶/加亮展示
+  enabled     Boolean  @default(true)
+  sort        Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// 技能（技能云展示）
+model Skill {
+  id        Int      @id @default(autoincrement())
+  name      String
+  level     Int      @default(0) // 熟练度 0-100（0 且无图标时作标签展示）
+  icon      String   @default("") // lucide/iconfont 图标名（空则纯文字标签）
+  sort      Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model OperationLog {
+  id        Int      @id @default(autoincrement())
+  module    String
+  action    String
+  username  String
+  summary   String
+  detail    String   @default("")
+  ip        String   @default("")
+  createdAt DateTime @default(now())
+
+  // 后台按时间倒序查日志、按模块+时间筛选是典型查询路径，日志量增长后需要索引
+  @@index([createdAt])
+  @@index([module, createdAt])
+}
+
+model VisitStat {
+  id   Int    @id @default(autoincrement())
+  date String @unique
+  pv   Int    @default(0)
+  uv   Int    @default(0)
+}
+
+model SiteAnnouncement {
+  id        Int       @id @default(autoincrement())
+  title     String
+  content   String
+  pinned    Boolean   @default(false)  // 是否置顶（置顶优先展示）
+  enabled   Boolean   @default(true)   // 是否上线显示
+  sort      Int       @default(0)
+  startAt   DateTime?                 // 定时上线（空 = 不限）
+  endAt     DateTime?                 // 定时下线（空 = 不限）
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([enabled])
+}
+
+model VisitRecord {
+  id             Int      @id @default(autoincrement())
+  date           String
+  hour           Int      @default(0)                 // 东八区小时，用于时段分布
+  ip             String   @default("")                 // 记录来源 IP（用于地域聚合与去重分析）
+  referrerDomain String   @default("")                 // 来源站（referer 的域名，空=直接访问/书签）
+  device         String   @default("desktop")          // desktop / mobile / tablet
+  os             String   @default("")                 // 操作系统
+  browser        String   @default("")                 // 浏览器
+  createdAt      DateTime @default(now())
+
+  // 组合索引：(date, hour) 同时覆盖「按日期范围过滤 + 按时段聚合」的统计查询，
+  // 以及纯日期范围扫描（最左前缀），故不再需要单独的 date 索引
+  @@index([date, hour])
+}
+
+model SiteLinkClick {
+  id        Int      @id @default(autoincrement())
+  // 点击来源：site（网站链接）/ friend（友情链接）/ project（作品）。
+  // SiteLink / FriendLink / Project 三张表的自增 id 是彼此独立的空间，仅凭 linkId 聚合会互相串台，
+  // 因此唯一身份是 (kind, linkId)。
+  kind      String   @default("site")
+  linkId    Int
+  name      String
+  url       String
+  count     Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([kind, linkId])
+  @@index([count])
+}
+
+model ImageAsset {
+  id        Int      @id @default(autoincrement())
+  url       String   @unique // 存储相对路径（/api/uploads/file/xxx）
+  fileName  String
+  mimeType  String   @default("image/png")
+  size      Int      @default(0)
+  width     Int      @default(0)
+  height    Int      @default(0)
+  usage     String   @default("") // avatar/siteicon/link/wallpaper/logo...
+  createdAt DateTime @default(now())
+
+  @@index([mimeType])
+}
+
+model UpdateRecord {
+  id          Int      @id @default(autoincrement())
+  version     String   // 目标版本（更新/回滚目标，如 v1.2.0）
+  action      String   // update / rollback
+  method      String   @default("build") // build=服务器自建构建 / image=拉取发布镜像
+  fromVersion String   @default("") // 变更前版本
+  status      String   @default("pending") // pending / running / success / failed
+  message     String   @default("") // 结果说明（成功/失败原因）
+  description String   @default("") // 更新日志 / 发布说明
+  triggeredBy String   @default("") // 操作者
+  estimatedSeconds Int @default(0) // 预计耗时（秒）
+  durationSeconds Int? // 实际耗时（秒）
+  createdAt   DateTime @default(now())
+  finishedAt  DateTime?
+
+  @@index([createdAt])
+}

@@ -1,0 +1,12 @@
+-- AlterTable
+-- 进阶配置字段：壁纸种类/定时切换、主题模式、音乐多源、页脚
+ALTER TABLE "Profile" ADD COLUMN "coverType" TEXT NOT NULL DEFAULT 'bing';
+ALTER TABLE "Profile" ADD COLUMN "autoBGSwitchInterval" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "Profile" ADD COLUMN "theme" TEXT NOT NULL DEFAULT 'system';
+ALTER TABLE "Profile" ADD COLUMN "songApi" TEXT NOT NULL DEFAULT '';
+ALTER TABLE "Profile" ADD COLUMN "songServer" TEXT NOT NULL DEFAULT 'netease';
+ALTER TABLE "Profile" ADD COLUMN "songId" TEXT NOT NULL DEFAULT '';
+ALTER TABLE "Profile" ADD COLUMN "songServerSecond" TEXT NOT NULL DEFAULT '';
+ALTER TABLE "Profile" ADD COLUMN "songIdSecond" TEXT NOT NULL DEFAULT '';
+ALTER TABLE "Profile" ADD COLUMN "siteUrl" TEXT NOT NULL DEFAULT '';
+ALTER TABLE "Profile" ADD COLUMN "siteIcp" TEXT NOT NULL DEFAULT '';

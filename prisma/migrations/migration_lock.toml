@@ -1,0 +1,3 @@
+# Prisma migrations lock — 声明 migrations 目录对应的数据库 provider
+# 缺失时 `prisma migrate dev` / `migrate diff` 会报错 "Could not determine the connector"
+provider = "sqlite"

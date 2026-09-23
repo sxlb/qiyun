@@ -1,0 +1,42 @@
+# 依赖
+node_modules
+
+# 构建产物
+.next
+
+# 版本控制
+.git
+
+# 环境变量（含密钥）
+.env
+.env.local
+.env.deploy
+
+# 日志
+*.log
+
+# 数据库文件：含 -wal / -shm / -journal，以及嵌套残留（如 prisma/prisma/ci.db —— migrate deploy
+# 按 file:./prisma/ci.db 解析时相对 schema 目录，会在 prisma/ 下再建一层 prisma/）
+*.db*
+
+# 运行时数据目录
+data
+
+# 测试 / 文档 / 部署脚本（构建无需带入镜像，减小构建上下文）
+tests
+scripts
+docs
+README.md
+FONT_LICENSES.md
+deploy.sh
+deploy.ps1
+
+# 参考模板 / 设计稿 / 本地部署产物（不进镜像，进一步轻量化构建上下文）
+.ref-home
+sxlb-ui-design.svg
+qiyun-src.tar.gz
+
+# CI 配置与本地增量缓存
+.github
+*.tsbuildinfo
+tsconfig.tsbuildinfo

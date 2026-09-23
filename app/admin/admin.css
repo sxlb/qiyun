@@ -1,0 +1,40 @@
+/* ============================================================
+   后台管理 · P1 视觉精修层（作用域：仅 .admin 壳内生效）
+   - 复用现有 shadcn 令牌 + 语义色/阴影/圆角，不另起平行色板，
+     避免与前台玻璃主题及后台「accent-color」配置打架（克制原则）。
+   - 通过根元素 .admin 作用域隔离，任何时候都不会泄漏到前台页面。
+   ============================================================ */
+.admin {
+  /* P1 排版节奏：正文基线 14px / 行高 1.6 */
+  font-feature-settings: "rlig" 1, "calt" 1;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+.admin h2 {
+  letter-spacing: -0.01em;
+}
+/* 排序值 / 统计数字：等宽位数，避免列表上下移动时数字位宽跳动 */
+.admin .num,
+.admin .tabular-nums,
+.admin [class*="tabular"] {
+  font-variant-numeric: tabular-nums;
+}
+/* 动效统一：过渡统一 150ms ease-out（覆盖各面板零散的 200/300ms，形成一致节奏） */
+.admin button,
+.admin a,
+.admin [role="button"] {
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* 焦点环统一：2px 主色 + 2px 偏移，控件聚焦更精致且一致 */
+.admin :focus-visible {
+  outline: none;
+  --tw-ring-offset-width: 2px;
+}
+/* 尊重系统「减少动效」偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .admin * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

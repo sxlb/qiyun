@@ -1,0 +1,196 @@
+name: Build & Release
+
+# 仅对 tag 推送（v0.0.1, v0.0.2...）和手动触发自动构建发布，避免每次 push master 都触发。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  packages: write
+
+# 串行化发布：并发 push 时若各自从本地 tag 计算 patch+1，会竞态产生重复版本号
+# （两个 run 都看到 0.0.2 → 都打出 0.0.3，后到者 tag 冲突失败）。
+# 排队（cancel-in-progress: false）保证后一个 run 在前一个完成后才 checkout，
+# 因而能读到最新 tag，版本号稳定递增。
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # ── ① 测试先行：tag push 前拦截坏代码 ──
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare database & generate client
+        env:
+          DATABASE_URL: file:./prisma/ci-test.db
+        run: npx prisma migrate deploy
+
+      - name: Run tests
+        run: npx vitest run --reporter=verbose
+
+  # ── ② 构建与发布 ──
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          # 完整历史 + tags：供版本递增与 Release Notes 的 CHANGELOG 链接使用
+          fetch-depth: 0
+
+      - name: Compute version
+        id: version
+        run: |
+          # 取已发布的最大语义化版本（0.0.1 或 v0.0.1），patch+1；无则首发 0.0.1
+          PREV=$(git tag -l | grep -E '^v?[0-9]+(\.[0-9]+){2}$' | sed -E 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+          if [ -n "$PREV" ]; then
+            MAJ=${PREV%%.*}; _r=${PREV#*.}; MIN=${_r%%.*}; PAT=$(( ${_r##*.} + 1 ))
+            VERSION="$MAJ.$MIN.$PAT"
+          else
+            VERSION="0.0.1"
+          fi
+          # 中国时区（Asia/Shanghai）时间：写入 Release 标题 / 说明
+          CN_TIME=$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M')
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "TAG=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "CN_TIME=$CN_TIME" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      # 将本次 release 版本同步进 package.json / package-lock.json（仅工作区，不提交回仓库，避免 CI 循环），
+      # 使构建产物内嵌的"当前版本"（CURRENT_VERSION）与本次发布版本一致。
+      # 不用 `npm version`：当版本与现有值相同时它会以 "Version not changed" 报错（exit 1）而打断首发构建。
+      - name: Sync version into package.json
+        run: |
+          node -e '
+            const fs = require("fs");
+            const v = process.argv[1];
+            for (const f of ["package.json", "package-lock.json"]) {
+              const j = JSON.parse(fs.readFileSync(f, "utf8"));
+              j.version = v;
+              fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n");
+            }
+          ' "${{ steps.version.outputs.VERSION }}"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare database & build
+        env:
+          DATABASE_URL: file:./prisma/ci.db
+        run: |
+          # 首页为 ISR，构建期会查询 Profile，需要先迁移出一个可用空库
+          npx prisma migrate deploy
+          npm run build
+
+      - name: Generate release notes
+        run: python3 .github/scripts/release-notes.py
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+          TAG: ${{ steps.version.outputs.TAG }}
+          CN_TIME: ${{ steps.version.outputs.CN_TIME }}
+          REPO: sxlb/qiyun
+
+      - name: Package standalone artifact
+        run: |
+          set -euo pipefail
+          mkdir -p dist/qiyun
+          cp -r .next/standalone/. dist/qiyun/
+          cp -r .next/static dist/qiyun/.next/static
+          cp -r public dist/qiyun/public
+          cp -r prisma dist/qiyun/prisma
+          cp -r scripts dist/qiyun/scripts
+          # seed.js 在 Next standalone 之外运行，而 bcryptjs 不会被 standalone 打包（实测缺失），
+          # 与 Dockerfile 里 `COPY --from=builder /app/node_modules/bcryptjs` 同一原因，此处显式补上，
+          # 否则「裸机模式」执行 node prisma/seed.js 会报 Cannot find module 'bcryptjs'
+          mkdir -p dist/qiyun/node_modules
+          cp -r node_modules/bcryptjs dist/qiyun/node_modules/bcryptjs
+          cp package.json package-lock.json dist/qiyun/
+          cp Dockerfile docker-compose.yml deploy.sh .env.deploy.example dist/qiyun/
+          # ---------- 剥离运行期数据 ----------
+          # 发布包是公开可下载的，任何本地/运行期数据都不能进包。以下三类都是实际踩到过的：
+          #   1) .env            —— next build 会把仓库根 .env 原样拷进 .next/standalone（实测 SHA256 一致）
+          #   2) data/           —— 同上，data/ 整个目录（prod.db、uploads、wallpapers）会被拷进 standalone
+          #   3) prisma 下的 *.db* —— 本地跑过 migrate 就会留下 dev.db / validate.db，CI 会留下 ci.db
+          # 统一在此剥离，并由下方自检兜底，避免以后再逐个打补丁。
+          rm -f dist/qiyun/.env dist/qiyun/.env.* dist/qiyun/.env.deploy
+          rm -rf dist/qiyun/data
+          find dist/qiyun -type f -name '*.db*' -delete
+
+          # ---------- 自检：任一残留即中止发布 ----------
+          fail=0
+          if find dist/qiyun -name '.env*' -print -quit | grep -q .; then
+            echo "✗ 发布包内存在 .env 文件：" >&2; find dist/qiyun -name '.env*' >&2; fail=1
+          fi
+          if [ -e dist/qiyun/data ]; then
+            echo "✗ 发布包内存在 data 目录：" >&2; ls -la dist/qiyun/data >&2; fail=1
+          fi
+          if find dist/qiyun -type f -name '*.db*' -print -quit | grep -q .; then
+            echo "✗ 发布包内存在 SQLite 数据库文件：" >&2; find dist/qiyun -type f -name '*.db*' >&2; fail=1
+          fi
+          [ "$fail" = "0" ] || { echo "已中止发布" >&2; exit 1; }
+          tar -C dist -czf "qiyun-${{ steps.version.outputs.TAG }}.tar.gz" qiyun
+
+      # 源码产物：与部署包相互独立，供「源码构建」方式使用（无需 git 即可拿到源码）。
+      # 刻意不合并进部署包 —— 实测 next build 会把 components/*.tsx 等源文件按需拷进
+      # .next/standalone，源码与产物混在同一目录会互相覆盖。
+      - name: Package source artifact
+        run: |
+          set -euo pipefail
+          mkdir -p dist-src/qiyun
+          git ls-files -z | xargs -0 cp --parents -t dist-src/qiyun/
+          tar -C dist-src -czf "qiyun-src-${{ steps.version.outputs.TAG }}.tar.gz" qiyun
+          echo "源码包收录文件数：$(git ls-files | wc -l)"
+
+      # ---------- 推送 GHCR 镜像（供服务器"拉取镜像"更新模式使用） ----------
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/sxlb/qiyun:${{ steps.version.outputs.TAG }}
+            ghcr.io/sxlb/qiyun:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.TAG }}
+          name: 栖云 · Qiyun ${{ steps.version.outputs.VERSION }} · ${{ steps.version.outputs.CN_TIME }} (UTC+8)
+          body_path: RELEASE_NOTES.md
+          files: |
+            qiyun-${{ steps.version.outputs.TAG }}.tar.gz
+            qiyun-src-${{ steps.version.outputs.TAG }}.tar.gz

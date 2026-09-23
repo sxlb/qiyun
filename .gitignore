@@ -1,0 +1,46 @@
+# dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.log*
+.env
+.env.local
+.env.deploy
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+
+# sqlite database files (runtime-generated, not committed)
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+prisma/dev.db*
+prisma/_verify.db-journal
+prisma/prisma/validate.db*
+
+# data
+data/
+
+# local deployment packages
+*.tar.gz
+sxlb-ui-design.svg
+
+# share packages from previous dev
+.trae-html-share-packages/
+
+# temp
+tmp/
+temp/

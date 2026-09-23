@@ -1,0 +1,25 @@
+services:
+  qiyun:
+    # 拉取 GHCR 预编译镜像，无需本地构建
+    image: ghcr.io/sxlb/qiyun:${IMAGE_TAG:-latest}
+    container_name: qiyun
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env.deploy
+    # 限制日志体积
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # 健康检查：使用 node 内置 fetch，避免 slim 镜像无 wget/curl
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/ping').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
