@@ -60,11 +60,11 @@ docker compose version   # 应输出 Docker Compose version v2.x.x
 
 ### 2.1 下载并解压
 
-1. 打开 [Releases 页面](https://github.com/sxlb/qiyun/releases/latest)，下载 `qiyun-<版本号>.tar.gz`（如 `qiyun-0.0.1.tar.gz`）
+1. 打开 [Releases 页面](https://github.com/sxlb/qiyun/releases/latest)，下载 `qiyun-<版本号>.tar.gz`（如 `qiyun-0.0.2.tar.gz`）
 2. 上传到服务器并解压：
 
 ```bash
-tar -xzf qiyun-0.0.1.tar.gz -C /opt
+tar -xzf qiyun-0.0.2.tar.gz -C /opt
 cd /opt/qiyun
 ```
 
@@ -99,7 +99,7 @@ cd /opt/qiyun
 chmod +x deploy.sh
 
 ./deploy.sh          # 自动查询并拉取最新版本
-./deploy.sh 0.0.1    # 或指定版本号
+./deploy.sh 0.0.2    # 或指定版本号
 ```
 
 脚本自动完成：生成密钥 → 拉取镜像 → 启动容器 → 健康检查。看到下面这行即部署成功：
@@ -118,7 +118,7 @@ chmod +x deploy.sh
 
 | 参数 | 值 |
 |------|-----|
-| 镜像 | `ghcr.io/sxlb/qiyun:<版本号>`，如 `ghcr.io/sxlb/qiyun:0.0.1` |
+| 镜像 | `ghcr.io/sxlb/qiyun:<版本号>`，如 `ghcr.io/sxlb/qiyun:0.0.2` |
 | 容器名 | `qiyun` |
 | 端口映射 | 宿主机 `3000` → 容器 `3000`（TCP） |
 | 挂载 | 宿主机 `/opt/qiyun/data` → 容器 `/app/data`，读写 |
@@ -207,8 +207,8 @@ sudo bash scripts/setup-update.sh
 它会把更新执行器安装到 `/usr/local/bin`，并写入每分钟轮询的 cron。完成后即可在后台「系统更新」面板一键升级或回滚，也可用命令行操作：
 
 ```bash
-./scripts/update.sh update 0.0.1     # 更新到指定版本
-./scripts/update.sh rollback 0.0.1   # 回滚到历史版本
+./scripts/update.sh update 0.0.2     # 更新到指定版本
+./scripts/update.sh rollback 0.0.2   # 回滚到历史版本
 ```
 
 > 更新与回滚都是拉取已发布的预编译镜像，服务器上**不需要 git，也不做本地构建**。未启用更新通道时，后台「系统更新」面板会提示「宿主机更新通道尚未就绪（未安装脚本）」，此时只能用下面「方式二」手动升级。
@@ -219,7 +219,7 @@ sudo bash scripts/setup-update.sh
 
 ```bash
 cd /opt/qiyun
-./deploy.sh 0.0.1     # 改成目标版本号
+./deploy.sh 0.0.2     # 改成目标版本号
 ```
 
 两种方式都保留 `data/` 目录中的数据。
@@ -249,7 +249,7 @@ docker logs qiyun --tail=100
 |------|----------|
 | `NEXTAUTH_SECRET` 为空 | 确认 `.env.deploy` 中有该变量 |
 | 日志出现 `SQLITE_CANTOPEN` 或 `attempt to write a readonly database` | 宿主机 `data/` 目录属主不对（Docker 首次创建时归属 root，而容器内以 UID 1001 运行）。执行 `sudo chown -R 1001:1001 /opt/qiyun/data` 后 `docker restart qiyun` |
-| 国内无法访问 `ghcr.io` | 配置 Docker 镜像加速器，或改从 Docker Hub 拉取：`GHCR_IMAGE=docker.io/sxlb/qiyun ./deploy.sh 0.0.1` |
+| 国内无法访问 `ghcr.io` | 配置 Docker 镜像加速器，或改从 Docker Hub 拉取：`GHCR_IMAGE=docker.io/sxlb/qiyun ./deploy.sh 0.0.2` |
 
 ### Q2：页面打不开
 
