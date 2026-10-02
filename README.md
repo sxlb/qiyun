@@ -91,13 +91,15 @@ npm run dev
 │   └── page.tsx          # 首页
 ├── components/           # UI 组件（前台组件 + admin 后台面板）
 ├── lib/                  # 核心逻辑（auth / ssrf / validation / backup / update）
-├── docs/                 # 部署教程与架构图
+├── docs/                 # 部署、发布、API、许可等文档
 ├── prisma/               # Schema、55 个迁移、seed
 ├── public/fonts/         # 自托管字体
 ├── scripts/              # 宿主机更新执行器
 ├── tests/                # Vitest 测试（73 个文件 / 687 个用例）
 ├── .github/workflows/    # CI/CD 自动发版
-└── deploy.sh · Dockerfile · docker-compose.yml
+├── next.config.ts · tsconfig.json · tailwind.config.ts · postcss.config.mjs
+│   eslint.config.mjs · vitest.config.ts   # 工具链配置，均为框架约定的根目录位置
+└── deploy.sh · Dockerfile · docker-compose.yml · .env.deploy.example
 ```
 
 ## 常用配置
