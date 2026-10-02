@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import dns from "node:dns";
 import { NextRequest } from "next/server";
-import { createRedirectAwareFetch } from "./helpers/redirect-aware-fetch";
+import { createRedirectAwareFetch } from "../helpers/redirect-aware-fetch";
 
 // Mock 数据库：默认 songApi 为空（私网白名单默认关闭），个别用例覆盖返回
 vi.mock("@/lib/db", () => ({

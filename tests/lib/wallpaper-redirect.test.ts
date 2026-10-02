@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import dns from "node:dns";
-import { createRedirectAwareFetch } from "./helpers/redirect-aware-fetch";
+import { createRedirectAwareFetch } from "../helpers/redirect-aware-fetch";
 
 /**
  * 壁纸缓存的出站请求必须逐跳校验 SSRF。

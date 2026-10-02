@@ -8,7 +8,7 @@ import { DEFAULT_LYRIC_SIZE, LYRIC_SIZE_OPTIONS, parseLyricSize } from "@/lib/mu
  * 两边一旦脱节（比如常量加了档但 CSS 忘了写，或只写了一套值），界面会静默回落默认字号。
  * 这里把 CSS 读出来对齐，把这类回归钉死在测试里。
  */
-const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+const css = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf8");
 
 /** 取某一档在 CSS 里的所有 --tl-size 值：基础规则（移动端）+ 媒体查询（桌面端）各一个 */
 function sizesFor(level: number): number[] {

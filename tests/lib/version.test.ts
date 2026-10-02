@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fetchLatestRelease, resetReleaseCache } from "../lib/version";
+import { fetchLatestRelease, resetReleaseCache } from "../../lib/version";
 
 const OFFICIAL = "https://api.github.com";
 const PROXY_BASE = "https://gh-proxy.com/https://api.github.com";

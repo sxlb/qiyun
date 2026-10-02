@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import dns from "node:dns";
-import { createRedirectAwareFetch } from "./helpers/redirect-aware-fetch";
+import { createRedirectAwareFetch } from "../helpers/redirect-aware-fetch";
 
 import { faviconCandidates, probeFavicon } from "@/lib/favicon";
 
