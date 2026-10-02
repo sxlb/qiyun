@@ -117,6 +117,7 @@ npm run dev
 | 文档 | 说明 |
 |------|------|
 | [部署教程](docs/deploy-1panel.md) | 宝塔 / 1Panel 服务器部署步骤 |
+| [发布流程](docs/releasing.md) | 版本号规则、发布产物与两条硬约束（维护者用） |
 | [API 文档](docs/API.md) | 全部接口的入参、响应与鉴权要求 |
 | [变更日志](CHANGELOG.md) | 每个版本的用户可感知变化 |
 | [字体许可](FONT_LICENSES.md) | 自托管字体来源与授权 |
