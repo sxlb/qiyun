@@ -2,10 +2,12 @@
 # ============================================================
 # 栖云 · Qiyun — 更新/回滚执行器（宿主机侧，由 cron 每分钟调用一次）
 # 作用：轮询 data/deploy/request.json（应用后台写入的握手请求），
-#       认领后备份数据库 → git 切换到目标版本 → 重建重启容器 → 写回执行结果，
+#       认领后拉取目标版本镜像 → 备份数据库 → 重建容器 → 写回执行结果，
 #       并维护 data/deploy/versions.json 的版本权威记录。
 #
-# 安装（建议装到仓库之外，避免更新切 tag 时被覆盖）：
+# 全程只依赖 docker 与 docker compose：镜像在 CI 中预编译，服务器上不需要 git，也不做本地构建。
+#
+# 安装（建议装到部署目录之外，避免被更新覆盖）：
 #   sudo cp scripts/update-watch.sh /usr/local/bin/qiyun-update
 #   sudo chmod +x /usr/local/bin/qiyun-update
 #   crontab -e 添加（必须指定 REPO_DIR 为部署仓库目录）：
@@ -17,7 +19,7 @@
 set -euo pipefail
 
 # ---------- 可覆盖配置 ----------
-# 仓库目录（含 .git、docker-compose.yml、deploy.sh、data/ 的部署目录）
+# 仓库目录（含 docker-compose.yml、deploy.sh、data/ 的部署目录）
 REPO_DIR="${REPO_DIR:-}"
 if [ -z "$REPO_DIR" ]; then
   _scr="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,9 +42,6 @@ CONTAINER="qiyun"
 # 默认 GHCR；境内直连受限时可改为 "docker.io/sxlb/qiyun"（Docker Hub），
 # 或经 IMAGE_MIRROR_PREFIX 走镜像加速地址。
 GHCR_IMAGE="${GHCR_IMAGE:-ghcr.io/sxlb/qiyun}"
-# git fetch 代理：若服务器到 GitHub 连不通，可设 GIT_PROXY_URL 指向 HTTP 代理（如 "http://127.0.0.1:1080"）。
-# 为空则不代理，走默认 git 传输。
-GIT_PROXY_URL="${GIT_PROXY_URL:-}"
 # 镜像仓库前缀替换：GHCR 不通时，可设 IMAGE_MIRROR_PREFIX 指向镜像加速地址，
 # 如 "docker.m.daocloud.io"（推荐不带协议）或 "https://docker.mirror.example.com/"；为空则原样拉取 GHCR。
 IMAGE_MIRROR_PREFIX="${IMAGE_MIRROR_PREFIX:-}"
@@ -166,31 +165,27 @@ write_result() { # id action version method status message
 
 # ---------- 失败回退 ----------
 
-# 代码已切换后任一步失败：把代码切回切换前的版本并重新拉起容器。
-# 不这样做会留下「仓库是新版本、运行中的容器仍是旧版本」的混合状态，
-# 用户只看到「更新失败」，却不知道系统实际处于什么状态。
-rollback_code() { # targetVersion
+# 新版本容器启动失败时，用旧版本镜像把容器重新拉起。
+# 不这样做会留下「镜像已换、容器起不来」的空档，用户只看到「更新失败」，
+# 却不知道服务其实已经中断。
+reup_version() { # targetVersion
   local target="$1"
-  log "检测到失败，尝试回滚代码到 ${target} ..."
-  if ! git -C "$REPO_DIR" checkout "$target" >/dev/null 2>&1; then
-    log "✗ 回滚 git checkout 失败"
-    return 1
-  fi
+  log "尝试用版本 ${target} 重新拉起容器 ..."
   IMAGE_TAG="$target" GHCR_IMAGE="$PULL_IMAGE" APP_VERSION="$target" \
     docker compose --env-file "$ENV_FILE" up --no-build -d >/dev/null 2>&1 || true
-  log "已回滚代码到 ${target}，容器已按该版本重新拉起"
+  log "已按版本 ${target} 重新拉起容器"
   return 0
 }
 
-# 统一失败出口：写回失败结果，并在必要时回退代码。
-# code_switched_ok=1 表示 git checkout 已成功、但后续步骤失败。
+# 统一失败出口：写回失败结果，并在必要时用原版本重新拉起容器。
+# version_switched_ok=1 表示旧容器已停止、切换已经开始，此时失败必须回退。
 fail_after_switch() { # message
   local message="$1"
-  if [ "${code_switched_ok:-0}" = "1" ] && [ -n "${cur:-}" ] && [ "$cur" != "unknown" ] && [ "$cur" != "$version" ]; then
-    if rollback_code "$cur"; then
-      write_result "$req_id" "$action" "$version" "$req_method" failed "${message}；已自动回退代码到 ${cur}"
+  if [ "${version_switched_ok:-0}" = "1" ] && [ -n "${cur:-}" ] && [ "$cur" != "unknown" ] && [ "$cur" != "$version" ]; then
+    if reup_version "$cur"; then
+      write_result "$req_id" "$action" "$version" "$req_method" failed "${message}；已自动回退到版本 ${cur}"
     else
-      write_result "$req_id" "$action" "$version" "$req_method" failed "${message}；自动回退失败，仓库当前停留在 ${version}，请手动处理"
+      write_result "$req_id" "$action" "$version" "$req_method" failed "${message}；自动回退失败，请手动执行 IMAGE_TAG=${cur} docker compose up -d"
     fi
   else
     write_result "$req_id" "$action" "$version" "$req_method" failed "$message"
@@ -279,69 +274,72 @@ esac
 
 cd "$REPO_DIR"
 [ -f docker-compose.yml ] || fail "未在仓库目录运行：缺少 docker-compose.yml"
-command -v git >/dev/null 2>&1 || fail "缺少 git 命令"
+command -v docker >/dev/null 2>&1 || fail "缺少 docker 命令"
 
-# 当前基线版本（从 versions.json 读取，缺失则回退 git describe）
-cur=$(sed -n 's/.*"currentVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$DEPLOY_DIR/versions.json" 2>/dev/null | head -1)
-[ -n "$cur" ] || cur=$(git describe --tags --abbrev=0 2>/dev/null || echo "unknown")
-# 兜底值同样去掉 v 前缀：基线版本与快照文件名统一用无 v 版本号（0.0.1），
-# 与发布触发标签、发布产物标签保持一致
+# 版本号校验：只允许 [0-9A-Za-z.+-]，且须形如 0.0.1。异常值不拦会被拼进镜像名，
+# docker 报出的错误难以定位，也会污染 versions.json 的历史记录。
+version_ok=1
+case "$version" in
+  *[!0-9A-Za-z.+-]*) version_ok=0 ;;
+  [0-9]*.[0-9]*.[0-9]*) ;;
+  *) version_ok=0 ;;
+esac
+if [ "$version_ok" != "1" ]; then
+  write_result "$req_id" "$action" "$version" "$req_method" failed "版本号不合法（应形如 0.0.1）：$version"
+  exit 0
+fi
+
+# 当前基线版本：优先 versions.json；缺失时读运行中容器的镜像标签。
+# 两处都加容错，避免文件缺失或容器不存在时被 set -e 直接中断。
+cur=""
+if [ -f "$DEPLOY_DIR/versions.json" ]; then
+  cur=$(sed -n 's/.*"currentVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$DEPLOY_DIR/versions.json" 2>/dev/null | head -1 || true)
+fi
+if [ -z "$cur" ]; then
+  cur=$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null | sed 's/.*://' || true)
+fi
+[ -n "$cur" ] || cur="unknown"
+# 统一去掉 v 前缀：基线版本与快照文件名均用无 v 版本号（0.0.1），与发布标签一致
 cur="${cur#v}"
 
 log "当前基线版本：$cur，目标版本：$version"
 
-# 1) 拉取远程 tag 并切换到目标版本
-log "拉取远程 tags..."
-if [ -z "$GIT_PROXY_URL" ]; then
-  git fetch --all --tags --prune >/dev/null 2>&1 || log "警告：git fetch 失败，将使用本地已有 tag"
-else
-  # 有专用 GIT 代理时，通过 http.proxy 走代理（临时注入，不落盘到仓库配置）
-  git -c "http.proxy=$GIT_PROXY_URL" -c "https.proxy=$GIT_PROXY_URL" \
-    fetch --all --tags --prune >/dev/null 2>&1 \
-    || log "警告：git fetch（经代理 $GIT_PROXY_URL）失败，将使用本地已有 tag"
-fi
-
-# 标记：git checkout 是否已成功。成功之后的任何失败都需要回退代码，
-# 否则会留下「仓库是新版本、容器是旧版本」的混合状态。
-code_switched_ok=0
-
-if git rev-parse -q --verify "refs/tags/$version" >/dev/null 2>&1; then
-  log "切换到版本 $version"
-  if git checkout "$version" >/dev/null 2>&1; then
-    code_switched_ok=1
-  else
-    write_result "$req_id" "$action" "$version" "$req_method" failed "git 切换失败，请检查版本号是否已发布"
-    exit 0
-  fi
-else
-  write_result "$req_id" "$action" "$version" "$req_method" failed "目标版本 $version 不存在（未发布或未推送 tag）"
+# 1) 先拉取目标版本镜像：此时旧容器仍在运行，版本不存在或网络不通都不会造成停机
+log "拉取 ${PULL_IMAGE}:${version} ..."
+if ! IMAGE_TAG="$version" GHCR_IMAGE="$PULL_IMAGE" APP_VERSION="$version" \
+     docker compose --env-file "$ENV_FILE" pull; then
+  write_result "$req_id" "$action" "$version" "$req_method" failed \
+    "拉取镜像失败：请确认版本 ${version} 已发布，且服务器能访问 ${PULL_IMAGE}（容器未受影响，仍运行 ${cur}）"
   exit 0
 fi
+
+# 标记：切换是否已开始。镜像已就位，之后的任何失败都要把原版本重新拉起，
+# 否则会留下「镜像换好了、容器却起不来」的空档。
+version_switched_ok=0
 
 # 2) 优雅停止容器：让 SQLite WAL 落盘，保证后续数据库读写（备份/恢复）处于一致状态
 log "停止容器（等待未落盘写入收尾）..."
 docker compose --env-file "$ENV_FILE" stop || fail_after_switch "停止容器失败"
 
 # 3) 备份当前版本数据库（回档数据点）
-backup_db "$cur"
+backup_db "$cur" || fail_after_switch "备份数据库失败"
 
-# 4) 回滚时：把数据库恢复到目标版本的快照（代码与数据一同回退）
+# 4) 回滚时：把数据库恢复到目标版本的快照（数据随代码一同回退）
 if [ "$action" = "rollback" ]; then
-  restore_db "$version"
+  restore_db "$version" || fail_after_switch "恢复数据库快照失败"
 fi
 
-# 5) 拉取目标版本镜像并重建容器
-#    注入 APP_VERSION=目标版本，让容器内"当前版本"与发布版本一致。
-#    每个失败分支都走 fail_after_switch：写回失败结果并自动回退代码。
-log "拉取 ${PULL_IMAGE}:${version} 并重启容器..."
-IMAGE_TAG="$version" GHCR_IMAGE="$PULL_IMAGE" APP_VERSION="$version" docker compose --env-file "$ENV_FILE" pull \
-  || fail_after_switch "拉取镜像失败，请检查网络与镜像仓库访问权限"
+version_switched_ok=1
+
+# 5) 用目标版本镜像重建容器
+#    注入 APP_VERSION=目标版本，让容器内报告的"当前版本"与发布版本一致。
+log "启动 ${PULL_IMAGE}:${version} 容器..."
 IMAGE_TAG="$version" GHCR_IMAGE="$PULL_IMAGE" APP_VERSION="$version" docker compose --env-file "$ENV_FILE" up --no-build -d \
   || fail_after_switch "启动容器失败，请查看 docker compose logs"
 
 # 6) 记录版本历史并写成功结果
-output="已${action}到 $version（拉取镜像 ${PULL_IMAGE}:${version}）"
-[ "$action" = "rollback" ] && output="${output}（数据库已恢复到 ${version} 快照，若未找到快照则仅切换代码）"
+output="已${action}到 $version（镜像 ${PULL_IMAGE}:${version}）"
+[ "$action" = "rollback" ] && output="${output}（数据库已恢复到 ${version} 快照，若未找到快照则保持现有数据库）"
 update_versions "$version" "$action"
 write_result "$req_id" "$action" "$version" "$req_method" success "$output"
 rm -f "$running"

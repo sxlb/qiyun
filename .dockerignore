@@ -23,9 +23,9 @@ node_modules
 # 运行时数据目录
 data
 
-# 测试 / 文档 / 部署脚本（构建无需带入镜像，减小构建上下文）
+# 测试 / 文档（构建无需带入镜像，减小构建上下文）
+# 注意：scripts/ 不在此列，更新通道脚本需要打进镜像，便于从容器直接取出
 tests
-scripts
 docs
 README.md
 deploy.sh

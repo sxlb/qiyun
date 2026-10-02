@@ -77,6 +77,10 @@ COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 COPY --from=builder /app/node_modules/bcryptjs ./node_modules/bcryptjs
 COPY --from=builder /app/node_modules/.bin ./node_modules/.bin
 
+# 更新通道脚本：让「只拉镜像、没有发布包」的部署也能直接取出脚本
+# （docker cp qiyun:/app/scripts ./scripts），镜像因此自包含部署工具
+COPY --from=builder --chown=home:app /app/scripts ./scripts
+
 # 修正 Prisma 引擎目录属主：容器以非 root 的 home 用户启动时，
 # migrate deploy / seed 阶段可能写入 engines 目录（缓存引擎二进制），
 # 属主为 root 时会报 "Can't write to /app/node_modules/@prisma/engines" 错误。
