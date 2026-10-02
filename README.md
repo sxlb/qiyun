@@ -14,7 +14,7 @@ Next.js 16 + TypeScript + Tailwind CSS + Prisma 的个人主页 / 导航首页<b
 [![Prisma](https://img.shields.io/badge/Prisma-5.22-2d3748?style=flat-square&logo=prisma)](https://www.prisma.io)
 ![Docker](https://img.shields.io/badge/GHCR-sxlb%2Fqiyun-2496ed?style=flat-square&logo=docker)
 
-[部署教程](docs/deploy-1panel.md) · [API 文档](docs/API.md) · [变更日志](CHANGELOG.md) · [字体许可](FONT_LICENSES.md)
+[部署教程](docs/deploy-1panel.md) · [API 文档](docs/API.md) · [变更日志](CHANGELOG.md) · [字体许可](docs/font-licenses.md)
 
 </div>
 
@@ -120,10 +120,10 @@ npm run dev
 | [发布流程](docs/releasing.md) | 版本号规则、发布产物与两条硬约束（维护者用） |
 | [API 文档](docs/API.md) | 全部接口的入参、响应与鉴权要求 |
 | [变更日志](CHANGELOG.md) | 每个版本的用户可感知变化 |
-| [字体许可](FONT_LICENSES.md) | 自托管字体来源与授权 |
+| [字体许可](docs/font-licenses.md) | 自托管字体来源与授权 |
 
 ## 许可
 
 本项目基于 GNU Affero General Public License v3.0 或更新版本开源，Copyright (C) 2026 sxlb，完整条款见 [LICENSE](LICENSE)。
 
-你可以自由使用、修改并分发本项目，包括商用；改动后的版本如果通过网络对外提供服务，就必须向使用者公开完整的对应源码。原样部署不作修改的，无需公开任何内容。仓库内自托管的字体不适用本协议，各自遵循上游授权，详见 [字体许可](FONT_LICENSES.md)。
+你可以自由使用、修改并分发本项目，包括商用；改动后的版本如果通过网络对外提供服务，就必须向使用者公开完整的对应源码。原样部署不作修改的，无需公开任何内容。仓库内自托管的字体不适用本协议，各自遵循上游授权，详见 [字体许可](docs/font-licenses.md)。

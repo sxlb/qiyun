@@ -28,9 +28,7 @@ tests
 scripts
 docs
 README.md
-FONT_LICENSES.md
 deploy.sh
-deploy.ps1
 
 # 参考模板 / 设计稿 / 本地部署产物（不进镜像，进一步轻量化构建上下文）
 .ref-home
