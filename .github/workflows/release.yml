@@ -196,6 +196,32 @@ jobs:
           [ "$fail" = "0" ] || { echo "已中止发布" >&2; exit 1; }
           tar -C dist -czf "qiyun-${{ steps.version.outputs.TAG }}.tar.gz" qiyun
 
+      # 成品包二次校验：上面校验的是 dist/ 目录树，这里校验真正要发布的 .tar.gz，
+      # 防止打包环节（tar 参数、路径变化等）把必需文件漏掉。
+      - name: Validate deploy package
+        run: |
+          set -euo pipefail
+          PKG="qiyun-${{ steps.version.outputs.TAG }}.tar.gz"
+          [ -f "$PKG" ] || { echo "✗ 未找到发布包 $PKG" >&2; exit 1; }
+          entries="$(tar -tzf "$PKG")"
+          fail=0
+          # 部署必需文件：deploy.sh 依赖 .env.deploy.example 生成 .env.deploy
+          for f in server.js deploy.sh docker-compose.yml .env.deploy.example; do
+            if ! printf '%s\n' "$entries" | grep -qx "qiyun/$f"; then
+              echo "✗ 发布包缺少必需文件：$f" >&2
+              fail=1
+            fi
+          done
+          # 除示例模板外不应夹带任何 .env 类文件（node_modules 内的同名文件不算）
+          leaked="$(printf '%s\n' "$entries" | grep '\.env' | grep -v '\.example$' | grep -v '^qiyun/node_modules/' || true)"
+          if [ -n "$leaked" ]; then
+            echo "✗ 发布包内含疑似密钥文件：" >&2
+            printf '%s\n' "$leaked" >&2
+            fail=1
+          fi
+          [ "$fail" = "0" ] || { echo "已中止发布" >&2; exit 1; }
+          echo "✓ 发布包校验通过：$PKG"
+
       # 源码产物：与部署包相互独立，供「源码构建」方式使用（无需 git 即可拿到源码）。
       # 刻意不合并进部署包 —— 实测 next build 会把 components/*.tsx 等源文件按需拷进
       # .next/standalone，源码与产物混在同一目录会互相覆盖。
@@ -226,6 +252,21 @@ jobs:
           registry: docker.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 版本不可覆盖：同一版本号一旦发布过就不再覆盖。覆盖会把上一次的 index 及其子清单
+      # 变成无标签残留（0.0.1 重发时就这样堆出三个孤儿清单）。要修已发布版本请递增版本号；
+      # 确需原地重发的完整步骤见 docs/releasing.md。
+      - name: Guard against republishing an existing version
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.TAG }}"
+          IMAGE="ghcr.io/sxlb/qiyun:${TAG}"
+          if docker buildx imagetools inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "✗ 版本 ${TAG} 已发布（${IMAGE} 已存在），拒绝覆盖" >&2
+            echo "  请递增版本号后重新发布；确需原地重发见 docs/releasing.md" >&2
+            exit 1
+          fi
+          echo "✓ 版本 ${TAG} 尚未发布，继续"
 
       # 只推版本标签（如 0.0.1），不推 latest：latest 是浮动标签，回滚时容易把
       # 「回退旧版」误做成「拉到最新版」。同一份构建产物按是否配置 Docker Hub 密钥
