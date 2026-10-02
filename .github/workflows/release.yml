@@ -184,7 +184,8 @@ jobs:
             echo "✗ 发布包内存在 .env 文件：" >&2; find dist/qiyun -name '.env*' ! -name '*.example' >&2; fail=1
           fi
           # 部署必需文件必须在包内：上面那次误删就是这么漏出去的，缺一个即中止
-          for f in deploy.sh docker-compose.yml .env.deploy.example; do
+          # scripts/ 也在列：更新通道靠它安装，教程里让用户直接从包里取用
+          for f in server.js deploy.sh docker-compose.yml .env.deploy.example scripts/setup-update.sh scripts/update-watch.sh; do
             [ -f "dist/qiyun/$f" ] || { echo "✗ 发布包缺少必需文件：$f" >&2; fail=1; }
           done
           if [ -e dist/qiyun/data ]; then
@@ -206,14 +207,17 @@ jobs:
           entries="$(tar -tzf "$PKG")"
           fail=0
           # 部署必需文件：deploy.sh 依赖 .env.deploy.example 生成 .env.deploy
-          for f in server.js deploy.sh docker-compose.yml .env.deploy.example; do
-            if ! printf '%s\n' "$entries" | grep -qx "qiyun/$f"; then
+          # ⚠️ 不可写成 `printf '%s\n' "$entries" | grep -qx "..."`：grep -q 命中即退出会
+          #    让 printf 收到 EPIPE 而失败，叠加 set -o pipefail 后整条管道被判为非零，
+          #    明明存在的文件会被误报缺失（0.0.2 的发布就是这么被拦下的）。here-string 无此竞态。
+          for f in server.js deploy.sh docker-compose.yml .env.deploy.example scripts/setup-update.sh scripts/update-watch.sh; do
+            if ! grep -qxF -- "qiyun/$f" <<< "$entries"; then
               echo "✗ 发布包缺少必需文件：$f" >&2
               fail=1
             fi
           done
           # 除示例模板外不应夹带任何 .env 类文件（node_modules 内的同名文件不算）
-          leaked="$(printf '%s\n' "$entries" | grep '\.env' | grep -v '\.example$' | grep -v '^qiyun/node_modules/' || true)"
+          leaked="$(grep '\.env' <<< "$entries" | grep -v '\.example$' | grep -v '^qiyun/node_modules/' || true)"
           if [ -n "$leaked" ]; then
             echo "✗ 发布包内含疑似密钥文件：" >&2
             printf '%s\n' "$leaked" >&2
