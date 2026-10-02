@@ -1,0 +1,60 @@
+# dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+# Next 每次 dev / build 都会按当前模式重写该文件（.next/dev/types ↔ .next/types），
+# 入库会导致每次切换命令都产生假 diff；由 next dev / next build 自动生成
+next-env.d.ts
+
+# TypeScript 增量编译信息（tsc --noEmit / next build 生成）
+*.tsbuildinfo
+
+# production
+/build
+
+# misc
+.DS_Store
+*.log*
+# 环境变量：除示例模板外一律忽略，避免 .env.production / .env.development 等变体带密钥入库
+.env*
+!.env.example
+!.env.deploy.example
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+
+# sqlite database files (runtime-generated, not committed)
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+prisma/dev.db*
+prisma/_verify.db-journal
+prisma/prisma/validate.db*
+
+# data
+data/
+
+# local deployment packages
+*.tar.gz
+sxlb-ui-design.svg
+
+# share packages from previous dev
+.trae-html-share-packages/
+
+# temp
+tmp/
+temp/
+
+# CI 发布时由 .github/scripts/release-notes.py 生成，不入库
+RELEASE_NOTES.md
+
+# Python 字节码（.github/scripts 下的发布脚本产物）
+__pycache__/
+*.pyc

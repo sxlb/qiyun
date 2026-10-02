@@ -1,0 +1,27 @@
+-- CreateTable
+-- 作品/项目集（首页展示，后台可管理）
+CREATE TABLE "Project" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "title" TEXT NOT NULL,
+    "description" TEXT NOT NULL DEFAULT '',
+    "url" TEXT NOT NULL DEFAULT '',
+    "image" TEXT NOT NULL DEFAULT '',
+    "tags" TEXT NOT NULL DEFAULT '',
+    "featured" BOOLEAN NOT NULL DEFAULT false,
+    "enabled" BOOLEAN NOT NULL DEFAULT true,
+    "sort" INTEGER NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- CreateTable
+-- 技能（技能云展示）
+CREATE TABLE "Skill" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "name" TEXT NOT NULL,
+    "level" INTEGER NOT NULL DEFAULT 0,
+    "icon" TEXT NOT NULL DEFAULT '',
+    "sort" INTEGER NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

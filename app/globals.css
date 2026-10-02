@@ -1,0 +1,1251 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===== 玻璃卡片侧的音乐配色令牌 =====
+   卡片控制面板与一言共用同一个功能卡格，沿用站内玻璃卡片外观，不参与 .mp 面板主题；
+   只有它里面的音量滑杆仍用这套红色令牌（弹窗里用的是 .mp-vol-*）。 */
+:root {
+  --nc-bg: rgba(20, 20, 28, 0.94);
+  --nc-text: rgba(255, 255, 255, 0.92);
+  --nc-red: #e0554d;
+  --nc-red-soft-strong: #f47b72;
+  --nc-track: rgba(255, 255, 255, 0.15);
+}
+
+/* 音乐 UI 为固定深色设计，不随系统明暗切换：
+   浅色系统下若令牌翻转为深色轨道/浮层，会在深色玻璃上隐形，故在此作用域内锁定深色值 */
+.music-dark-scope {
+  --nc-bg: rgba(20, 20, 28, 0.94);
+  --nc-text: rgba(255, 255, 255, 0.92);
+  --nc-track: rgba(255, 255, 255, 0.15);
+}
+.music-volume-range { appearance: none; height: 5px; border-radius: 5px; cursor: pointer; }
+.music-volume-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 13px; height: 13px; border-radius: 50%; background: var(--nc-red);
+  box-shadow: 0 0 0 2px rgba(224, 85, 77, 0.25);
+  cursor: pointer; transition: transform .15s, box-shadow .15s;
+}
+.music-volume-range::-webkit-slider-thumb:hover { transform: scale(1.15); box-shadow: 0 0 0 3px rgba(224, 85, 77, 0.35); }
+.music-volume-range::-moz-range-track { height: 5px; border-radius: 5px; background: transparent; }
+.music-volume-range::-moz-range-thumb {
+  width: 13px; height: 13px; border: 0; border-radius: 50%; background: var(--nc-red);
+  box-shadow: 0 0 0 2px rgba(224, 85, 77, 0.25); cursor: pointer;
+}
+/* Tooltip 固定在轨道**下方**（卡片面板容器有 overflow-hidden，放上方会被截断） */
+.music-volume-tooltip {
+  position: absolute; left: 50%; top: 100%; transform: translate(-50%, 6px);
+  padding: 2px 6px; border-radius: 4px;
+  background: var(--nc-bg); color: var(--nc-text);
+  font-size: 10px; line-height: 1; font-variant-numeric: tabular-nums;
+  opacity: 0; pointer-events: none; transition: opacity .15s; white-space: nowrap;
+}
+.music-volume:hover .music-volume-tooltip { opacity: 0.9; }
+
+/* ===== 顶部悬浮歌词胶囊的字号档位 =====
+   7 档，每档给「移动端 / 桌面端」两个像素值：手机离眼近、视口窄，同 px 显大；
+   桌面离眼远、视口宽，需要更大字号才有同等可读性。分成两套值可避免「桌面偏小、移动端偏大」。
+   档位含义与默认值见 components/musicPanelThemes.ts 的 LYRIC_SIZE_OPTIONS。
+   padding / gap 用 em，跟着字号一起缩放。 */
+.top-lyric {
+  font-size: var(--tl-size, 13px);
+  padding: 0.34em 0.72em;
+  gap: 0.15em;
+  /* 整块是按钮：给一个下限，暂停时只剩音符也留得住够大的点击区域（否则只能瞄准字形） */
+  min-height: 26px;
+  cursor: pointer;
+}
+/* 音符只决定字形大小；左右内边距把它撑开一点，点击热区由整块胶囊承担 */
+.top-lyric-mark {
+  font-size: 0.9em;
+  padding: 0 0.3em;
+  line-height: 1;
+}
+.top-lyric[data-size="1"] { --tl-size: 10px; }
+.top-lyric[data-size="2"] { --tl-size: 11px; }
+.top-lyric[data-size="3"] { --tl-size: 12px; }
+.top-lyric[data-size="4"] { --tl-size: 13px; }
+.top-lyric[data-size="5"] { --tl-size: 14px; }
+.top-lyric[data-size="6"] { --tl-size: 16px; }
+.top-lyric[data-size="7"] { --tl-size: 18px; }
+@media (min-width: 768px) {
+  .top-lyric[data-size="1"] { --tl-size: 12px; }
+  .top-lyric[data-size="2"] { --tl-size: 13px; }
+  .top-lyric[data-size="3"] { --tl-size: 14px; }
+  .top-lyric[data-size="4"] { --tl-size: 15px; }
+  .top-lyric[data-size="5"] { --tl-size: 17px; }
+  .top-lyric[data-size="6"] { --tl-size: 19px; }
+  .top-lyric[data-size="7"] { --tl-size: 22px; }
+}
+
+/* ============================================================
+   音乐面板主题层（仅音乐列表弹窗使用）
+   ------------------------------------------------------------
+   三套风格：
+     甲 vinyl     · 黑胶暖色 —— 炭黑配琥珀，中央唱片缓缓转动，曲目做成唱片背面曲目表
+     乙 editorial · 纸面印刷 —— 纸白衬线，大字标题，杂志目录，朱红点睛（唯一的亮色面板）
+     丙 mono      · 黑白等宽 —— 纯黑直角，等宽字体与描边按钮，段式 LED 进度条
+
+   骨架一律用 .mp 系列语义类描述；配色与排版差异收敛到 [data-style] 下的令牌，
+   结构性差异（有没有唱片 / 进度条形态 / 歌词对齐）由组件按 traits 决定（见 musicPanelThemes.ts）。
+
+   注：音乐面板为固定配色，不随系统明暗切换 —— 面板自身定义 --mp-bg/--mp-fg，
+   不再依赖外部明暗变量，因此也不存在旧实现里「浅色系统把轨道刷白」的问题。
+   ============================================================ */
+
+.mp {
+  /* —— 甲 · 黑胶暖色（同时作为默认令牌） —— */
+  --mp-bg: rgba(28, 22, 19, 0.96);
+  --mp-fg: #fde68a;
+  --mp-title: #fef3c7;
+  --mp-dim: rgba(253, 230, 138, 0.55);
+  --mp-mute: rgba(253, 230, 138, 0.45);
+  --mp-ghost: rgba(253, 230, 138, 0.4);
+  --mp-accent: #f59e0b;
+  --mp-accent-soft: rgba(245, 158, 11, 0.14);
+  --mp-accent-strong: rgba(245, 158, 11, 0.24);
+  --mp-line: rgba(245, 158, 11, 0.22);
+  --mp-line-soft: rgba(245, 158, 11, 0.12);
+  --mp-hover: rgba(245, 158, 11, 0.08);
+  --mp-pick: rgba(245, 158, 11, 0.1);
+  --mp-track: rgba(245, 158, 11, 0.16);
+  --mp-scroll: rgba(245, 158, 11, 0.25);
+  --mp-scroll-hover: rgba(245, 158, 11, 0.45);
+  --mp-radius: 10px;
+  --mp-shadow: 0 26px 70px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --mp-scrim: rgba(0, 0, 0, 0.6);
+  --mp-head-border: 0;
+  --mp-head-pad: 0;
+  --mp-side-color: var(--mp-accent);
+  --mp-side-size: 12px;
+  --mp-side-tracking: 0.22em;
+  --mp-count-color: var(--mp-dim);
+  --mp-title-size: 18px;
+  --mp-title-weight: 600;
+  --mp-step-color: var(--mp-accent);
+  --mp-play-radius: 999px;
+  --mp-play-bg: var(--mp-accent-soft);
+  --mp-play-border: 1px solid var(--mp-line);
+  --mp-play-color: var(--mp-accent);
+  --mp-play-hover-bg: var(--mp-accent-strong);
+  --mp-bar-height: 2px;
+  --mp-bar-radius: 0;
+  --mp-thumb: 10px;
+  --mp-thumb-radius: 999px;
+  --mp-times-color: rgba(253, 230, 138, 0.45);
+  --mp-times-font: var(--mp-font-mono);
+  --mp-label-color: rgba(245, 158, 11, 0.6);
+  --mp-lyric-align: center;
+  --mp-lyric-size: 13px;
+  --mp-cur-size: 15px;
+  --mp-cur-color: var(--mp-title);
+  --mp-cur-weight: 600;
+  --mp-row-font: var(--mp-font-mono);
+  --mp-row-size: 13px;
+  --mp-row-color: rgba(253, 230, 138, 0.78);
+  --mp-num-size: 12px;
+  --mp-meta-size: 12px;
+  --mp-font-mono: ui-monospace, Menlo, Consolas, "Courier New", monospace;
+
+  background: var(--mp-bg);
+  color: var(--mp-fg);
+  border: 1px solid var(--mp-line);
+  border-radius: var(--mp-radius);
+  box-shadow: var(--mp-shadow);
+}
+
+/* —— 乙 · 纸面印刷（唯一的亮色面板） —— */
+.mp[data-style="editorial"] {
+  --mp-bg: #fbf9f4;
+  --mp-fg: #141414;
+  --mp-title: #141414;
+  --mp-dim: #8a8172;
+  --mp-mute: #8a8172;
+  --mp-ghost: #b8b0a2;
+  --mp-accent: #c2410c;
+  --mp-accent-soft: rgba(194, 65, 12, 0.08);
+  --mp-accent-strong: rgba(194, 65, 12, 0.16);
+  --mp-line: #141414;
+  --mp-line-soft: #ece6da;
+  --mp-hover: rgba(20, 20, 20, 0.035);
+  --mp-pick: rgba(20, 20, 20, 0.05);
+  --mp-track: #e6e0d4;
+  --mp-scroll: rgba(20, 20, 20, 0.22);
+  --mp-scroll-hover: rgba(20, 20, 20, 0.42);
+  --mp-radius: 2px;
+  --mp-shadow: 0 26px 70px rgba(0, 0, 0, 0.55);
+  --mp-scrim: rgba(10, 8, 6, 0.8);
+  --mp-head-border: 1px solid #141414;
+  --mp-head-pad: 8px;
+  --mp-side-color: var(--mp-fg);
+  --mp-side-size: 11px;
+  --mp-side-tracking: 0.18em;
+  --mp-count-color: var(--mp-dim);
+  --mp-title-size: 24px;
+  --mp-title-weight: 400;
+  --mp-step-color: var(--mp-dim);
+  --mp-play-radius: 0;
+  --mp-play-bg: transparent;
+  --mp-play-border: 0;
+  --mp-play-color: var(--mp-accent);
+  --mp-play-hover-bg: transparent;
+  --mp-bar-height: 1px;
+  --mp-bar-radius: 0;
+  --mp-thumb: 8px;
+  --mp-times-color: var(--mp-dim);
+  --mp-times-font: inherit;
+  --mp-label-color: var(--mp-dim);
+  --mp-lyric-size: 13px;
+  --mp-cur-size: 16px;
+  --mp-cur-color: var(--mp-accent);
+  --mp-cur-weight: 400;
+  --mp-row-font: Georgia, "Times New Roman", "Songti SC", "Noto Serif CJK SC", SimSun, serif;
+  --mp-row-size: 14px;
+  --mp-row-color: #3a352c;
+  --mp-num-size: 16px;
+  --mp-meta-size: 11px;
+  border-color: #e2dcd0;
+  font-family: Georgia, "Times New Roman", "Songti SC", "Noto Serif CJK SC", SimSun, serif;
+}
+/* 衬线面板的播放键是纯文字按钮，放大一点才压得住 24px 的标题 */
+.mp[data-style="editorial"] .mp-play { font-size: 15px; }
+.mp[data-style="editorial"] .mp-artist { font-style: italic; }
+/* 进度填充比轨道更高：轨道 1px 居中，填充 3px 盖在上面 */
+.mp[data-style="editorial"] .mp-range {
+  height: 3px;
+  background-color: transparent;
+  background-image:
+    linear-gradient(var(--mp-accent), var(--mp-accent)),
+    linear-gradient(var(--mp-track), var(--mp-track));
+  background-size: var(--mp-fill, 0%) 3px, 100% 1px;
+  background-position: 0 50%, 0 50%;
+  background-repeat: no-repeat, no-repeat;
+}
+
+/* —— 丙 · 黑白等宽 —— */
+.mp[data-style="mono"] {
+  --mp-bg: #000;
+  --mp-fg: #fff;
+  --mp-title: #fff;
+  --mp-dim: rgba(255, 255, 255, 0.45);
+  --mp-mute: rgba(255, 255, 255, 0.45);
+  --mp-ghost: rgba(255, 255, 255, 0.3);
+  --mp-accent: #22d3ee;
+  --mp-accent-soft: rgba(34, 211, 238, 0.16);
+  --mp-accent-strong: rgba(34, 211, 238, 0.28);
+  --mp-line: rgba(255, 255, 255, 0.22);
+  --mp-line-soft: rgba(255, 255, 255, 0.1);
+  --mp-hover: rgba(255, 255, 255, 0.06);
+  --mp-pick: rgba(255, 255, 255, 0.1);
+  --mp-track: rgba(255, 255, 255, 0.18);
+  --mp-scroll: rgba(255, 255, 255, 0.22);
+  --mp-scroll-hover: rgba(255, 255, 255, 0.4);
+  --mp-radius: 0;
+  --mp-shadow: none;
+  --mp-scrim: rgba(0, 0, 0, 0.8);
+  --mp-head-border: 1px solid rgba(255, 255, 255, 0.22);
+  --mp-head-pad: 8px;
+  --mp-side-color: #fff;
+  --mp-side-size: 11px;
+  --mp-side-tracking: 0.24em;
+  --mp-count-color: var(--mp-accent);
+  --mp-title-size: 19px;
+  --mp-step-color: rgba(255, 255, 255, 0.6);
+  --mp-play-radius: 0;
+  --mp-play-bg: transparent;
+  --mp-play-border: 1px solid rgba(255, 255, 255, 0.5);
+  --mp-play-color: #fff;
+  --mp-play-hover-bg: var(--mp-accent-soft);
+  --mp-bar-height: 10px;
+  --mp-thumb: 6px;
+  --mp-thumb-radius: 0;
+  --mp-times-color: rgba(255, 255, 255, 0.45);
+  --mp-times-font: inherit;
+  --mp-label-color: rgba(255, 255, 255, 0.4);
+  --mp-lyric-align: left;
+  --mp-lyric-size: 12px;
+  --mp-cur-size: 13px;
+  --mp-cur-color: var(--mp-accent);
+  --mp-cur-weight: 400;
+  --mp-row-font: ui-monospace, Menlo, Consolas, "Courier New", monospace;
+  --mp-row-size: 12px;
+  --mp-row-color: rgba(255, 255, 255, 0.72);
+  --mp-num-size: 12px;
+  --mp-meta-size: 12px;
+  font-family: ui-monospace, Menlo, Consolas, "Courier New", monospace;
+}
+/* 描边按钮 + 直角，跟等宽字体的气质统一 */
+.mp[data-style="mono"] .mp-icon-btn { border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 0; }
+.mp[data-style="mono"] .mp-icon-btn:hover { color: #fff; border-color: rgba(255, 255, 255, 0.5); }
+.mp[data-style="mono"] .mp-play:hover { border-color: var(--mp-accent); }
+/* 段式 LED 进度：整条换成 8 格等宽段（用重复渐变绘制，range 的拖拽与键盘能力保持不变） */
+.mp[data-style="mono"] .mp-range {
+  background-color: transparent;
+  background-image:
+    repeating-linear-gradient(to right, var(--mp-accent) 0 8px, transparent 8px 10px),
+    repeating-linear-gradient(to right, rgba(255, 255, 255, 0.18) 0 8px, transparent 8px 10px);
+  background-size: var(--mp-fill, 0%) 100%, 100% 100%;
+  background-repeat: no-repeat, no-repeat;
+}
+
+/* ---------- 骨架 ---------- */
+.mp-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* 与下方分区的间距统一由 .mp-dialog 的 gap 给出，这里不再各写一份 margin */
+  border-bottom: var(--mp-head-border);
+  padding-bottom: var(--mp-head-pad);
+}
+.mp-side {
+  font-size: var(--mp-side-size);
+  letter-spacing: var(--mp-side-tracking);
+  color: var(--mp-side-color);
+  text-transform: uppercase;
+}
+.mp-count { font-size: 11px; color: var(--mp-count-color); font-variant-numeric: tabular-nums; }
+.mp-spacer { margin-left: auto; }
+.mp-icon-btn {
+  width: 30px; height: 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: none; border-radius: 6px; cursor: pointer;
+  font-size: 14px; line-height: 1;
+  color: var(--mp-dim);
+  transition: color .15s, background-color .15s, border-color .15s;
+}
+.mp-icon-btn:hover { color: var(--mp-fg); background: var(--mp-pick); }
+.mp-icon-btn.is-on { color: var(--mp-accent); background: var(--mp-accent-soft); }
+
+/* ---------- 当前曲目 ---------- */
+.mp-now { display: flex; align-items: center; gap: 18px; }
+.mp-now-text { min-width: 0; flex: 1; }
+.mp-title {
+  font-size: var(--mp-title-size);
+  font-weight: var(--mp-title-weight);
+  line-height: 1.2;
+  color: var(--mp-title);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mp-artist { font-size: 12px; margin-top: 4px; color: var(--mp-dim); letter-spacing: .06em; }
+.mp[data-style="mono"] .mp-artist { font-size: 11px; letter-spacing: .14em; }
+
+/* ---------- 黑胶唱片（仅甲） ---------- */
+.mp-disc { position: relative; width: 96px; height: 96px; flex: 0 0 auto; }
+.mp-disc-grooves, .mp-disc-sheen { position: absolute; inset: 0; border-radius: 50%; }
+.mp-disc-grooves {
+  background: repeating-radial-gradient(circle at 50% 50%, #2b2320 0 1.6px, #191412 1.6px 3.4px);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .55), inset 0 0 0 1px rgba(245, 158, 11, .18);
+}
+/* 只有光泽层旋转：纯径向的纹路层转起来是看不出来的 */
+.mp-disc-sheen {
+  background: conic-gradient(from 0deg, rgba(255, 240, 200, .1), transparent 22%, rgba(255, 240, 200, .07) 48%, transparent 72%, rgba(255, 240, 200, .1));
+  animation: mp-spin 12s linear infinite;
+}
+.mp-disc-sheen.is-paused { animation-play-state: paused; }
+.mp-disc-label {
+  position: absolute; left: 50%; top: 50%; width: 36%; height: 36%; margin: -18% 0 0 -18%;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 4px; text-align: center; overflow: hidden;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #f59e0b, #b45309);
+  color: #1a1513; font-size: 9px; font-weight: 700; letter-spacing: .04em;
+}
+.mp-disc-hole {
+  position: absolute; left: 50%; top: 50%; width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px;
+  border-radius: 50%; background: #191412;
+}
+@keyframes mp-spin { to { transform: rotate(360deg); } }
+
+/* ---------- 传输控制 ---------- */
+.mp-transport { display: flex; align-items: center; gap: 10px; margin-top: 18px; }
+.mp-step {
+  width: 30px; height: 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: none; cursor: pointer; font-size: 12px;
+  color: var(--mp-step-color);
+  transition: color .15s, border-color .15s;
+}
+.mp-step:hover { color: var(--mp-fg); }
+.mp-step:disabled { opacity: .4; cursor: not-allowed; }
+.mp[data-style="mono"] .mp-step { border: 1px solid rgba(255, 255, 255, .16); }
+.mp-play {
+  width: 38px; height: 38px; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: var(--mp-play-border);
+  border-radius: var(--mp-play-radius);
+  background: var(--mp-play-bg);
+  color: var(--mp-play-color);
+  cursor: pointer; font-size: 13px;
+  transition: background-color .15s, border-color .15s, color .15s;
+}
+.mp-play:hover { background: var(--mp-play-hover-bg); }
+.mp-play:disabled { opacity: .4; cursor: not-allowed; }
+.mp-gap { width: 8px; flex: 0 0 auto; }
+
+/* 进度条：用 range 实现，拖拽与键盘可达性都保留；观感交给各风格背景层 */
+.mp-range {
+  -webkit-appearance: none; appearance: none;
+  flex: 1; min-width: 0;
+  height: var(--mp-bar-height);
+  border-radius: var(--mp-bar-radius);
+  background-color: var(--mp-track);
+  background-image: linear-gradient(var(--mp-accent), var(--mp-accent));
+  background-size: var(--mp-fill, 0%) 100%;
+  background-repeat: no-repeat;
+  outline: none; cursor: pointer;
+}
+.mp-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: var(--mp-thumb); height: var(--mp-thumb);
+  border: 0; border-radius: var(--mp-thumb-radius);
+  background: var(--mp-accent);
+  cursor: pointer;
+}
+.mp-range::-moz-range-thumb {
+  width: var(--mp-thumb); height: var(--mp-thumb);
+  border: 0; border-radius: var(--mp-thumb-radius);
+  background: var(--mp-accent); cursor: pointer;
+}
+.mp-range:disabled { opacity: .45; cursor: not-allowed; }
+.mp-times {
+  display: flex; justify-content: space-between;
+  font-size: 11px; margin-top: 6px;
+  color: var(--mp-times-color);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--mp-times-font);
+}
+
+/* ---------- 区块 ---------- */
+.mp-block-label {
+  font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+  margin: 18px 0 8px;
+  color: var(--mp-label-color);
+}
+/* position: relative 让容器成为定位参照：歌词行若依赖 offsetTop（居中滚动），
+   取到的才是「相对容器」的距离，而不是相对更外层的 .mp-dialog */
+.mp-lyric { position: relative; text-align: var(--mp-lyric-align); padding: 2px 0; }
+.mp-lyric-line {
+  padding: 3px 0;
+  font-size: var(--mp-lyric-size);
+  color: var(--mp-ghost);
+  transition: color .2s, font-size .2s;
+}
+.mp-lyric-line.is-cur {
+  color: var(--mp-cur-color);
+  font-size: var(--mp-cur-size);
+  font-weight: var(--mp-cur-weight);
+}
+
+/* ---------- 曲目表 ---------- */
+/* 歌单的滚动容器：只有它滚（占位与伸缩交由外层 .mp-section-list 管理） */
+.mp-list-wrap { overflow-y: auto; }
+.mp-list { display: flex; flex-direction: column; }
+.mp-row {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; padding: 9px 10px;
+  border: 0; border-bottom: 1px solid var(--mp-line-soft);
+  background: none; cursor: pointer; text-align: left;
+  font-family: var(--mp-row-font); font-size: var(--mp-row-size);
+  color: var(--mp-row-color);
+  transition: background-color .15s, color .15s;
+}
+.mp-row:hover { background: var(--mp-hover); }
+.mp-row.is-active { background: var(--mp-pick); color: var(--mp-title); }
+.mp-row-num {
+  width: 22px; flex: 0 0 auto;
+  font-size: var(--mp-num-size);
+  color: var(--mp-dim);
+  font-variant-numeric: tabular-nums;
+}
+.mp-row.is-active .mp-row-num { color: var(--mp-accent); }
+.mp-row-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-row-meta {
+  flex: 0 0 auto; max-width: 45%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--mp-meta-size);
+  color: var(--mp-mute);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 提示与空态 ---------- */
+.mp-note { border-radius: 6px; padding: 6px 10px; font-size: 12px; line-height: 1.5; }
+.mp-error { color: #ef4444; background: rgba(239, 68, 68, .12); border: 1px solid rgba(239, 68, 68, .3); }
+.mp[data-style="editorial"] .mp-error { color: #b91c1c; background: rgba(185, 28, 28, .07); }
+.mp-empty { color: var(--mp-dim); background: var(--mp-pick); }
+
+/* ---------- 声音 ---------- */
+.mp-vol { display: flex; align-items: center; gap: 8px; }
+.mp-vol-btn {
+  width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 6px; background: none; cursor: pointer;
+  color: var(--mp-dim);
+  transition: color .15s, background-color .15s;
+}
+.mp-vol-btn:hover { color: var(--mp-fg); background: var(--mp-pick); }
+.mp-vol-range {
+  -webkit-appearance: none; appearance: none;
+  width: 96px; height: 5px; border-radius: 5px; cursor: pointer;
+}
+.mp-vol-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 13px; height: 13px; border: 0; border-radius: 50%;
+  background: var(--mp-accent);
+  cursor: pointer; transition: transform .15s;
+}
+.mp-vol-range::-webkit-slider-thumb:hover { transform: scale(1.15); }
+.mp-vol-range::-moz-range-track { height: 5px; border-radius: 5px; background: transparent; }
+.mp-vol-range::-moz-range-thumb {
+  width: 13px; height: 13px; border: 0; border-radius: 50%;
+  background: var(--mp-accent); cursor: pointer;
+}
+.mp[data-style="mono"] .mp-vol-range,
+.mp[data-style="mono"] .mp-vol-range::-webkit-slider-thumb,
+.mp[data-style="mono"] .mp-vol-range::-moz-range-thumb { border-radius: 0; }
+/* Tooltip 固定在轨道**下方**（卡片面板容器 overflow-hidden，放上方会被截断） */
+.mp-vol-tip {
+  position: absolute; left: 50%; top: 100%; transform: translate(-50%, 6px);
+  padding: 2px 6px; border-radius: 4px;
+  border: 1px solid var(--mp-line-soft);
+  background: var(--mp-bg); color: var(--mp-fg);
+  font-size: 10px; line-height: 1; font-variant-numeric: tabular-nums;
+  opacity: 0; pointer-events: none; transition: opacity .15s; white-space: nowrap;
+}
+.mp-vol:hover .mp-vol-tip { opacity: .95; }
+
+/* ---------- 容器 ---------- */
+/* 弹窗面板：居中悬浮。面板本身不滚动 —— 功能拆成三块独立区域（当前播放 / 歌词 / 歌单），
+   前两块固定，只有歌单区占满剩余高度并自行滚动。 */
+.mp-dialog {
+  position: relative;
+  display: flex; flex-direction: column;
+  gap: 12px;
+  width: 100%; max-width: 460px;
+  /* 不铺满视口：取「绝对上限」与「视口占比」中较小者，矮视口下也能留出明显的四周余白 */
+  max-height: min(620px, 78vh);
+  max-height: min(620px, 78dvh);
+  overflow: hidden;
+  overscroll-behavior: contain;
+  padding: 18px 20px 20px;
+}
+/* 除歌单区外一律不参与收缩：面板变矮时只压缩歌单，其余区块保持原位 */
+.mp-dialog > * { flex-shrink: 0; }
+.mp-dialog > .mp-section-list { flex: 1 1 auto; min-height: 0; }
+/* 设置浮层展开时内容会超出面板高度：面板改回整体滚动，并给歌单一个固定高度 ——
+   否则它作为唯一的可收缩项会被压到零高（容器能滚并不阻止 flex 子项被收缩），
+   用户既看不到歌单也滚不动。收起设置后即恢复「面板不滚、只有歌单滚」。 */
+.mp-dialog:has(.mp-settings) { overflow-y: auto; }
+.mp-dialog:has(.mp-settings) > .mp-section-list { flex: 0 0 auto; }
+.mp-dialog:has(.mp-settings) > .mp-section-list > .mp-list-wrap { height: 160px; }
+/* 面板收小后唱片也跟着收一号，免得它一个人占掉近四分之一高度 */
+.mp-dialog .mp-disc { width: 72px; height: 72px; }
+
+/* ---------- 分区 ----------
+   把面板里的功能拆进独立区域，各自带边框与浅底色，不再糊成一整块。 */
+.mp-section {
+  border: 1px solid var(--mp-line-soft);
+  border-radius: max(0px, calc(var(--mp-radius) - 3px));
+  background: var(--mp-pick);
+  padding: 12px 14px;
+}
+.mp-section .mp-block-label { margin: 0 0 6px; }
+/* 歌单区：底部不留内边距，让列表贴到边缘滚；自身占满剩余高度 */
+.mp-section-list {
+  display: flex; flex-direction: column;
+  padding: 12px 14px 0;
+}
+.mp-section-list > .mp-list-wrap { flex: 1 1 auto; min-height: 0; }
+/* 当前播放区：唱片信息与控制区之间收紧一档 */
+.mp-section-stage .mp-transport { margin-top: 14px; }
+/* 弹窗里的功能行（音量 + 播放模式）：低对比度收纳，不抢主视觉 */
+.mp-extras {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-top: 12px;
+}
+
+/* 遮罩层同时挂 .mp（借它的令牌），因此要把外壳自带的框线/圆角/底色清掉。
+   面板在所有宽度下都居中悬浮，不做贴底抽屉：贴底会牺牲圆角与四周留白，观感更廉价。 */
+.mp-scrim {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+  border: 0; border-radius: 0; box-shadow: none;
+  background: var(--mp-scrim);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.mp-scroll { scrollbar-width: thin; scrollbar-color: var(--mp-scroll) transparent; }
+.mp-scroll::-webkit-scrollbar { width: 6px; }
+.mp-scroll::-webkit-scrollbar-track { background: transparent; }
+.mp-scroll::-webkit-scrollbar-thumb { background: var(--mp-scroll); border-radius: 3px; }
+.mp-scroll::-webkit-scrollbar-thumb:hover { background: var(--mp-scroll-hover); }
+
+/* ---------- 面板设置浮层 ---------- */
+.mp-settings {
+  margin-top: 14px;
+  border: 1px solid var(--mp-line);
+  border-radius: max(0px, calc(var(--mp-radius) - 2px));
+  background: var(--mp-pick);
+  padding: 12px 14px;
+}
+.mp-settings-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 7px 0;
+  font-size: 12px;
+  color: var(--mp-fg);
+}
+.mp-settings-row + .mp-settings-row { border-top: 1px solid var(--mp-line-soft); }
+.mp-styles { display: flex; flex-wrap: wrap; gap: 6px; }
+.mp-chip {
+  padding: 5px 10px;
+  border: 1px solid var(--mp-line);
+  border-radius: max(0px, calc(var(--mp-radius) - 2px));
+  background: none; cursor: pointer;
+  font-size: 12px; line-height: 1.2;
+  color: var(--mp-dim);
+  transition: color .15s, border-color .15s, background-color .15s;
+}
+.mp-chip:hover { color: var(--mp-fg); }
+.mp-chip.is-on { color: var(--mp-accent); border-color: var(--mp-accent); background: var(--mp-accent-soft); }
+.mp-switch {
+  width: 38px; height: 20px; flex: 0 0 auto;
+  border: 1px solid var(--mp-line);
+  border-radius: 999px;
+  background: none; cursor: pointer; position: relative;
+  transition: background-color .15s, border-color .15s;
+}
+.mp-switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--mp-dim);
+  transition: transform .15s, background-color .15s;
+}
+.mp-switch.is-on { border-color: var(--mp-accent); background: var(--mp-accent-soft); }
+.mp-switch.is-on::after { transform: translateX(18px); background: var(--mp-accent); }
+.mp[data-style="mono"] .mp-switch, .mp[data-style="mono"] .mp-switch::after { border-radius: 0; }
+.mp-hint { font-size: 11px; line-height: 1.6; color: var(--mp-dim); }
+
+/* 窄屏：四周留窄一点的边距，但同样保持悬浮（不做贴底抽屉） */
+@media (max-width: 640px) {
+  .mp-scrim { padding: 12px; }
+  .mp-dialog { padding: 16px 16px 18px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mp-disc-sheen { animation: none; }
+}
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 3.9%;
+    --primary: 0 0% 9%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 0 0% 96.1%;
+    --secondary-foreground: 0 0% 9%;
+    --muted: 0 0% 96.1%;
+    --muted-foreground: 0 0% 45.1%;
+    --accent: 0 0% 96.1%;
+    --accent-foreground: 0 0% 9%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 89.8%;
+    --input: 0 0% 89.8%;
+    --ring: 0 0% 3.9%;
+    --radius: 0.5rem;
+    /*
+      语义状态色（P1 设计令牌）：success / warning / error / info + 浅底 soft。
+      用法：text-success · bg-success/15 · bg-success-soft（浅底深字）等。
+      浅色为 600 段，深色(.dark)自动切为 400 段较亮版本，保证暗底可读。
+    */
+    --success: 142 71% 45%;
+    --success-soft: 138 75% 95%;
+    --warning: 32 95% 44%;
+    --warning-soft: 33 96% 94%;
+    --error: 0 84% 60%;
+    --error-soft: 0 84% 95%;
+    --info: 217 91% 50%;
+    --info-soft: 214 92% 95%;
+    /* ================= 设计令牌 · 投影 / 圆角 / 玻璃 =================
+       阴影（--shadow-2..5）：通用阴影类 .shadow-card-* 与玻璃卡片 .card-glass 共用同一数据源。
+         2 近距/微抬 · 3 基础卡片(rest) · 4-5 提升/悬停；--shadow-active 为按压态。
+       圆角（--radius-*）：与 shadcn 的 --radius(8px) 对齐，主卡默认取 --radius-md。
+       shadcn 映射：rounded-lg→--radius-md · rounded-md→--radius-sm · rounded-sm→--radius-xs。
+    */
+    --shadow-2: 0 2px 8px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
+    --shadow-3: 0 4px 12px rgba(0, 0, 0, 0.15), 0 2px 6px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    --shadow-4: 0 6px 16px rgba(0, 0, 0, 0.18), 0 3px 10px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    --shadow-5: 0 8px 24px rgba(0, 0, 0, 0.2), 0 4px 12px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    --shadow-active: 0 2px 8px rgba(0, 0, 0, 0.15), 0 1px 4px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    --radius-xs: 4px;
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 10px;
+    --radius-xl: 14px;
+    /* 主题强调色 + 玻璃质感（默认值，由 ThemeProvider 按后台配置覆盖） */
+    --accent-color: #7dd3fc;
+    --card-alpha: 0.35;
+    --glass-blur: 16px;
+  }
+
+  /* 暗色主题：由 ThemeProvider 根据主题模式切换 .dark 类 */
+  .dark {
+    --background: 0 0% 7%;
+    --foreground: 0 0% 95%;
+    --card: 0 0% 10%;
+    --card-foreground: 0 0% 95%;
+    --primary: 0 0% 95%;
+    --primary-foreground: 0 0% 9%;
+    --secondary: 0 0% 16%;
+    --secondary-foreground: 0 0% 95%;
+    --muted: 0 0% 16%;
+    --muted-foreground: 0 0% 65%;
+    --accent: 0 0% 16%;
+    --accent-foreground: 0 0% 95%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 20%;
+    --input: 0 0% 20%;
+    --ring: 0 0% 70%;
+    /* 语义状态色（dark）：切换为更亮版本保证暗底可读 */
+    --success: 142 76% 55%;
+    --success-soft: 144 60% 16%;
+    --warning: 32 95% 58%;
+    --warning-soft: 32 80% 20%;
+    --error: 0 72% 62%;
+    --error-soft: 0 72% 20%;
+    --info: 217 91% 62%;
+    --info-soft: 216 85% 22%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    /* 全局基础字号 16px (1rem)，确保浏览器缩放基准一致 */
+    font-size: 1rem;
+  }
+  /* 主题切换过渡：仅作用于颜色属性，避免闪烁 */
+  html.theme-transition *,
+  html.theme-transition *::before,
+  html.theme-transition *::after {
+    transition:
+      background-color 0.3s ease,
+      color 0.3s ease,
+      border-color 0.3s ease;
+  }
+}
+
+/* ===== 自定义滚动条（优化版：更精致的圆角和透明度）===== */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  border-radius: 10px;
+  background-color: rgba(255, 255, 255, 0.35);
+  transition: background-color 0.2s ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.5);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ========== 通用阴影系统 ==========
+   .shadow-card-sm..md 由 base 层 --shadow-2 / --shadow-4 令牌统一供给，避免硬编码值散落 */
+.shadow-card-sm {
+  box-shadow: var(--shadow-2);
+}
+.shadow-card-md {
+  box-shadow: var(--shadow-4);
+}
+
+@layer components {
+  /* ============================================
+     .card-glass — 基础玻璃卡片层
+     - 通过 CSS 变量支持差异化定制（圆角、遮罩深浅、内边距）
+     - 共享同一套微交互动效体系
+     ============================================ */
+
+  :root {
+    /* 玻璃卡片参数：圆角/投影统一走令牌；
+       alpha(遮罩深浅) 与 blur 由 ThemeProvider 按后台滑杆覆盖，此处不再重复定义 */
+    --card-radius: var(--radius-md); /* 主卡默认 8px */
+    --card-shadow-base: var(--shadow-3); /* rest 基础 */
+    --card-shadow-hover: var(--shadow-5); /* hover 提升 */
+    --card-shadow-active: var(--shadow-active); /* 按压 */
+  }
+
+  .card-glass {
+    border-radius: var(--card-radius);
+    background-color: rgba(0, 0, 0, var(--card-alpha));
+    backdrop-filter: blur(var(--glass-blur, 16px)) saturate(140%);
+    -webkit-backdrop-filter: blur(var(--glass-blur, 16px)) saturate(140%);
+    transform: translateY(0) scale(1);
+    transition:
+      background-color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+      backdrop-filter 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+      transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+      box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: var(--card-shadow-base);
+  }
+  .card-glass:hover {
+    transform: translateY(-2px) scale(1.005);
+    box-shadow: var(--card-shadow-hover);
+  }
+  .card-glass:active {
+    transform: translateY(0) scale(0.99);
+    box-shadow: var(--card-shadow-active);
+  }
+
+  /* ---------- 语义化变体 ---------- */
+
+  /* 简介卡片：大圆角 + 稍深遮罩，突出文字可读性 */
+  .card-info {
+    --card-radius: var(--radius-lg);
+    --card-alpha: 0.4;
+  }
+
+  /* 功能卡片（时钟 / 一言）：默认样式即可 */
+  .card-func {}
+
+  /* 链接列表容器：无额外装饰，仅继承 base */
+  .card-list {}
+
+  /* SiteLinks 内部按钮：小圆角 + 固定内边距 */
+  .card-btn {
+    @apply card-glass;
+    --card-radius: var(--radius-lg);
+    --card-alpha: 0.25;
+    padding: 0.75rem;
+  }
+  .card-btn:hover {
+    --card-alpha: 0.35;
+    /* 覆盖 .card-glass:hover 的上浮/放大位移，链接卡片悬停保持静止、仅高亮 */
+    transform: none;
+  }
+}
+
+@layer utilities {
+  /* ===== 时钟卡片容器查询 ===== */
+  /* 显式定义 container-type：Tailwind 的 @container 类在本项目未生效（computed 为 normal），
+     时钟时间字号依赖 cqw 单位按卡片宽度自适应，必须让容器查询真正开启 */
+  .clock-card-container {
+    container-type: inline-size;
+  }
+
+  /* ===== 昵称艺术字体（内置：有爱圆体，中英双语） ===== */
+  /* 有爱圆体（中） + Baloo 2（英）组合：西文走 Baloo，中文走有爱圆体 */
+  .font-art-nowar {
+    font-family: var(--font-baloo), var(--font-nowar), var(--font-noto-sc), sans-serif;
+  }
+  /* LED 风格数字时钟字体 */
+  .font-clock {
+    font-family: var(--font-tech-mono), "Courier New", monospace;
+  }
+  /* 昵称标题容器 — 响应式最大宽度，防止字号增大后溢出 */
+  .logo-title {
+    max-width: 190px;
+  }
+  @media (min-width: 640px) {
+    .logo-title { max-width: 340px; }
+  }
+  @media (min-width: 768px) {
+    .logo-title { max-width: 500px; }
+  }
+  @media (min-width: 1024px) {
+    .logo-title { max-width: 540px; }
+  }
+  @media (min-width: 1280px) {
+    .logo-title { max-width: 600px; }
+  }
+  /* ===== 强调色发光文字（优化版：双层柔和光晕）===== */
+  .text-glow-accent {
+    text-shadow:
+      0 0 8px color-mix(in srgb, var(--accent-color, #7dd3fc) 50%, transparent),
+      0 0 20px color-mix(in srgb, var(--accent-color, #7dd3fc) 25%, transparent),
+      0 0 40px color-mix(in srgb, var(--accent-color, #7dd3fc) 10%, transparent);
+  }
+
+  /* ===== 社交链接容器：图标+名称胶囊（对齐 home .social 布局）=====
+     每个链接 = 图标 + 文字标题胶囊按钮，始终可见；
+     悬停时图标与名称随 currentColor 变为主题强调色（--accent-color），
+     并浮现毛玻璃背景（--card-alpha / --glass-blur 与后台滑杆联动，适配主题） */
+  .social-links-bar {
+    margin-top: 1.75rem;
+    display: flex;
+    align-items: center;
+    /* 与下方简介卡片 max-w-[500px] 对齐，保证左栏视觉节奏一致 */
+    max-width: 500px;
+    width: 100%;
+    /* 允许容器收缩：防止胶囊固有宽度撑开外层 flex 产生横向溢出 */
+    min-width: 0;
+    min-height: 50px;
+    padding: 0;
+    background-color: transparent;
+    border-radius: 10px;
+    animation: fade 0.5s ease both;
+  }
+  /* 胶囊自带内边距，行间距收窄：行距 0.5rem / 列距 0.6rem；
+     全尺寸居中对齐：任意链接数量换行都呈对称「按钮云」，与移动端行为统一 */
+  .social-link-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    gap: 0.5rem 0.6rem;
+  }
+  .social-icon {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.4rem 0.65rem 0.35rem;
+    border-radius: 10px;
+    color: rgba(255, 255, 255, 0.92);
+    transition:
+      color 0.25s ease,
+      background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      backdrop-filter 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .social-icon:hover {
+    color: var(--accent-color, #7dd3fc);
+    background-color: rgba(0, 0, 0, var(--card-alpha, 0.3));
+    backdrop-filter: blur(10px) saturate(130%);
+    -webkit-backdrop-filter: blur(10px) saturate(130%);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    transform: translateY(-1px);
+  }
+  .social-icon:active {
+    transform: translateY(0) scale(0.98);
+  }
+  /* 图标下方的文字标题：小号辅助标签（11px），悬停随 currentColor 变强调色 */
+  .social-link-title {
+    font-size: 0.6875rem;
+    font-weight: 500;
+    line-height: 1.2;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    /* 壁纸亮色区域也保证可读 */
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  }
+  /* 窄屏（≤480px）收窄胶囊内边距与间距，减少换行、避免横向溢出 */
+  @media (max-width: 480px) {
+    .social-links-bar {
+      padding: 0 0.6rem;
+    }
+    .social-link-row {
+      gap: 0.4rem 0.45rem;
+    }
+    .social-icon {
+      gap: 0.25rem;
+      padding: 0.32rem 0.5rem 0.28rem;
+    }
+  }
+}
+
+/* ===== 进入动画（优化版：更自然的缓动曲线）===== */
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-fade {
+  animation: fade 0.5s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+/* 欢迎通知滑入动画（全端统一：优化曲线和起始位置） */
+@keyframes notice-center {
+  from {
+    opacity: 0;
+    transform: translateY(-20px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-notice-center {
+  animation: notice-center 0.45s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+/* 页脚扫光效果（优化版：更柔和的节奏） */
+.shine-text {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.4) 0%,
+    rgba(255, 255, 255, 0.9) 45%,
+    rgba(255, 255, 255, 1) 50%,
+    rgba(255, 255, 255, 0.9) 55%,
+    rgba(255, 255, 255, 0.4) 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: shine-move 4s ease-in-out infinite;
+}
+@keyframes shine-move {
+  0% {
+    background-position: 200% center;
+  }
+  100% {
+    background-position: -200% center;
+  }
+}
+
+/* ===== 后台滑杆（玻璃参数 / 背景遮罩）=====
+   精致细轨道 + 主色球形滑块，白色描边隔离轨道背景，统一后台质感（仅作用于 .admin-range） */
+.admin-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  outline: none;
+  cursor: pointer;
+}
+.admin-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 9999px;
+  background: hsl(var(--muted));
+}
+.admin-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  margin-top: -5.5px;
+  border: 2px solid hsl(var(--background));
+  border-radius: 9999px;
+  background: hsl(var(--primary));
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+.admin-range::-webkit-slider-thumb:hover,
+.admin-range::-webkit-slider-thumb:active {
+  transform: scale(1.12);
+}
+.admin-range::-moz-range-track {
+  height: 4px;
+  border-radius: 9999px;
+  background: hsl(var(--muted));
+}
+.admin-range::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border: 2px solid hsl(var(--background));
+  border-radius: 9999px;
+  background: hsl(var(--primary));
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+}
+
+/* ===== 后台下拉（.admin-select）=====
+   隐藏浏览器原生箭头，右侧绘制统一 chevron，跨浏览器外观一致 */
+.admin-select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 2.5rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 16px 16px;
+}
+
+/* ===== 全屏加载动画（LoadingScreen） ===== */
+#loader-wrapper {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #1a1a2e;
+  transition:
+    transform 0.3s 1s ease-out,
+    visibility 0.3s 1s ease-out;
+  /*
+    兜底：加载遮罩的移除依赖客户端 JS（useEffect 监听 background-ready + 7s 安全兜底）。
+    若首载时 JS chunk 被中断/失败导致 hydration 未完成，JS 移除逻辑永远不执行，
+    遮罩会永久盖住页面（内容实际已在 SSR HTML 中）。此处用纯 CSS 延迟 5s 强制淡出，
+    保证无论 JS 是否就绪，遮罩都绝不会阻塞内容。正常路径下 React 约 2s 即移除节点，
+    二者不冲突。
+  */
+  animation: loader-auto-hide 0s linear 5s forwards;
+}
+@keyframes loader-auto-hide {
+  to {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+}
+#loader-wrapper .loader {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+#loader-wrapper .loader-circle {
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  border-top-color: #fff;
+  animation: loader-spin 1.8s linear infinite;
+  position: relative;
+}
+#loader-wrapper .loader-circle::before {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  border-top-color: #a4a4a4;
+  animation: loader-spin-reverse 0.6s linear infinite;
+}
+#loader-wrapper .loader-circle::after {
+  content: "";
+  position: absolute;
+  inset: 15px;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  border-top-color: #d3d3d3;
+  animation: loader-spin 1s linear infinite;
+}
+#loader-wrapper .loader-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: #fff;
+  z-index: 2;
+  margin-top: 40px;
+}
+#loader-wrapper .loader-name {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+#loader-wrapper .loader-tip {
+  margin-top: 6px;
+  font-size: 18px;
+  opacity: 0.6;
+}
+#loader-wrapper .loader-section {
+  position: fixed;
+  top: 0;
+  width: 51%;
+  height: 100%;
+  background: #1a1a2e;
+  z-index: 1;
+}
+#loader-wrapper .loader-section-left {
+  left: 0;
+}
+#loader-wrapper .loader-section-right {
+  right: 0;
+}
+#loader-wrapper.loader-loaded .loader-circle,
+#loader-wrapper.loader-loaded .loader-text {
+  opacity: 0;
+  transition: opacity 0.3s ease-out;
+}
+#loader-wrapper.loader-loaded .loader-section-left {
+  transform: translateX(-100%);
+  transition: transform 0.5s 0.3s cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+#loader-wrapper.loader-loaded .loader-section-right {
+  transform: translateX(100%);
+  transition: transform 0.5s 0.3s cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+#loader-wrapper.loader-loaded {
+  visibility: hidden;
+  transform: translateY(-100%);
+}
+
+@keyframes loader-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+@keyframes loader-spin-reverse {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(-360deg);
+  }
+}
+
+/* ===== 登录页深色玻璃主题 ===== */
+.input-glass {
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  color: #fff !important;
+}
+.input-glass::placeholder {
+  color: rgba(255, 255, 255, 0.4) !important;
+}
+.input-glass:focus-visible {
+  --tw-ring-color: rgba(168, 85, 247, 0.6);
+}
+
+/* 品牌渐变按钮 */
+.btn-brand {
+  background-image: linear-gradient(to right, #a855f7, #ec4899) !important;
+  color: #fff !important;
+  box-shadow: 0 8px 20px -8px rgba(168, 85, 247, 0.5) !important;
+}
+.btn-brand:hover:not(:disabled) {
+  background-image: linear-gradient(to right, #9333ea, #db2777) !important;
+  box-shadow: 0 12px 28px -8px rgba(168, 85, 247, 0.65) !important;
+}
+.btn-brand:disabled {
+  opacity: 0.6;
+}
+
+/* ===== 昵称艺术字体就绪过渡 ===== */
+.logo-font-fade {
+  opacity: 0.3;
+  transition: opacity 0.4s ease;
+}
+.logo-font-fade.logo-font-ready {
+  opacity: 1;
+}
+
+/* ===== 首屏单屏适配（任意窗口下内容不滚动、全部可见） ===== */
+/* 导航卡格子高度默认 100px，矮视口下收紧，保证双栏+页脚落在一屏内 */
+.site-links-container {
+  --nav-cell: 100px;
+}
+@media (max-height: 760px) {
+  .site-links-container {
+    --nav-cell: 86px;
+  }
+  /* 收紧页脚纵向占位 */
+  footer {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+}
+

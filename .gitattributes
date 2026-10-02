@@ -1,0 +1,15 @@
+# 强制关键文件使用 LF 行尾入库（防 Windows autocrlf 把 CRLF 写进 blob，
+# 避免 Linux/Docker 端 deploy.sh / Dockerfile 执行报错）
+* text=auto
+
+# Shell 脚本与 Docker 文件：必须 LF（CRLF 会导致 bash set -o pipefail 等报错）
+*.sh text eol=lf
+Dockerfile text eol=lf
+Dockerfile.* text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.prisma text eol=lf
+.env* text eol=lf
+
+# PowerShell 脚本在 Windows 运行，保留 CRLF
+*.ps1 text eol=crlf

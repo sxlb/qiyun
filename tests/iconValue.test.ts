@@ -1,0 +1,216 @@
+import { describe, expect, it } from "vitest";
+import {
+  isInlineSvgValue,
+  isIconifyValue,
+  isLocalImagePath,
+  renderInlineSvg,
+  resolveIconImageSrc,
+  sanitizeRemoteSvg,
+} from "@/lib/iconValue";
+
+describe("isInlineSvgValue（内联 SVG 代码判定）", () => {
+  it("识别以 <svg 开头的完整粘贴片段", () => {
+    expect(
+      isInlineSvgValue(
+        '<svg t="1789304190843" viewBox="0 0 1024 1024" width="200" height="200"><path d="M1 2"/></svg>'
+      )
+    ).toBe(true);
+  });
+
+  it("带前导空白的 <svg 也能识别", () => {
+    expect(isInlineSvgValue('  <svg viewBox="0 0 24 24"></svg>')).toBe(true);
+  });
+
+  it("纯图标名 / 空值不是内联 SVG", () => {
+    expect(isInlineSvgValue("icon-github")).toBe(false);
+    expect(isInlineSvgValue("")).toBe(false);
+    expect(isInlineSvgValue(null as unknown as string)).toBe(false);
+  });
+
+  it("夹带 <script 的内容视为不安全，拒绝", () => {
+    expect(
+      isInlineSvgValue('<svg viewBox="0 0 24 24"><script>alert(1)</script></svg>')
+    ).toBe(false);
+  });
+
+  // 【VULN-02】以下两类是此前的绕过点：属性可省略引号、也可用 `/` 代替空格分隔
+  it("无引号 / `/` 分隔的事件属性视为注入，拒绝", () => {
+    expect(isInlineSvgValue('<svg onload=alert(1) viewBox="0 0 24 24"><path d="M1"/></svg>')).toBe(false);
+    expect(isInlineSvgValue('<svg/onmouseover="alert(1)" viewBox="0 0 24 24"><path d="M1"/></svg>')).toBe(false);
+  });
+
+  it("javascript: / vbscript: 协议视为注入，拒绝", () => {
+    expect(isInlineSvgValue('<svg viewBox="0 0 24 24"><path d="javascript:alert(1)"/></svg>')).toBe(false);
+  });
+});
+
+describe("isIconifyValue（Iconify prefix:name 判定）", () => {
+  it("识别常见 Iconify 格式", () => {
+    expect(isIconifyValue("fa:github")).toBe(true);
+    expect(isIconifyValue("mdi:home")).toBe(true);
+    expect(isIconifyValue("tabler:brand-github")).toBe(true);
+    expect(isIconifyValue("simple-icons:bilibili")).toBe(true);
+  });
+
+  it("图片外链 / 内联 SVG / 空值不是 Iconify", () => {
+    expect(isIconifyValue("https://x.com/a.png")).toBe(false);
+    expect(isIconifyValue("<svg viewBox></svg>")).toBe(false);
+    expect(isIconifyValue("")).toBe(false);
+    expect(isIconifyValue(null as unknown as string)).toBe(false);
+  });
+
+  it("http:开头不会被误判为 Iconify（x:y 形态的坑）", () => {
+    expect(isIconifyValue("http://x.com/a")).toBe(false);
+  });
+
+  it("保留前缀 lucide: / mailto: 不会被误判为 Iconify", () => {
+    expect(isIconifyValue("lucide:github")).toBe(false);
+    expect(isIconifyValue("mailto:a@b.com")).toBe(false);
+  });
+});
+
+describe("renderInlineSvg（内联 SVG 规范化）", () => {
+  const sample = '<svg t="abc" class="icon" viewBox="0 0 1024 1024" width="200" height="200"><path d="M1 2"/></svg>';
+
+  it("把 width/height 统一为目标尺寸（贴的阿里 iconfont 常带 200x200）", () => {
+    const out = renderInlineSvg(sample, 32);
+    expect(out).toContain('width="32"');
+    expect(out).toContain('height="32"');
+    expect(out).not.toContain('width="200"');
+  });
+
+  it("保留 viewBox 与内部 path", () => {
+    const out = renderInlineSvg(sample, 32);
+    expect(out).toContain('viewBox="0 0 1024 1024"');
+    expect(out).toContain('<path d="M1 2"/>');
+  });
+
+  it("移除事件属性与外部链接，防止注入", () => {
+    const evil =
+      '<svg onload="alert(1)" viewBox="0 0 24 24"><path d="M1"/></svg>';
+    const out = renderInlineSvg(evil, 24);
+    expect(out).not.toContain("onload");
+  });
+
+  it("移除 href / src，防止外链注入", () => {
+    const evil = '<svg viewBox="0 0 24 24"><use href="https://evil.com/x.svg"/></svg>';
+    const out = renderInlineSvg(evil, 24);
+    expect(out).not.toContain("evil.com");
+  });
+
+  // 【VULN-02】此前的正则只匹配「空格 + 引号」，无引号/`/` 分隔写法可绕过清洗
+  it("无引号 / `/` 分隔的事件属性同样被清除", () => {
+    const out1 = renderInlineSvg('<svg onload=alert(1) viewBox="0 0 24 24"><path d="M1"/></svg>', 24);
+    expect(out1).not.toContain("onload");
+    expect(out1).not.toContain("alert");
+
+    const out2 = renderInlineSvg('<svg/onmouseover="alert(1)" viewBox="0 0 24 24"><path d="M1"/></svg>', 24);
+    expect(out2).not.toContain("onmouseover");
+  });
+
+  it("移除危险子标签（成对与自闭合形式）", () => {
+    const paired = renderInlineSvg(
+      '<svg viewBox="0 0 24 24"><style>@keyframes x{}</style><path d="M1"/></svg>',
+      24
+    );
+    expect(paired).not.toContain("<style>");
+
+    const selfClosing = renderInlineSvg(
+      '<svg viewBox="0 0 24 24"><animate attributeName="href" values="javascript:alert(1)"/><path d="M1"/></svg>',
+      24
+    );
+    expect(selfClosing).not.toContain("<animate");
+  });
+
+  it("style 属性：命中危险构造整段移除，常规声明保留", () => {
+    const evil = renderInlineSvg(
+      '<svg style="background:url(javascript:alert(1))" viewBox="0 0 24 24"><path d="M1"/></svg>',
+      24
+    );
+    expect(evil).not.toContain("javascript");
+
+    const safe = renderInlineSvg('<svg style="fill:#333" viewBox="0 0 24 24"><path d="M1"/></svg>', 24);
+    expect(safe).toContain('style="fill:#333"');
+  });
+});
+
+describe("isLocalImagePath（本地图片路径判定）", () => {
+  it("识别站点内相对路径（含无扩展名的路径）", () => {
+    expect(isLocalImagePath("/images/icon/github.png")).toBe(true);
+    expect(isLocalImagePath("/api/uploads/file/abc.webp")).toBe(true);
+    expect(isLocalImagePath("/assets/logo")).toBe(true);
+  });
+
+  it("协议相对地址 //host 与外链不算本地路径", () => {
+    expect(isLocalImagePath("//cdn.example.com/a.png")).toBe(false);
+    expect(isLocalImagePath("https://x.com/a.png")).toBe(false);
+    expect(isLocalImagePath("github")).toBe(false);
+  });
+});
+
+describe("resolveIconImageSrc（图片型值解析）", () => {
+  it("识别 http(s) 外链与本地图片路径", () => {
+    expect(resolveIconImageSrc("https://x.com/a.png")).toBe("https://x.com/a.png");
+    expect(resolveIconImageSrc("/images/icon/github.png")).toBe("/images/icon/github.png");
+    expect(resolveIconImageSrc("/api/uploads/123abc.webp")).toBe("/api/uploads/123abc.webp");
+  });
+
+  it("内联 SVG / Iconify / 纯图标名 → 返回 null 走图标渲染分支", () => {
+    expect(resolveIconImageSrc('<svg viewBox="0 0 24 24"></svg>')).toBeNull();
+    expect(resolveIconImageSrc("fa:github")).toBeNull();
+    expect(resolveIconImageSrc("icon-github")).toBeNull();
+    expect(resolveIconImageSrc("")).toBeNull();
+  });
+
+  it("协议相对地址不当作图片（避免 // 被当成外链）", () => {
+    expect(resolveIconImageSrc("//cdn.example.com/a.png")).toBeNull();
+  });
+});
+
+describe("sanitizeRemoteSvg（第三方图源 SVG 的清洗）", () => {
+  it("剔除事件属性与脚本子标签，并统一尺寸", () => {
+    const evil =
+      '<svg viewBox="0 0 24 24" onload="alert(1)"><script>alert(2)</script><path d="M1 2"/></svg>';
+    const out = sanitizeRemoteSvg(evil, 20);
+    expect(out).not.toMatch(/onload/i);
+    expect(out).not.toMatch(/<script/i);
+    expect(out).toContain("<path");
+    expect(out).toContain('width="20"');
+  });
+
+  it("保留安全的片段引用与 data:image（否则部分图标集会变空白）", () => {
+    const ok =
+      '<svg viewBox="0 0 24 24"><use href="#a"/><image href="data:image/png;base64,AAAA"/></svg>';
+    const out = sanitizeRemoteSvg(ok, 16);
+    expect(out).toContain('href="#a"');
+    expect(out).toContain("data:image/png");
+  });
+
+  it("剔除 javascript: 协议与外链 href", () => {
+    const bad =
+      '<svg viewBox="0 0 24 24"><image href="javascript:alert(1)"/><image href="https://evil.test/x.svg"/></svg>';
+    const out = sanitizeRemoteSvg(bad, 16);
+    expect(out).not.toMatch(/javascript:/i);
+    expect(out).not.toMatch(/evil\.test/);
+  });
+
+  it("剔除 foreignObject（内嵌 HTML 的绕过面）与无引号事件属性", () => {
+    const bad =
+      '<svg viewBox="0 0 24 24"><foreignObject><img src=x onerror="alert(1)"/></foreignObject><path onmouseover=alert(3) d="M1 2"/></svg>';
+    const out = sanitizeRemoteSvg(bad, 24);
+    expect(out).not.toMatch(/foreignobject/i);
+    expect(out).not.toMatch(/onerror/i);
+    expect(out).not.toMatch(/onmouseover/i);
+    expect(out).toContain("<path");
+  });
+
+  it("不影响正常图标内容（尺寸被改写，图形路径原样保留）", () => {
+    const normal =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 512 512"><path fill="currentColor" d="M256 8C119 8 8 119 8 256"/></svg>';
+    const out = sanitizeRemoteSvg(normal, 18);
+    expect(out).toContain('d="M256 8C119 8 8 119 8 256"');
+    expect(out).toContain('viewBox="0 0 512 512"');
+    expect(out).toContain('width="18"');
+    expect(out).toContain('height="18"');
+  });
+});
