@@ -16,7 +16,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import Image from "next/image";
-import type { ProjectRow, FriendLinkRow } from "@/app/hooks";
+import type { ProjectRow, FriendLinkRow } from "@/app/home-data";
 import { useIconfontSymbols } from "./Iconfont";
 import { resolveLucideIcon, isLucideIcon } from "./lucideIconResolver";
 import { resolveIconImageSrc } from "@/lib/iconValue";

@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import type { SkillRow } from "@/app/hooks";
+import type { SkillRow } from "@/app/home-data";
 import { resolveLucideIcon, isLucideIcon, LUCIDE_PREFIX } from "@/components/lucideIconResolver";
 import { useIconfontSymbols } from "@/components/Iconfont";
 import { resolveIconImageSrc } from "@/lib/iconValue";

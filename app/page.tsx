@@ -106,8 +106,8 @@ export async function generateMetadata(): Promise<import("next").Metadata> {
   };
 }
 
-// ── 数据准备：默认值、头像解析、字体映射等逻辑已抽取到 hooks.ts ──
-import { getHomeData } from "./hooks";
+// ── 数据准备：默认值、头像解析、字体映射等逻辑已抽取到 home-data.ts ──
+import { getHomeData } from "./home-data";
 import { CURRENT_VERSION } from "@/lib/version";
 
 export default async function Home() {
