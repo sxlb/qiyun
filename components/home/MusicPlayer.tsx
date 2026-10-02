@@ -47,7 +47,7 @@ import {
   type MusicPanelPrefs,
   type MusicPanelStyle,
 } from "@/lib/musicPanelThemes";
-import Hitokoto from "@/components/Hitokoto";
+import Hitokoto from "@/components/home/Hitokoto";
 
 // 播放模式元信息（图标 + 提示文案）
 const PLAY_MODE_META: Record<PlayMode, { label: string; Icon: LucideIcon }> = {

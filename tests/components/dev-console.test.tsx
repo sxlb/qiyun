@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
 import { render } from "@testing-library/react";
-import { DevConsole } from "@/components/DecorativeEffects";
+import { DevConsole } from "@/components/home/DecorativeEffects";
 
 describe("DevConsole", () => {
   it("enabled=false 时不输出任何 console 内容", () => {

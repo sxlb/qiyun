@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
-import Hitokoto from "@/components/Hitokoto";
+import Hitokoto from "@/components/home/Hitokoto";
 
 /**
  * 一言卡片外层是 role="button" + 自带 onKeyDown（Enter/空格 = 换一句），内部又嵌了一个

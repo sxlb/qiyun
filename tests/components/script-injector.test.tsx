@@ -2,7 +2,7 @@
 // ScriptInjector 净化逻辑测试：on* 事件 / javascript: 协议 / srcdoc 应被拦截
 import { describe, it, expect, afterEach } from "vitest";
 import { cleanup, render } from "@testing-library/react";
-import ScriptInjector from "@/components/ScriptInjector";
+import ScriptInjector from "@/components/home/ScriptInjector";
 
 afterEach(() => {
   cleanup(); // 卸载组件会触发 ScriptInjector 的 cleanup，移除注入的 head 节点

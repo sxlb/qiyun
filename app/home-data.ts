@@ -9,7 +9,7 @@ import { resolveWallpaperUrl } from "@/lib/wallpaperCache";
 import { avatarOrDefault } from "@/lib/default-assets";
 import { EXTERNAL_API_DEFAULTS } from "@/lib/external-api";
 import type { Profile } from "@prisma/client";
-import type { ThemeMode } from "@/components/ThemeProvider";
+import type { ThemeMode } from "@/components/home/ThemeProvider";
 
 // ── 静态常量：昵称艺术字体 ──
 // 内置仅一款「有爱圆体」（中英双语，随镜像打包），由 logoArtFont 开关控制启停；

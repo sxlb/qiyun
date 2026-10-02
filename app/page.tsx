@@ -3,31 +3,31 @@ import { DEFAULT_SITE_TITLE, DEFAULT_SITE_DESCRIPTION, DEFAULT_SITE_KEYWORDS } f
 import { cache } from "react";
 import { Quote } from "lucide-react";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import Background from "@/components/Background";
-import ClockWeatherCapsule from "@/components/ClockWeatherCapsule";
-import SocialLinks from "@/components/SocialLinks";
-import LinkTabs from "@/components/LinkTabs";
-import CommandPalette from "@/components/CommandPalette";
-import SkillCloud from "@/components/SkillCloud";
-import ThemeProvider from "@/components/ThemeProvider";
-import LogoFontLoader from "@/components/LogoFontLoader";
-import { CustomFont, FaviconUpdater } from "@/components/DomEffects";
-import ScriptInjector from "@/components/ScriptInjector";
-import { IconfontScript } from "@/components/Iconfont";
-import { MusicProviderLazy, MusicCardLazy } from "@/components/MusicPlayer";
-import { DecorativeEffectsLazy } from "@/components/DecorativeEffects";
+import Background from "@/components/home/Background";
+import ClockWeatherCapsule from "@/components/home/ClockWeatherCapsule";
+import SocialLinks from "@/components/home/SocialLinks";
+import LinkTabs from "@/components/home/LinkTabs";
+import CommandPalette from "@/components/home/CommandPalette";
+import SkillCloud from "@/components/home/SkillCloud";
+import ThemeProvider from "@/components/home/ThemeProvider";
+import LogoFontLoader from "@/components/home/LogoFontLoader";
+import { CustomFont, FaviconUpdater } from "@/components/home/DomEffects";
+import ScriptInjector from "@/components/home/ScriptInjector";
+import { IconfontScript } from "@/components/home/Iconfont";
+import { MusicProviderLazy, MusicCardLazy } from "@/components/home/MusicPlayer";
+import { DecorativeEffectsLazy } from "@/components/home/DecorativeEffects";
 import pkg from "../package.json";
 // 别名 nextDynamic：下方路由段配置需要占用 `dynamic` 这个名字（export const dynamic），
 // 与 next/dynamic 的默认导出同名会冲突，故此处改名。
 import nextDynamic from "next/dynamic";
 // SSR: loading screen 必须渲染，保证首屏无白屏；客户端 hydrate 后自动由
 // LoadingScreen 自身逻辑（等待 background-ready）控制收起。
-const LoadingScreen = nextDynamic(() => import("@/components/LoadingScreen").then((m) => m.LoadingScreen), { ssr: true });
-const SeasonalEffect = nextDynamic(() => import("@/components/SeasonalEffect"));
+const LoadingScreen = nextDynamic(() => import("@/components/home/LoadingScreen").then((m) => m.LoadingScreen), { ssr: true });
+const SeasonalEffect = nextDynamic(() => import("@/components/home/SeasonalEffect"));
 // 公告居中弹窗（非首屏必需，延迟加载减小首屏 JS）
-const AnnouncementNotification = nextDynamic(() => import("@/components/AnnouncementNotification"), { ssr: true });
+const AnnouncementNotification = nextDynamic(() => import("@/components/home/AnnouncementNotification"), { ssr: true });
 // 页脚懒加载：桌面端页脚在视口外，延迟加载减小首屏 JS
-const FooterLazy = nextDynamic(() => import("@/components/Footer"), {
+const FooterLazy = nextDynamic(() => import("@/components/home/Footer"), {
   ssr: true,
   loading: () => <div className="h-12" />,
 });

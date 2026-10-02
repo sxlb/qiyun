@@ -38,8 +38,8 @@ import {
 import LucideIconPicker from "./LucideIconPicker";
 import IconifyPicker from "./IconifyPicker";
 import { resolveLucideIcon, LUCIDE_PREFIX, extractLucideIconName } from "@/lib/lucideIconResolver";
-import { useIconfontSymbols } from "@/components/Iconfont";
-import IconifyIcon from "@/components/IconifyIcon";
+import { useIconfontSymbols } from "@/components/home/Iconfont";
+import IconifyIcon from "@/components/home/IconifyIcon";
 import { useExternalApi } from "./useExternalApi";
 import {
   isInlineSvgValue,

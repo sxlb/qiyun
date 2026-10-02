@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/react";
-import SocialLinks from "@/components/SocialLinks";
+import SocialLinks from "@/components/home/SocialLinks";
 
 const base = { tip: "", sort: 0, url: "https://example.com" };
 

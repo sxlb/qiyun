@@ -3,7 +3,7 @@
 import Image from "next/image";
 import type { SkillRow } from "@/app/home-data";
 import { resolveLucideIcon, isLucideIcon, LUCIDE_PREFIX } from "@/lib/lucideIconResolver";
-import { useIconfontSymbols } from "@/components/Iconfont";
+import { useIconfontSymbols } from "@/components/home/Iconfont";
 import { resolveIconImageSrc } from "@/lib/iconValue";
 
 /** 技能胶囊图标（支持 lucide / iconfont / 网络图片） */

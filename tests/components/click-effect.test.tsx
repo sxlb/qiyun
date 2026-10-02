@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, act } from "@testing-library/react";
-import { ClickEffect } from "@/components/DecorativeEffects";
+import { ClickEffect } from "@/components/home/DecorativeEffects";
 
 describe("ClickEffect", () => {
   beforeEach(() => {

@@ -20,11 +20,11 @@ const music = {
   setBoxOpen: vi.fn(),
 };
 
-vi.mock("@/components/MusicPlayer", () => ({
+vi.mock("@/components/home/MusicPlayer", () => ({
   useMusic: () => music,
 }));
 
-const { TopLyrics } = await import("@/components/DecorativeEffects");
+const { TopLyrics } = await import("@/components/home/DecorativeEffects");
 
 describe("TopLyrics（顶部歌词胶囊）", () => {
   beforeEach(() => {

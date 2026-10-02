@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, act } from "@testing-library/react";
-import { TopProgressBar } from "@/components/DecorativeEffects";
+import { TopProgressBar } from "@/components/home/DecorativeEffects";
 
 describe("TopProgressBar", () => {
   beforeEach(() => {

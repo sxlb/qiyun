@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
 import { render, waitFor } from "@testing-library/react";
-import IconifyIcon from "@/components/IconifyIcon";
+import IconifyIcon from "@/components/home/IconifyIcon";
 
 /**
  * IconifyIcon 会把第三方图源返回的 SVG 直接 innerHTML 注入，

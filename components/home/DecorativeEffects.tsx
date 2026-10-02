@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
-import { useMusic } from "@/components/MusicPlayer";
+import { useMusic } from "@/components/home/MusicPlayer";
 
 /**
  * ===== 页面装饰/工具类效果组件合集 =====

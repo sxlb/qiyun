@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
 import { render, waitFor } from "@testing-library/react";
-import IconifyIcon from "@/components/IconifyIcon";
+import IconifyIcon from "@/components/home/IconifyIcon";
 
 /**
  * 图标请求的竞态：icon 变化或组件卸载后，先前发出的请求若晚返回，

@@ -12,7 +12,7 @@ import { PanelHeader, EmptyState, PanelLoading } from "./panel";
 import MediaPicker from "./MediaPicker";
 import { resolveLucideIcon, isLucideIcon } from "@/lib/lucideIconResolver";
 import { resolveIconImageSrc, isInlineSvgValue, isIconifyValue, renderInlineSvg } from "@/lib/iconValue";
-import IconifyIcon from "@/components/IconifyIcon";
+import IconifyIcon from "@/components/home/IconifyIcon";
 import { useExternalApi } from "./useExternalApi";
 
 interface LinkItem {

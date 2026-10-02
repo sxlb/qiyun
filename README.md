@@ -89,7 +89,11 @@ npm run dev
 │   ├── api/              # API 路由（认证 / 配置 / 壁纸 / 音乐 / 天气 / 统计 / 更新）
 │   ├── admin/            # 后台管理
 │   └── page.tsx          # 首页
-├── components/           # UI 组件（前台组件 + admin 后台面板）
+├── components/           # UI 组件
+│   ├── home/             # 前台组件（首页与装饰效果）
+│   ├── admin/            # 后台面板
+│   └── ui/               # 基础组件（shadcn）
+├── hooks/                # React 自定义 Hook
 ├── lib/                  # 核心逻辑（auth / ssrf / validation / backup / update）
 ├── docs/                 # 部署、发布、API、许可等文档
 ├── prisma/               # Schema、55 个迁移、seed

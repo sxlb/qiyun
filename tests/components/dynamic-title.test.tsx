@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, act } from "@testing-library/react";
-import { DynamicTitle } from "@/components/DecorativeEffects";
+import { DynamicTitle } from "@/components/home/DecorativeEffects";
 
 describe("DynamicTitle", () => {
   const originalTitle = document.title;
