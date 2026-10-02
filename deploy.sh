@@ -7,7 +7,7 @@
 #   ./deploy.sh 0.0.2               部署指定版本（无 v 前缀，与镜像标签一致）
 #   ./deploy.sh rollback            回退到上一个版本，并恢复对应的数据库快照
 #   ./deploy.sh rollback 0.0.1      回退到指定版本
-#   ./deploy.sh backup              立刻做一次数据库快照（会短暂重启容器）
+#   ./deploy.sh backup [版本]       立刻做一次数据库快照（会短暂重启容器）
 #   ./deploy.sh status              查看当前运行状态
 #   ./deploy.sh --help              显示本帮助
 #
@@ -30,6 +30,16 @@ MIN_FREE_MB=2048     # 可用磁盘低于此值时告警
 die()  { echo "✗ $*" >&2; exit 1; }
 warn() { echo "⚠ $*" >&2; }
 info() { echo "==> $*"; }
+
+# 生成 n 字节的随机十六进制串（返回 2n 个字符）。精简发行版（Alpine 等）常常没有 openssl，
+# 必须有零依赖的兜底：把 /dev/urandom 的原始字节整体做十六进制编码。
+# 不要写成 `tr -dc 'a-f0-9'` 过滤原始字节——每个字节落在该集合内的概率只有 16/256，
+# 取 64 字节平均只剩 4 个字符，会静默产出远低于强度要求的密钥。
+rand_hex() { # bytes
+  local out
+  out="$(openssl rand -hex "$1" 2>/dev/null)" && [ -n "$out" ] && { printf '%s' "$out"; return 0; }
+  head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'
+}
 
 usage() {
   awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
@@ -101,6 +111,13 @@ restore_snapshot() { # path
   # 先清 WAL/SHM：旧日志与新库文件混用会导致数据库损坏
   rm -f "$DATA_DIR/prod.db-wal" "$DATA_DIR/prod.db-shm"
   cp -f "$snap" "$DATA_DIR/prod.db" || die "恢复数据库失败：${snap} → ${DATA_DIR}/prod.db"
+  # cp 会重建目标文件，属主随之变成执行脚本的用户（通常是 root）。容器内以 UID 1001 运行，
+  # 不校正属主的话新库对容器只读，启动时直接报 SQLite「disk I/O error」并转为 unhealthy，
+  # 表现为「回退后服务起不来」。注意本步骤在第 4 节的目录授权之后执行，必须单独处理。
+  if [ "$(id -u)" = "0" ]; then
+    chown "${APP_UID:-1001}:${APP_GID:-1001}" "$DATA_DIR/prod.db" 2>/dev/null \
+      || warn "未能调整 ${DATA_DIR}/prod.db 的属主，容器可能无法写入数据库"
+  fi
 }
 
 # 等待容器进入 healthy；失败时打印日志与常见原因。健康检查未定义时视为就绪。
@@ -211,6 +228,14 @@ if [ "$SUB" = "rollback" ]; then
       || die "找不到可回退的版本：${BACKUP_DIR} 中没有比当前版本更旧的快照。可显式指定：./deploy.sh rollback 0.0.1"
     info "按最新快照推断回退目标：${IMAGE_TAG}"
   fi
+elif [ "$SUB" = "backup" ]; then
+  # backup 只做快照，与「升级到哪个版本」无关：必须沿用当前正在运行的版本。
+  # 若走下面的「解析最新版本」分支，一次备份就会顺带把服务换成别的镜像，
+  # 而且在没有 curl / 没有外网的机器上（备份恰恰是最需要能用的场景）会直接失败。
+  IMAGE_TAG="${2:-$cur_version}"
+  [ -n "$IMAGE_TAG" ] \
+    || die "无法确定要恢复的镜像版本：容器尚未部署。可显式指定：./deploy.sh backup 0.0.1"
+  info "backup 沿用镜像版本：${IMAGE_TAG}"
 elif [ -z "$IMAGE_TAG" ]; then
   # 未指定版本：向 GitHub 查询最新 release 的 tag —— 发布链路只推版本标签，没有 latest
   command -v curl >/dev/null 2>&1 \
@@ -258,7 +283,7 @@ chmod 600 "$ENV_FILE" 2>/dev/null || warn "无法收紧 ${ENV_FILE} 权限，请
 
 # 替换弱密钥占位符为随机值
 if grep -Eq 'NEXTAUTH_SECRET=["'\''"]?(change-me|__GENERATE_RANDOM_KEY__)' "$ENV_FILE"; then
-  SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | tr -dc 'a-f0-9' | head -c 64)
+  SECRET="$(rand_hex 32)"
   tmpfile=$(mktemp)
   sed "s|^NEXTAUTH_SECRET=.*|NEXTAUTH_SECRET=${SECRET}|" "$ENV_FILE" > "$tmpfile"
   mv "$tmpfile" "$ENV_FILE"
@@ -273,7 +298,7 @@ fi
 if grep -Eq '^BACKUP_HMAC_KEY=.+' "$ENV_FILE"; then
   info "BACKUP_HMAC_KEY 已存在，跳过生成"
 else
-  BACKUP_KEY=$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | tr -dc 'a-f0-9' | head -c 64)
+  BACKUP_KEY="$(rand_hex 32)"
   tmpfile=$(mktemp)
   if grep -Eq '^#?BACKUP_HMAC_KEY=' "$ENV_FILE"; then
     sed "s|^#\?BACKUP_HMAC_KEY=.*|BACKUP_HMAC_KEY=${BACKUP_KEY}|" "$ENV_FILE" > "$tmpfile"
@@ -290,6 +315,11 @@ fi
 secret_val="$(env_value NEXTAUTH_SECRET)"
 [ ${#secret_val} -ge 32 ] \
   || warn "NEXTAUTH_SECRET 不足 32 字符，登录态可能异常（生成：openssl rand -hex 32）"
+# 备份签名密钥的强度：缺失或过短不会立刻报错，只在导出/恢复备份时表现为「校验不通过」，
+# 而弱密钥可被枚举后伪造备份覆盖数据库，所以单独再检查一次强度。
+hmac_val="$(env_value BACKUP_HMAC_KEY)"
+[ ${#hmac_val} -ge 32 ] \
+  || warn "BACKUP_HMAC_KEY 不足 32 字符，备份签名强度不足（生成：openssl rand -hex 32）"
 url_val="$(env_value NEXTAUTH_URL)"
 case "$url_val" in
   ""|*localhost*|*127.0.0.1*)

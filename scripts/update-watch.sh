@@ -151,6 +151,12 @@ restore_db() { # targetVersion
   # 先清理 WAL/SHM 残留，避免新旧数据文件混用导致损坏
   rm -f "$db-wal" "$db-shm"
   cp -f "$snap" "$db"
+  # cp 会重建目标文件，属主随之变成执行脚本的用户（root）。容器以 uid 1001 运行，
+  # 不校正属主则新库对容器只读，容器启动即报 SQLite「disk I/O error」并转为 unhealthy，
+  # 后台表现为「回滚成功但服务起不来」。ensure_deploy_perms 只管目录，覆盖不到这个文件。
+  if [ "$(id -u)" = "0" ]; then
+    chown "$APP_UID:$APP_GID" "$db" 2>/dev/null || log "警告：未能调整 ${db} 的属主，容器可能无法写入数据库"
+  fi
   log "已恢复数据库 → ${db}（来源 ${snap}）"
 }
 
@@ -318,8 +324,12 @@ fi
 version_switched_ok=0
 
 # 2) 优雅停止容器：让 SQLite WAL 落盘，保证后续数据库读写（备份/恢复）处于一致状态
+#    注意：compose 文件里 image 用了 ${IMAGE_TAG:?...} 做强制校验，任何一条 compose
+#    子命令（stop / logs / ps 也一样）都必须在插值阶段拿到 IMAGE_TAG，否则会直接报
+#    「IMAGE_TAG 未设置」而中止——stop 失败会让整个更新/回滚在第一步就卡死。
 log "停止容器（等待未落盘写入收尾）..."
-docker compose --env-file "$ENV_FILE" stop || fail_after_switch "停止容器失败"
+IMAGE_TAG="$version" GHCR_IMAGE="$PULL_IMAGE" APP_VERSION="$version" \
+  docker compose --env-file "$ENV_FILE" stop || fail_after_switch "停止容器失败"
 
 # 3) 备份当前版本数据库（回档数据点）
 backup_db "$cur" || fail_after_switch "备份数据库失败"
