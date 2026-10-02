@@ -42,7 +42,13 @@ CONTAINER="qiyun"
 
 # ---------- 1. 自动准备环境变量（无需手动配置） ----------
 if [ ! -f "$ENV_FILE" ]; then
-  cp .env.deploy.example "$ENV_FILE"
+  if [ -f .env.deploy.example ]; then
+    cp .env.deploy.example "$ENV_FILE"
+  else
+    # 发布包异常缺失模板时兜底：写出等价的最小配置，避免整条部署链路直接中断
+    printf 'NEXTAUTH_SECRET=__GENERATE_RANDOM_KEY__\nNEXTAUTH_URL=http://localhost:3000\n' > "$ENV_FILE"
+    echo "==> 未找到 .env.deploy.example，已生成最小 .env.deploy"
+  fi
 fi
 
 # 替换弱密钥占位符为随机值
