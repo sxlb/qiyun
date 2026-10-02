@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { parseLrc, findLyricIndex, resolveLyricText, centeredScrollTop } from "@/components/useAudioPlayer";
+import { parseLrc, findLyricIndex, resolveLyricText, centeredScrollTop } from "@/hooks/useAudioPlayer";
 
 /**
  * 顶部歌词显示所需的三块纯逻辑。

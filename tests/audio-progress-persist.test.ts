@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   PROGRESS_PERSIST_INTERVAL_MS,
   shouldPersistProgress,
-} from "@/components/useAudioPlayer";
+} from "@/hooks/useAudioPlayer";
 
 /**
  * 播放进度落盘节流。

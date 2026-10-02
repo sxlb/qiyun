@@ -8,7 +8,7 @@
  * - 网格区域自带竖向滚动，避免把外层表单撑得过高
  * - 选中值格式为 "lucide:图标名"（kebab-case）
  *
- * 候选列表与组件映射均来自 components/lucideIconResolver 的唯一白名单，
+ * 候选列表与组件映射均来自 lib/lucideIconResolver 的唯一白名单，
  * 本组件不携带第二份图标清单与 import，避免同一批图标被重复打进客户端 bundle。
  */
 
@@ -19,7 +19,7 @@ import {
   LUCIDE_PREFIX,
   LUCIDE_ICON_NAMES,
   LUCIDE_ICONS_BY_NAME,
-} from "@/components/lucideIconResolver";
+} from "@/lib/lucideIconResolver";
 
 /**
  * 将图标名包装为 lucide:xxx 格式

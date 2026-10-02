@@ -46,7 +46,7 @@
 /* ===== 顶部悬浮歌词胶囊的字号档位 =====
    7 档，每档给「移动端 / 桌面端」两个像素值：手机离眼近、视口窄，同 px 显大；
    桌面离眼远、视口宽，需要更大字号才有同等可读性。分成两套值可避免「桌面偏小、移动端偏大」。
-   档位含义与默认值见 components/musicPanelThemes.ts 的 LYRIC_SIZE_OPTIONS。
+   档位含义与默认值见 lib/musicPanelThemes.ts 的 LYRIC_SIZE_OPTIONS。
    padding / gap 用 em，跟着字号一起缩放。 */
 .top-lyric {
   font-size: var(--tl-size, 13px);

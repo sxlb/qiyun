@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 import LucideIconPicker from "./LucideIconPicker";
 import IconifyPicker from "./IconifyPicker";
-import { resolveLucideIcon, LUCIDE_PREFIX, extractLucideIconName } from "@/components/lucideIconResolver";
+import { resolveLucideIcon, LUCIDE_PREFIX, extractLucideIconName } from "@/lib/lucideIconResolver";
 import { useIconfontSymbols } from "@/components/Iconfont";
 import IconifyIcon from "@/components/IconifyIcon";
 import { useExternalApi } from "./useExternalApi";

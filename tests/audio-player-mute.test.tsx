@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from "vitest";
 import { render, act, waitFor } from "@testing-library/react";
-import { useAudioPlayer, DEFAULT_VOLUME } from "@/components/useAudioPlayer";
+import { useAudioPlayer, DEFAULT_VOLUME } from "@/hooks/useAudioPlayer";
 
 /**
  * 静音/音量的集成回归：直接跑 useAudioPlayer（挂载时读 localStorage + 交互后写回）。

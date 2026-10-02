@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { useListCrud } from "./useListCrud";
 import { PanelHeader, EmptyState, PanelLoading } from "./panel";
 import MediaPicker from "./MediaPicker";
-import { resolveLucideIcon, isLucideIcon } from "@/components/lucideIconResolver";
+import { resolveLucideIcon, isLucideIcon } from "@/lib/lucideIconResolver";
 import { resolveIconImageSrc, isInlineSvgValue, isIconifyValue, renderInlineSvg } from "@/lib/iconValue";
 import IconifyIcon from "@/components/IconifyIcon";
 import { useExternalApi } from "./useExternalApi";

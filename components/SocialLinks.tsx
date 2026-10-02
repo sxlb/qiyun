@@ -17,7 +17,7 @@ import {
   resolveLucideIcon,
   isLucideIcon,
   getLucideIconByName,
-} from "./lucideIconResolver";
+} from "@/lib/lucideIconResolver";
 import {
   resolveIconImageSrc,
   isInlineSvgValue,

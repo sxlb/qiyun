@@ -9,7 +9,7 @@ import {
   extractLucideIconName,
   getLucideIconByName,
   resolveLucideIcon,
-} from "@/components/lucideIconResolver";
+} from "@/lib/lucideIconResolver";
 
 /**
  * Lucide 图标解析器：白名单是唯一数据源。

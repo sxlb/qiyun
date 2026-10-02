@@ -4,7 +4,7 @@ import {
   MUSIC_PANEL_STYLE_OPTIONS,
   FOLLOW_SITE,
   resolveMusicPanelStyle,
-} from "@/components/musicPanelThemes";
+} from "@/lib/musicPanelThemes";
 
 /**
  * 音乐面板风格的取值与解析。

@@ -18,7 +18,7 @@ import {
 import Image from "next/image";
 import type { ProjectRow, FriendLinkRow } from "@/app/home-data";
 import { useIconfontSymbols } from "./Iconfont";
-import { resolveLucideIcon, isLucideIcon } from "./lucideIconResolver";
+import { resolveLucideIcon, isLucideIcon } from "@/lib/lucideIconResolver";
 import { resolveIconImageSrc } from "@/lib/iconValue";
 
 // 图标映射表（与并入前的网站链接组件一致）

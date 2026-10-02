@@ -7,7 +7,7 @@ import {
   resolveVolumeChange,
   DEFAULT_VOLUME,
   type PlayMode,
-} from "@/components/useAudioPlayer";
+} from "@/hooks/useAudioPlayer";
 import { profileSchema } from "@/lib/validation";
 
 describe("音乐默认配置（开箱即用）", () => {

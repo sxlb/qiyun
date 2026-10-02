@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { DEFAULT_WELCOME_MESSAGES, DEFAULT_SITE_TITLE, DEFAULT_SITE_DESCRIPTION, DEFAULT_SITE_KEYWORDS } from "@/lib/validation";
 
 import { PanelLoading } from "./panel";
-import { MUSIC_PANEL_STYLE_OPTIONS } from "@/components/musicPanelThemes";
+import { MUSIC_PANEL_STYLE_OPTIONS } from "@/lib/musicPanelThemes";
 import { loadProfile, setCachedProfile, hasCachedProfile, profileFieldPatch, selectClass } from "./profileShared";
 import { useGlobalSaveState, useRegisterSave, useEditRevision, type SaveOutcome } from "./GlobalSave";
 import UploadButton from "./UploadButton";

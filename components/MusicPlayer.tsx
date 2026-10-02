@@ -26,7 +26,7 @@ import {
   type LyricLine,
   type UseAudioPlayerProps,
   type PlayMode,
-} from "@/components/useAudioPlayer";
+} from "@/hooks/useAudioPlayer";
 import {
   resolveMusicPanelStyle,
   isMusicPanelStyle,
@@ -46,7 +46,7 @@ import {
   type LyricSizeLevel,
   type MusicPanelPrefs,
   type MusicPanelStyle,
-} from "@/components/musicPanelThemes";
+} from "@/lib/musicPanelThemes";
 import Hitokoto from "@/components/Hitokoto";
 
 // 播放模式元信息（图标 + 提示文案）

@@ -58,7 +58,7 @@ export interface ProfileShape {
   showSeconds: boolean;
   dateFormat: string;
   hitokotoType: string;
-  /** 音乐面板风格：vinyl / editorial / mono（见 components/musicPanelThemes.ts） */
+  /** 音乐面板风格：vinyl / editorial / mono（见 lib/musicPanelThemes.ts） */
   musicPanelStyle: string;
   bgOverlay: number;
   avatarShape: string;

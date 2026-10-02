@@ -2,7 +2,7 @@ import { NextResponse, NextRequest } from "next/server";
 import { assertPublicHttpUrl, fetchFollowingSafeRedirects, UnsafeUrlError } from "@/lib/ssrf";
 import { readTextWithLimit } from "@/lib/request-body";
 import { prisma } from "@/lib/db";
-import type { Track } from "@/components/useAudioPlayer";
+import type { Track } from "@/hooks/useAudioPlayer";
 
 export const dynamic = "force-dynamic";
 

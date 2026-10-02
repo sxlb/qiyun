@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
-import { DEFAULT_LYRIC_SIZE, LYRIC_SIZE_OPTIONS, parseLyricSize } from "@/components/musicPanelThemes";
+import { DEFAULT_LYRIC_SIZE, LYRIC_SIZE_OPTIONS, parseLyricSize } from "@/lib/musicPanelThemes";
 
 /**
  * 顶部悬浮歌词的字号是「TS 常量表 + CSS 档位规则」两边配合的：

@@ -14,7 +14,7 @@ import {
   TOP_LYRICS_SIZE_KEY,
   SHOW_LYRICS_KEY,
   SHOW_PLAYLIST_KEY,
-} from "@/components/musicPanelThemes";
+} from "@/lib/musicPanelThemes";
 
 /**
  * 面板内的本机偏好：布尔以 "1" / "0" 落盘，其它一律回落默认值。
