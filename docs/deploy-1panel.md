@@ -102,7 +102,7 @@ chmod +x deploy.sh
 ./deploy.sh 0.0.2    # 或指定版本号
 ```
 
-脚本自动完成：生成密钥 → 拉取镜像 → 启动容器 → 健康检查。看到下面这行即部署成功：
+脚本自动完成：生成密钥 → 准备数据目录 → 拉取镜像 → 启动容器 → 健康检查。看到下面这行即部署成功：
 
 ```
 ✅ 服务已就绪（healthy）
@@ -248,7 +248,7 @@ docker logs qiyun --tail=100
 | 现象 | 解决方案 |
 |------|----------|
 | `NEXTAUTH_SECRET` 为空 | 确认 `.env.deploy` 中有该变量 |
-| 日志出现 `SQLITE_CANTOPEN` 或 `attempt to write a readonly database` | 宿主机 `data/` 目录属主不对（Docker 首次创建时归属 root，而容器内以 UID 1001 运行）。执行 `sudo chown -R 1001:1001 /opt/qiyun/data` 后 `docker restart qiyun` |
+| 日志出现 `SQLITE_CANTOPEN` 或 `attempt to write a readonly database` | 宿主机 `data/` 目录属主不对（Docker 首次创建时归属 root，而容器内以 UID 1001 运行）。用一键脚本部署时脚本已自动校正；GUI 部署需手工执行 `sudo chown -R 1001:1001 /opt/qiyun/data`，再 `docker restart qiyun` |
 | 国内无法访问 `ghcr.io` | 配置 Docker 镜像加速器，或改从 Docker Hub 拉取：`GHCR_IMAGE=docker.io/sxlb/qiyun ./deploy.sh 0.0.2` |
 
 ### Q2：页面打不开

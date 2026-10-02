@@ -9,7 +9,7 @@
 # 镜像仓库：默认 GHCR（ghcr.io/sxlb/qiyun）；发布时同时推 Docker Hub，
 # 需要改从 Docker Hub 拉取时，先 export GHCR_IMAGE=docker.io/sxlb/qiyun 再运行本脚本。
 #
-# 功能：自动生成密钥 → 拉取镜像 → 启动 → 等待健康检查
+# 功能：自动生成密钥 → 准备数据目录 → 拉取镜像 → 启动 → 等待健康检查
 # ============================================================
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -80,14 +80,29 @@ else
   echo "==> 已自动生成随机 BACKUP_HMAC_KEY"
 fi
 
-# ---------- 2. 拉取镜像并启动 ----------
+# ---------- 2. 准备数据目录 ----------
+# 容器内以非 root（UID 1001）运行，而 docker 自动创建绑定挂载的宿主机目录时归属 root，
+# 容器会写不进 SQLite，表现为启动即 unhealthy 并反复重启。这里提前建好并交给容器用户，
+# 每次运行都校正一次以便自愈；非 root 执行或调整失败时只提示，由健康检查暴露真实问题。
+mkdir -p data
+if [ "$(id -u)" = "0" ]; then
+  if chown -R "${APP_UID:-1001}:${APP_GID:-1001}" data 2>/dev/null; then
+    echo "==> 数据目录 data/ 已就绪（属主 ${APP_UID:-1001}:${APP_GID:-1001}）"
+  else
+    echo "==> 数据目录 data/ 已就绪（未能调整属主，启动失败请见部署教程的排查项）"
+  fi
+else
+  echo "==> 数据目录 data/ 已就绪（非 root 执行，未调整属主）"
+fi
+
+# ---------- 3. 拉取镜像并启动 ----------
 echo "==> 拉取 ${GHCR_IMAGE:-ghcr.io/sxlb/qiyun}:${IMAGE_TAG} 镜像..."
 docker compose --env-file "$ENV_FILE" pull
 
 echo "==> 启动容器..."
 docker compose --env-file "$ENV_FILE" up -d
 
-# ---------- 3. 等待健康检查 ----------
+# ---------- 4. 等待健康检查 ----------
 echo "==> 等待服务就绪（最长 120s）..."
 for i in $(seq 1 24); do
   if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
