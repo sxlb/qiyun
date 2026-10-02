@@ -171,15 +171,22 @@ jobs:
           #   2) data/           —— 同上，data/ 整个目录（prod.db、uploads、wallpapers）会被拷进 standalone
           #   3) prisma 下的 *.db* —— 本地跑过 migrate 就会留下 dev.db / validate.db，CI 会留下 ci.db
           # 统一在此剥离，并由下方自检兜底，避免以后再逐个打补丁。
-          rm -f dist/qiyun/.env dist/qiyun/.env.* dist/qiyun/.env.deploy
+          # ⚠️ 必须排除 *.example：`.env.*` 通配会连 .env.deploy.example 一起删掉，
+          #    而 deploy.sh 依赖该模板生成 .env.deploy（曾因此让一键部署在第 1 步就失败）。
+          find dist/qiyun -name '.env*' ! -name '*.example' -delete
           rm -rf dist/qiyun/data
           find dist/qiyun -type f -name '*.db*' -delete
 
           # ---------- 自检：任一残留即中止发布 ----------
           fail=0
-          if find dist/qiyun -name '.env*' -print -quit | grep -q .; then
-            echo "✗ 发布包内存在 .env 文件：" >&2; find dist/qiyun -name '.env*' >&2; fail=1
+          # 排除示例模板：模板本就在包内，需要剥离的只是真实密钥文件
+          if find dist/qiyun -name '.env*' ! -name '*.example' -print -quit | grep -q .; then
+            echo "✗ 发布包内存在 .env 文件：" >&2; find dist/qiyun -name '.env*' ! -name '*.example' >&2; fail=1
           fi
+          # 部署必需文件必须在包内：上面那次误删就是这么漏出去的，缺一个即中止
+          for f in deploy.sh docker-compose.yml .env.deploy.example; do
+            [ -f "dist/qiyun/$f" ] || { echo "✗ 发布包缺少必需文件：$f" >&2; fail=1; }
+          done
           if [ -e dist/qiyun/data ]; then
             echo "✗ 发布包内存在 data 目录：" >&2; ls -la dist/qiyun/data >&2; fail=1
           fi
