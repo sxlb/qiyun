@@ -96,7 +96,7 @@ for i in $(seq 1 24); do
   fi
   health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CONTAINER" 2>/dev/null || echo "none")
   if [ "$health" = "healthy" ]; then
-    echo "✅ 服务已就绪（healthy)"
+    echo "✅ 服务已就绪（healthy）"
     docker compose --env-file "$ENV_FILE" ps
     exit 0
   fi

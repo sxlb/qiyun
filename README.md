@@ -47,6 +47,8 @@ cd /opt/qiyun
 
 首次运行会自动生成 `.env.deploy`，容器启动时自动执行数据库迁移与 seed。完整步骤见 [宝塔 / 1Panel 部署教程](docs/deploy-1panel.md)。
 
+如需使用后台的「一键更新 / 回滚」，部署后在服务器上执行一次 `sudo bash scripts/setup-update.sh` 启用更新通道；不启用也可以用 `./deploy.sh <版本号>` 手动升级。
+
 ### 本地开发
 
 ```bash
@@ -100,6 +102,10 @@ npm run dev
 ├── public/fonts/         # 自托管字体
 ├── scripts/              # 宿主机更新执行器
 ├── tests/                # Vitest 测试（73 个文件 / 687 个用例）
+│   ├── lib/              # 被测模块在 lib/
+│   ├── components/       # 被测模块在 components/
+│   ├── hooks/            # 被测模块在 hooks/
+│   └── app/              # 被测对象是页面或路由
 ├── .github/workflows/    # CI/CD 自动发版
 ├── next.config.ts · tsconfig.json · tailwind.config.ts · postcss.config.mjs
 │   eslint.config.mjs · vitest.config.ts   # 工具链配置，均为框架约定的根目录位置

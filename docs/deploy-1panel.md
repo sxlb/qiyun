@@ -123,6 +123,7 @@ chmod +x deploy.sh
 | 端口映射 | 宿主机 `3000` → 容器 `3000`（TCP） |
 | 挂载 | 宿主机 `/opt/qiyun/data` → 容器 `/app/data`，读写 |
 | 重启策略 | `unless-stopped` |
+| 启动命令 | **保持镜像默认，不要覆盖**。默认命令会自动执行数据库迁移与 seed；被覆盖后数据库不会建表，也没有默认账号 |
 
 **环境变量**（逐条添加）：
 
@@ -194,10 +195,32 @@ docker stop qiyun
 
 ### 更新版本
 
+**方式一：后台一键更新（需先启用更新通道）**
+
+在服务器上执行一次（需先完成「三、启动服务」，脚本靠 `data/` 目录定位部署位置），幂等，可重复运行：
+
 ```bash
 cd /opt/qiyun
-./deploy.sh 0.0.1     # 改成目标版本号，数据保留在 data/ 目录
+sudo bash scripts/setup-update.sh
 ```
+
+它会为部署目录初始化 git 克隆并拉取远端 tags、把更新执行器安装到 `/usr/local/bin`、写入每分钟轮询的 cron。完成后即可在后台「系统更新」面板一键升级或回滚，也可用命令行操作：
+
+```bash
+./scripts/update.sh update 0.0.1     # 更新到指定版本
+./scripts/update.sh rollback 0.0.1   # 回滚到历史版本
+```
+
+> 更新与回滚依赖 git 检出标签，所以必须先执行上面这条命令。未启用更新通道时，后台「系统更新」面板会提示「宿主机更新通道尚未就绪（未安装脚本）」，此时只能用下面的方式二手动升级。
+
+**方式二：手动拉镜像（无需更新通道）**
+
+```bash
+cd /opt/qiyun
+./deploy.sh 0.0.1     # 改成目标版本号
+```
+
+两种方式都保留 `data/` 目录中的数据。
 
 ### 备份数据
 
@@ -207,6 +230,8 @@ tar -czf qiyun-backup-$(date +%Y%m%d).tar.gz data/
 ```
 
 > 也可通过面板的「文件」功能直接打包下载 `data/` 目录。
+
+**迁移到另一台服务器**：把 `data/` 目录连同 `deploy.sh`、`docker-compose.yml`、`.env.deploy` 一起拷到新机的 `/opt/qiyun`，执行 `./deploy.sh <版本号>` 即可。`.env.deploy` 里保存着已生成的密钥，一并带走才能保留原有登录态与备份签名。
 
 ---
 
@@ -221,6 +246,7 @@ docker logs qiyun --tail=100
 | 现象 | 解决方案 |
 |------|----------|
 | `NEXTAUTH_SECRET` 为空 | 确认 `.env.deploy` 中有该变量 |
+| 日志出现 `SQLITE_CANTOPEN` 或 `attempt to write a readonly database` | 宿主机 `data/` 目录属主不对（Docker 首次创建时归属 root，而容器内以 UID 1001 运行）。执行 `sudo chown -R 1001:1001 /opt/qiyun/data` 后 `docker restart qiyun` |
 | 国内无法访问 `ghcr.io` | 配置 Docker 镜像加速器，或改从 Docker Hub 拉取：`GHCR_IMAGE=docker.io/sxlb/qiyun ./deploy.sh 0.0.1` |
 
 ### Q2：页面打不开
