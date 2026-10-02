@@ -7,7 +7,7 @@
 Next.js 16 + TypeScript + Tailwind CSS + Prisma 的个人主页 / 导航首页<br>
 可视化后台开箱即配 · SQLite 单文件存储 · Docker 一条命令部署 · 推送自动发版
 
-[![Release](https://img.shields.io/badge/release-0.0.2-2563eb?style=flat-square)](https://github.com/sxlb/qiyun/releases)
+[![Release](https://img.shields.io/badge/release-0.0.3-2563eb?style=flat-square)](https://github.com/sxlb/qiyun/releases)
 ![Tests](https://img.shields.io/badge/tests-687%20passed-059669?style=flat-square)
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=nextdotjs)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6?style=flat-square&logo=typescript)](https://www.typescriptlang.org)
@@ -40,7 +40,7 @@ Next.js 16 + TypeScript + Tailwind CSS + Prisma 的个人主页 / 导航首页<b
 从 [Releases](https://github.com/sxlb/qiyun/releases/latest) 下载 `qiyun-<版本号>.tar.gz`，上传到服务器后解压启动：
 
 ```bash
-tar -xzf qiyun-0.0.2.tar.gz -C /opt
+tar -xzf qiyun-0.0.3.tar.gz -C /opt
 cd /opt/qiyun
 ./deploy.sh               # 自动拉取镜像、生成密钥并启动
 ```
