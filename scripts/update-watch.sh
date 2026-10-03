@@ -200,6 +200,11 @@ PY
 }
 
 # 备份当前数据库（更新/回滚前各存一份，作为回档数据点）
+#
+# 【为什么必须连 WAL 一起存】SQLite 在 WAL 模式下，已提交的事务可能只写在 prod.db-wal 里，
+# 直到 checkpoint 才并入主库。而「停容器」**并不保证**会触发 checkpoint：容器以 PID 1
+# 跑 shell，SIGTERM 未必转发给 node，10s 后 Docker 直接 SIGKILL，SQLite 来不及收尾。
+# 实测一份只拷主库的快照少了 14 条已提交记录，用它回滚就是静默丢数据。
 backup_db() { # sourceVersion
   local srcVersion="$1"
   mkdir -p "$BACKUP_DIR"
@@ -207,16 +212,27 @@ backup_db() { # sourceVersion
   [ -f "$db" ] || return 0
   local dest="$BACKUP_DIR/prod-${srcVersion}-$(now_ts).db"
   cp -f "$db" "$dest"
-  log "已备份数据库 → ${dest}"
-  # 只保留最近 20 份快照，避免侵占磁盘
-  ls -1t "$BACKUP_DIR"/prod-*.db 2>/dev/null | tail -n +21 | xargs -r rm -f
+  # WAL 侧车：存成 <快照名>-wal，与主库成组保存、成组还原。空 WAL 没有内容，不必存。
+  if [ -s "$db-wal" ]; then
+    cp -f "$db-wal" "${dest}-wal"
+  fi
+  log "已备份数据库 → ${dest}（主库与 WAL 成组）"
+  # 只保留最近 20 份快照，避免侵占磁盘；WAL 侧车随主文件一起删，不留孤儿
+  local old
+  while IFS= read -r old; do
+    [ -n "$old" ] || continue
+    rm -f "$old" "${old}-wal" "${old}-shm"
+  done < <(ls -1t "$BACKUP_DIR"/prod-*.db 2>/dev/null | tail -n +21 || true)
+  return 0
 }
 
 # 恢复数据库到某版本快照（回滚用）。找不到快照则仅切代码、保持数据库不变。
 restore_db() { # targetVersion
   local target="$1"
   local snap
-  snap=$(ls -1t "$BACKUP_DIR"/"prod-${target}-"*.db 2>/dev/null | head -1)
+  # 收尾 || true：该版本没有快照时 ls 会非 0，本脚本是 set -euo pipefail，
+  # 不兜住就会在进入下面「未找到快照」的提示之前直接中止（原本的警告分支其实到不了）
+  snap=$(ls -1t "$BACKUP_DIR"/"prod-${target}-"*.db 2>/dev/null | head -1 || true)
   if [ -z "$snap" ]; then
     log "警告：未找到 ${target} 的数据库快照，回滚保持现有数据库（仅切换代码）"
     return 0
@@ -225,13 +241,23 @@ restore_db() { # targetVersion
   # 先清理 WAL/SHM 残留，避免新旧数据文件混用导致损坏
   rm -f "$db-wal" "$db-shm"
   cp -f "$snap" "$db"
+  # 快照里的 WAL 一并还原：尚未 checkpoint 的已提交事务全在里面，漏掉就是回滚时静默丢数据
+  # （见 backup_db 的说明）。只还原 -wal，不还原 -shm：后者只是 WAL 的内存索引，
+  # SQLite 会按 WAL 自行重建，照搬反而可能与新位置的 WAL 对不上。
+  if [ -s "${snap}-wal" ]; then
+    cp -f "${snap}-wal" "$db-wal"
+  fi
   # cp 会重建目标文件，属主随之变成执行脚本的用户（root）。容器以 uid 1001 运行，
   # 不校正属主则新库对容器只读，容器启动即报 SQLite「disk I/O error」并转为 unhealthy，
   # 后台表现为「回滚成功但服务起不来」。ensure_deploy_perms 只管目录，覆盖不到这个文件。
+  # WAL 同样要校正：它会在回放时写回主库，属主是 root 一样会报只读。
   if [ "$(id -u)" = "0" ]; then
     chown "$APP_UID:$APP_GID" "$db" 2>/dev/null || log "警告：未能调整 ${db} 的属主，容器可能无法写入数据库"
+    if [ -f "$db-wal" ]; then
+      chown "$APP_UID:$APP_GID" "$db-wal" 2>/dev/null || log "警告：未能调整 ${db}-wal 的属主，容器可能无法写入数据库"
+    fi
   fi
-  log "已恢复数据库 → ${db}（来源 ${snap}）"
+  log "已恢复数据库 → ${db}（来源 ${snap}，含 WAL）"
 }
 
 # 写回执行结果（应用侧 readLatestResult 读取 result-*.json）

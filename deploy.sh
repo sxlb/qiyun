@@ -390,8 +390,16 @@ infer_rollback_version() { # curVersion
   return 0
 }
 
-# 生成快照并裁剪超量份数。调用方需先停容器：SQLite 的 WAL 在容器运行时不保证已落盘，
-# 直接复制会得到不一致的快照。结果写入全局 SNAP_PATH。
+# 生成快照并裁剪超量份数。调用方需先停容器：复制期间必须没有写入者，
+# 否则主库与 WAL 可能来自不同时刻。
+#
+# 【为什么快照必须连 WAL 一起存】
+# SQLite 处于 WAL 模式时，已提交的事务可能只写在 prod.db-wal 里，直到发生 checkpoint
+# 才并入主库文件。而「停容器」**并不保证**会触发 checkpoint：容器以 PID 1 跑 shell，
+# SIGTERM 未必转发给 node，10s 后 Docker 直接 SIGKILL，SQLite 来不及做收尾 checkpoint。
+# 实测证据：一份只拷 prod.db 的快照里 VisitRecord 是 0 条，而同一时刻 prod.db-wal 里
+# 躺着 14 条已提交记录——那份快照一旦被用来回滚，这 14 条就凭空没了。
+# 因此主库与 WAL 成组保存，恢复时成组还原，由 SQLite 回放 WAL。
 snapshot_stopped() { # srcVersion
   local src="$1"
   mkdir -p "$BACKUP_DIR"
@@ -400,7 +408,24 @@ snapshot_stopped() { # srcVersion
   # 校验文件头：磁盘写满或文件被截断时必须当场发现，否则备份形同虚设
   head -c 16 "$SNAP_PATH" | grep -q '^SQLite format 3' \
     || die "快照不可用：${SNAP_PATH} 不是有效的 SQLite 文件，请检查磁盘空间是否充足"
-  ls -1t "$BACKUP_DIR"/prod-*.db 2>/dev/null | tail -n +$((BACKUP_KEEP + 1)) | xargs -r rm -f
+  # WAL 侧车：存成 <快照名>-wal，与主库成组。空 WAL 没有任何内容，不必存。
+  if [ -s "$DATA_DIR/prod.db-wal" ]; then
+    cp -f "$DATA_DIR/prod.db-wal" "${SNAP_PATH}-wal" \
+      || die "复制 WAL 失败：${DATA_DIR}/prod.db-wal → ${SNAP_PATH}-wal"
+  fi
+  prune_snapshots
+}
+
+# 裁剪超量快照：连同 WAL 侧车一起删，避免留下跟任何快照都对不上的孤儿文件。
+# 收尾显式 return 0：本脚本是 set -euo pipefail，而目录里没有快照时 ls 会非 0，
+# 不兜住会把整个升级流程带停。
+prune_snapshots() {
+  local old
+  while IFS= read -r old; do
+    [ -n "$old" ] || continue
+    rm -f "$old" "${old}-wal" "${old}-shm"
+  done < <(ls -1t "$BACKUP_DIR"/prod-*.db 2>/dev/null | tail -n +$((BACKUP_KEEP + 1)) || true)
+  return 0
 }
 
 # 把快照恢复到数据目录；调用方需先停容器
@@ -409,12 +434,24 @@ restore_snapshot() { # path
   # 先清 WAL/SHM：旧日志与新库文件混用会导致数据库损坏
   rm -f "$DATA_DIR/prod.db-wal" "$DATA_DIR/prod.db-shm"
   cp -f "$snap" "$DATA_DIR/prod.db" || die "恢复数据库失败：${snap} → ${DATA_DIR}/prod.db"
+  # 快照里的 WAL 一并还原：尚未 checkpoint 的已提交事务全在里面，漏掉就是回滚时静默丢数据
+  # （见 snapshot_stopped 的说明）。只还原 -wal，不还原 -shm：后者只是 WAL 的内存索引，
+  # SQLite 会按 WAL 自行重建，照搬反而可能与新位置的 WAL 对不上。
+  if [ -s "${snap}-wal" ]; then
+    cp -f "${snap}-wal" "$DATA_DIR/prod.db-wal" \
+      || die "恢复 WAL 失败：${snap}-wal → ${DATA_DIR}/prod.db-wal"
+  fi
   # cp 会重建目标文件，属主随之变成执行脚本的用户（通常是 root）。容器内以 UID 1001 运行，
   # 不校正属主的话新库对容器只读，启动时直接报 SQLite「disk I/O error」并转为 unhealthy，
   # 表现为「回退后服务起不来」。注意本步骤在第 4 节的目录授权之后执行，必须单独处理。
+  # WAL 同样要校正：它会在回放/下一次 checkpoint 时写回主库，属主是 root 一样会报只读。
   if [ "$(id -u)" = "0" ]; then
     chown "${APP_UID:-1001}:${APP_GID:-1001}" "$DATA_DIR/prod.db" 2>/dev/null \
       || warn "未能调整 ${DATA_DIR}/prod.db 的属主，容器可能无法写入数据库"
+    if [ -f "$DATA_DIR/prod.db-wal" ]; then
+      chown "${APP_UID:-1001}:${APP_GID:-1001}" "$DATA_DIR/prod.db-wal" 2>/dev/null \
+        || warn "未能调整 ${DATA_DIR}/prod.db-wal 的属主，容器可能无法写入数据库"
+    fi
   fi
 }
 
@@ -449,7 +486,9 @@ show_status() {
   image="$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null || echo "-")"
   size="$(du -sh "$DATA_DIR" 2>/dev/null | cut -f1 || echo '-')"
   if [ -f "$DATA_DIR/prod.db" ]; then
-    db_size="$(( $(wc -c < "$DATA_DIR/prod.db") / 1024 )) KB"
+    # 连同 WAL 一起统计：WAL 模式下未 checkpoint 的已提交数据都在 -wal 里，
+    # 只报主库大小会明显低估真实数据量（实测主库 160KB 而 WAL 有 780KB）
+    db_size="$(( ( $(wc -c < "$DATA_DIR/prod.db") + $(wc -c < "$DATA_DIR/prod.db-wal" 2>/dev/null || echo 0) ) / 1024 )) KB"
   else
     db_size="不存在"
   fi
@@ -802,7 +841,7 @@ elif [ -n "$cur_version" ] && [ "$cur_version" != "$IMAGE_TAG" ] && [ -f "$DATA_
   info "版本变化：${cur_version} → ${IMAGE_TAG}，停容器并备份数据库..."
   docker compose --env-file "$ENV_FILE" stop || die "停止容器失败"
   snapshot_stopped "$cur_version"
-  info "已备份 ${SNAP_PATH}（${BACKUP_DIR} 内保留最近 ${BACKUP_KEEP} 份）"
+  info "已备份 ${SNAP_PATH}（主库与 WAL 成组保存，${BACKUP_DIR} 内保留最近 ${BACKUP_KEEP} 份）"
 elif [ -n "$cur_version" ] && [ "$cur_version" = "$IMAGE_TAG" ]; then
   info "当前已是 ${IMAGE_TAG}，将重建容器（数据保留）"
 fi
