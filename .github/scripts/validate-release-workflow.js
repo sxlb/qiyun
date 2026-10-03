@@ -134,7 +134,18 @@ const verifyStep = findStep(publish, /Verify manifest covers both architectures/
 const releaseStep = findStep(publish, /Create GitHub Release/);
 
 check(publish.if && /!inputs\.dry_run/.test(String(publish.if)), "publish 在干跑时被跳过");
-check(/download-artifact/.test(jsonOf(publish)), "publish 取回打包产物与 digest 构件");
+// buildx 的 type=gha 缓存本身也会以构件形式出现在同一次运行里（名为 sxlb~qiyun~XXX.dockerbuild），
+// 全量下载会连它们一起拉，而它们下载必然失败。0.0.4 的首次发布就是这样卡在 publish 第一步的。
+(() => {
+  const dl = stepsOf(publish).filter((s) => /download-artifact/.test(String(s.uses || "")));
+  const unscoped = dl.filter((s) => !(s.with && (s.with.name || s.with.pattern)));
+  check(dl.length >= 2, "publish 分别取回 digest 与打包产物");
+  check(
+    dl.length > 0 && unscoped.length === 0,
+    "下载构件时显式指定 name / pattern（全量下载会把 buildx 缓存构件也拉下来并失败）",
+    `未限定的下载步骤：${unscoped.map((s) => s.name).join(", ")}`
+  );
+})();
 check(!!mergeStep && /imagetools create/.test(mergeRun), "publish 合成多架构清单");
 check(!mergeRun.includes("name 'sha256:*'"),
   "digest 收集没有按 sha256:* 匹配（文件名是裸十六进制，那样会一个都取不到）");

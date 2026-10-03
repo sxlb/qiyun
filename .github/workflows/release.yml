@@ -412,10 +412,21 @@ jobs:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
-      - name: Download artifacts
+      # ⚠️ 必须按 name / pattern 精确取构件，不能全量下载：buildx 的 type=gha 缓存本身也会
+      #    以构件形式出现在同一次运行里（名为 sxlb~qiyun~XXXXXX.dockerbuild），全量下载会连
+      #    它们一起拉，而它们下载必然失败——0.0.4 的首次发布就是这样卡在第一步的。
+      - name: Download digests
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          pattern: digest-*
+          path: artifacts/digests
+          merge-multiple: true
+
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: artifacts/packages
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -455,7 +466,7 @@ jobs:
           # digest 文件名是**去掉 "sha256:" 前缀的裸十六进制串**（buildx 的惯用做法，
           # 见上一个 job 的 Export digest）。按 "sha256:*" 匹配会一个文件都取不到，
           # 进而在下面误报「digest 少于 2 个」。故按 64 位十六进制文件名匹配。
-          mapfile -t FILES < <(find artifacts -type f | grep -E '/[0-9a-f]{64}$' | sort || true)
+          mapfile -t FILES < <(find artifacts/digests -type f | grep -E '/[0-9a-f]{64}$' | sort || true)
           if [ "${#FILES[@]}" -lt 2 ]; then
             echo "✗ 架构 digest 少于 2 个，无法合成多架构清单。实际取到的构件：" >&2
             find artifacts -type f >&2 || true
