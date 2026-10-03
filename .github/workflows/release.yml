@@ -49,6 +49,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # 静态校验发布链路自身的结构，放在最前面：几秒内出结论，不必等测试跑完。
+      # 这套流程里的回归不会报错、只会让发布结果不对（digest 文件名匹配写错、
+      # 多仓库写成重复的 name= 字段都属此类），靠人眼审查很难拦住，故写成断言。
+      - name: Validate release workflow
+        run: node .github/scripts/validate-release-workflow.js
+
       - name: Prepare database & generate client
         env:
           DATABASE_URL: file:./prisma/ci-test.db
