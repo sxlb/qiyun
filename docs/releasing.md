@@ -25,15 +25,15 @@
 #    否则它们不会进这次提交，而标签是在推送之后才打的，等于发出去的 tag 少文件。
 git status --short
 git add -u
-git commit -m 'chore: 发版 0.0.7'
+git commit -m 'chore: 发版 0.0.8'
 git push
 
 # 3. 收尾确认：输出应为空。若仍有 ?? 条目，说明第 2 步漏了新增文件，补提交后再打标签
 git status --short
 
 # 4. 打标签并推送（版本号与 package.json 保持一致，工作流会再次同步）
-git tag 0.0.7
-git push origin 0.0.7
+git tag 0.0.8
+git push origin 0.0.8
 ```
 
 推送后工作流分五个任务执行：
@@ -67,7 +67,7 @@ Release Notes 里的「新增 / 修复 / 其他」由 `release-notes.py` 取 **�
 ```bash
 git commit -m 'feat(theme): 主题在首帧即为最终配色'
 git commit -m 'fix(loading): 收起动画不再被纯 CSS 兜底截断'
-git commit -m 'chore: 发版 0.0.7'    # 版本号同步单独一条，放在最后
+git commit -m 'chore: 发版 0.0.8'    # 版本号同步单独一条，放在最后
 ```
 
 压成一条的后果是实打实的：0.0.5 的改动被合并进单个 `chore: 发版 0.0.5`，发布页上只渲染出一行「发版 0.0.5」，本版真正做的深色模式、加载动画、按钮动效全部没有体现，事后只能手工改写 Release。而版本号提交现在会被过滤，同样的做法只会让说明变成「仅版本号同步，无其他改动」——改了什么，不再有人知道。
@@ -168,7 +168,7 @@ npm run validate:workflow
 后台「系统更新」面板列出的历史版本可一键回滚；命令行等价操作是指定版本重新部署：
 
 ```bash
-./deploy.sh 0.0.7
+./deploy.sh 0.0.8
 ```
 
 因为回滚依赖服务器端存在对应 tag，历史标签不要随意删除。
