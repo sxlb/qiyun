@@ -248,6 +248,33 @@ describe.skipIf(!ENV_READY)("deploy.sh · 数据库快照与还原（WAL 成组�
 });
 
 /**
+ * setup-update.sh —— 更新通道安装器。
+ *
+ * 背景：脚本是 set -euo pipefail，而「机器上还没有任何 crontab」时 `crontab -l` 返回非 0。
+ * 它原先被放进 `( ... ) | crontab -` 子 shell，子 shell 因此当场中止，后面那行 echo 永远
+ * 执行不到 —— cron 装不上、versions.json 也写不成，后台「系统更新」就一直提示
+ * 「宿主机更新通道尚未就绪」。而安装器唯一的用武之地恰恰就是全新服务器，必然踩中。
+ *
+ * 反向验证过：把那一处还原成 `( ... )` 旧写法，本用例会以 EXIT=1 / CRON_COUNT=0 /
+ * VERSIONS=MISSING / FINISHED=0 失败，确认它真的抓得住这个 bug。
+ */
+describe.skipIf(!ENV_READY)("setup-update.sh · 全新服务器（尚无 crontab）", () => {
+  it("能装完：cron 写入并带 REPO_DIR、基线版本落盘、脚本走到最后一步", () => {
+    const r = runHarness("setup");
+
+    expect(r.EXIT).toBe("0");
+    expect(r.INSTALLED).toContain("qiyun-update");
+    // cron 必须真的写进去，且带上 REPO_DIR，否则执行器定位不到仓库
+    expect(Number(r.CRON_COUNT)).toBe(1);
+    expect(Number(r.CRON_HAS_REPO)).toBe(1);
+    // versions.json 就是面板 hostReady 的判据，它落盘才算通道可用
+    expect(r.VERSIONS).toContain('"currentVersion":"0.0.8"');
+    // 走到脚本最后一步（前置步骤静默中止时这里会是 0）
+    expect(Number(r.FINISHED)).toBe(1);
+  });
+});
+
+/**
  * 真实 SQLite 回归。上面那组是文件级断言，这组直接验证「数据还在不在」：
  * 用 python 造一个已提交但未 checkpoint 的库（os._exit 跳过收尾），
  * 再对比「只拷主库」与「成组快照 + 成组还原」两种做法的行数。

@@ -272,11 +272,76 @@ PY
   printf 'ROWS_RESTORED=%s\n' "$(rows_of "$DATA_DIR/prod.db")"
 }
 
+# ---------- 更新通道安装器：在「没有 crontab 的全新机器」上的行为 ----------
+# setup-update.sh 是一次性脚本（无函数可抽），所以整体跑真实文件，把会碰系统的东西桩掉。
+cmd_setup() {
+  local work="$STUB_DIR/setup"
+  rm -rf "$work"
+  mkdir -p "$work/repo/data" "$work/bin" "$work/state"
+  # 最小仓库：脚本靠 docker-compose.yml + data/ 定位仓库目录
+  : > "$work/repo/docker-compose.yml"
+  mkdir -p "$work/repo/scripts"
+  cp -f "$ROOT/scripts/setup-update.sh" "$work/repo/scripts/"
+  cp -f "$ROOT/scripts/update-watch.sh" "$work/repo/scripts/"
+  cp -f "$ROOT/scripts/update.sh" "$work/repo/scripts/"
+
+  # 桩 crontab：初始完全没有 crontab（-l 返回非 0）——这正是全新服务器的状态，
+  # 也是修复前会让安装脚本在中途静默死掉、导致面板一直「未就绪」的那个前提。
+  cat > "$work/bin/crontab" <<'FAKE'
+#!/usr/bin/env bash
+store="$SETUP_STATE/crontab.txt"
+if [ "${1:-}" = "-l" ]; then
+  [ -s "$store" ] || { echo "no crontab for $(id -un)" >&2; exit 1; }
+  cat "$store"; exit 0
+fi
+if [ "${1:-}" = "-" ]; then cat > "$store"; exit 0; fi
+exit 1
+FAKE
+  # 桩 docker：只需要回答运行中镜像的标签（脚本据此写基线版本）
+  cat > "$work/bin/docker" <<'FAKE'
+#!/usr/bin/env bash
+case "$*" in
+  *"Config.Image"*) echo "ghcr.io/sxlb/qiyun:0.0.8"; exit 0 ;;
+  *) exit 0 ;;
+esac
+FAKE
+  # 桩 install：只记录目标名，绝不真的写进 /usr/local/bin
+  cat > "$work/bin/install" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$(basename "${@: -1}")" >> "$SETUP_STATE/installed.txt"
+exit 0
+FAKE
+  # 桩 id：让脚本走 root 分支。CI 以非 root 运行，不桩的话权限处理那一段永远不会被执行到。
+  cat > "$work/bin/id" <<'FAKE'
+#!/usr/bin/env bash
+case "${1:-}" in
+  -un) echo root ;;
+  *)   echo 0 ;;
+esac
+FAKE
+  chmod +x "$work/bin/crontab" "$work/bin/docker" "$work/bin/install" "$work/bin/id"
+
+  # 必须切到临时仓库目录再跑：find_repo 优先看 $PWD，否则会命中真实仓库、
+  # 把 versions.json 写进真实 data/deploy
+  local rc=0
+  ( cd "$work/repo" && SETUP_STATE="$work/state" PATH="$work/bin:$PATH" \
+      bash scripts/setup-update.sh ) > "$work/out.txt" 2>&1 || rc=$?
+
+  printf 'EXIT=%s\n' "$rc"
+  printf 'INSTALLED=%s\n' "$(tr '\n' ',' < "$work/state/installed.txt" 2>/dev/null)"
+  printf 'CRON_COUNT=%s\n' "$(grep -c 'qiyun-update' "$work/state/crontab.txt" 2>/dev/null || echo 0)"
+  printf 'CRON_HAS_REPO=%s\n' "$(grep -c 'REPO_DIR=' "$work/state/crontab.txt" 2>/dev/null || echo 0)"
+  printf 'VERSIONS=%s\n' "$(tr -d ' \n' < "$work/repo/data/deploy/versions.json" 2>/dev/null || echo MISSING)"
+  printf 'FINISHED=%s\n' "$(grep -c '更新通道安装完成' "$work/out.txt" 2>/dev/null || echo 0)"
+  printf 'OUT=%s\n' "$(tr '\n' '|' < "$work/out.txt" | cut -c1-400)"
+}
+
 case "${1:-}" in
   probe) write_fake_docker_probe; PATH="$STUB_DIR:$PATH"; shift; cmd_probe "$@" ;;
   pull)  write_fake_docker_pull;  PATH="$STUB_DIR:$PATH"; shift; cmd_pull "$@" ;;
   pref)  shift; cmd_pref "$@" ;;
   snap)  shift; cmd_snap "$@" ;;
   wal)   shift; cmd_wal "$@" ;;
-  *)     echo "用法: $0 <probe|pull|pref|snap|wal> ..." >&2; exit 2 ;;
+  setup) shift; cmd_setup "$@" ;;
+  *)     echo "用法: $0 <probe|pull|pref|snap|wal|setup> ..." >&2; exit 2 ;;
 esac

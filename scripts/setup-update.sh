@@ -40,7 +40,10 @@ CRON_LINE="* * * * * flock -n /tmp/qiyun-update.lock env REPO_DIR=$REPO_DIR /usr
 if crontab -l 2>/dev/null | grep -qF "qiyun-update"; then
   echo "==> 定时器已存在，跳过（如需更新请手工编辑 crontab -e）"
 else
-  ( crontab -l 2>/dev/null; echo "$CRON_LINE" ) | crontab -
+  # 用 { ... } 而非 ( ... )：本脚本是 set -euo pipefail，而「机器上还没有任何 crontab」时
+  # `crontab -l` 返回非 0。放进子 shell 会让子 shell 当场中止，后面那行 echo 永远执行不到，
+  # 结果是 cron 没装上、面板一直提示「更新通道尚未就绪」——全新服务器必然踩中。
+  { crontab -l 2>/dev/null || true; echo "$CRON_LINE"; } | crontab -
   echo "==> 已写入 cron：$CRON_LINE"
 fi
 
