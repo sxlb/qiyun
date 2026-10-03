@@ -46,7 +46,7 @@ export default function SkillsPanel() {
       <CardContent className="space-y-3">
         <PanelHeader
           actions={
-            <Button size="sm" onClick={addItem} className="gap-1.5">
+            <Button size="sm" onClick={() => addItem()} className="gap-1.5">
               <Plus className="h-4 w-4" />
               添加技能
             </Button>

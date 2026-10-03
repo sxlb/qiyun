@@ -92,7 +92,7 @@ export default function FriendLinksPanel() {
         {/* 页面级标题/描述由 admin/page.tsx 提供，卡内仅保留右侧主操作区 */}
         <PanelHeader
           actions={
-            <Button size="sm" onClick={addItem} className="gap-1.5">
+            <Button size="sm" onClick={() => addItem()} className="gap-1.5">
               <Plus className="h-4 w-4" />
               添加链接
             </Button>

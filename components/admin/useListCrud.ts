@@ -107,14 +107,21 @@ export function useListCrud<T extends CrudItem>(options: UseListCrudOptions<T>) 
     };
   }, [fetchList]);
 
-  const addItem = useCallback(() => {
-    setItems((prev) => {
-      const draft = optsRef.current.makeEmpty(prev.length);
-      return [...prev, { ...draft, clientId: nextClientId() } as T];
-    });
-    markEdited();
-    setDirty(true);
-  }, [markEdited]);
+  /**
+   * 追加一行，可用 overrides 覆盖 makeEmpty 的默认值。
+   * 典型用途：社交链接的「常用平台一键添加」——一次性填好名称 / 图标 / 地址前缀。
+   */
+  const addItem = useCallback(
+    (overrides?: Partial<Omit<T, "clientId">>) => {
+      setItems((prev) => {
+        const draft = optsRef.current.makeEmpty(prev.length);
+        return [...prev, { ...draft, ...overrides, clientId: nextClientId() } as T];
+      });
+      markEdited();
+      setDirty(true);
+    },
+    [markEdited]
+  );
 
   const removeItem = useCallback(
     (index: number) => {
