@@ -17,6 +17,8 @@
 #   IMAGE_MIRROR_PREFIX=域名         指定镜像加速器；留空则按候选链自动尝试
 #   GHCR_IMAGE=仓库地址              等价于 IMAGE_SOURCE，保留以兼容旧写法
 #   DEPLOY_NO_PROMPT=1               不询问镜像源，直接走自动链路
+#   PULL_SOURCE_TIMEOUT=300          单个来源的拉取预算（秒）；只作用于「后面还有候选」的来源，
+#                                    链上最后一个来源不设预算，置 0 表示全部不设
 #   GITHUB_REPO=owner/repo           查询最新版本时使用的仓库
 #
 # 关于镜像源：发布链路同时推 GHCR 与 Docker Hub，两边是同一份构建（digest 一致），
@@ -46,6 +48,13 @@ MIRROR_CANDIDATES="${MIRROR_CANDIDATES:-ghcr.nju.edu.cn docker.1panel.live}"
 # 真正的拉取刻意不设超时——慢速链路上拉几百 MB 可能要几分钟，
 # 给拉取加超时会误杀本来能成功的部署，那比多等一会儿糟糕得多。
 PROBE_TIMEOUT="${PROBE_TIMEOUT:-15}"
+# 单个来源的拉取墙钟预算（秒），只作用于「后面还有候选」的来源。
+# 为什么必须有它：探测只能回答「连不连得上」，回答不了「拉得快不快」——
+# 实测 ghcr.io 的 manifest 探测 7s 通过，实际吞吐只有约 37KB/s，按镜像体积估算要数小时；
+# 而换源此前只在「失败」时发生，于是一次部署会长时间挂在这个「可达但极慢」的来源上。
+# 超额即换下一个来源：镜像层按 digest 寻址，已下好的层会被下一个来源直接复用，切换成本很低。
+# 链上最后一个来源不设预算，保留「绝不误杀慢速链路」的原始保证。
+PULL_SOURCE_TIMEOUT="${PULL_SOURCE_TIMEOUT:-300}"
 
 die()  { echo "✗ $*" >&2; exit 1; }
 warn() { echo "⚠ $*" >&2; }
@@ -190,28 +199,47 @@ EOF
 # 或反过来的误判。这里的做法是照搬 `docker info` 里守护进程自己的代理配置：
 #   daemon 模式——守护进程配了代理，探测也走同一个代理；
 #   direct 模式——守护进程没有代理，就把客户端代理变量清干净，模拟直连。
-# 另外，manifest 子命令缺失时一律放行，否则会把可用来源全误判为不可达。
+#
+# 判定口径：**只在拿到「明确不可达」的证据时才排除来源**，其余一律放行。依据是实测：
+#   docker.io          rc=1  0s  connect: connection refused  → 明确不可达，排除
+#   ghcr.nju.edu.cn    rc=0  9s                                → 可用（但曾因 15s 超时被误判）
+#   docker.1panel.live rc=124 16s（探测自身超时）               → 拉取完全正常，不该排除
+# 两个反例说明 manifest 延迟与拉取吞吐无关，且 9~16s 正好贴着 PROBE_TIMEOUT=15 的边界，
+# 判定会随网络抖动而翻转。因此超时只记为「不确定」：真不可达时紧接着的 pull 会以同一条
+# 连接错误快速失败，代价是几秒；而误杀一个可用加速器会让整次部署变慢甚至失败，代价大得多。
+# manifest 子命令缺失时同样一律放行。
 probe_repo() { # repo:tag
   PROBE_ERR=""
   [ "${MANIFEST_OK:-0}" = "1" ] || return 0
   command -v timeout >/dev/null 2>&1 || return 0
-  local out=""
+  local out="" rc=0
   if [ "${PROBE_PROXY_MODE:-direct}" = "daemon" ]; then
-    if out="$(timeout "$PROBE_TIMEOUT" \
+    out="$(timeout -k 5 "$PROBE_TIMEOUT" \
         env http_proxy="$DAEMON_HTTP_PROXY" https_proxy="$DAEMON_HTTPS_PROXY" \
             HTTP_PROXY="$DAEMON_HTTP_PROXY" HTTPS_PROXY="$DAEMON_HTTPS_PROXY" \
-        docker manifest inspect "$1" 2>&1)"; then
-      return 0
-    fi
+        docker manifest inspect "$1" 2>&1)" || rc=$?
   else
-    if out="$(timeout "$PROBE_TIMEOUT" \
+    out="$(timeout -k 5 "$PROBE_TIMEOUT" \
         env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
-        docker manifest inspect "$1" 2>&1)"; then
-      return 0
-    fi
+        docker manifest inspect "$1" 2>&1)" || rc=$?
   fi
   PROBE_ERR="$out"
-  return 1
+  [ "$rc" = "0" ] && return 0
+  # 拿到过 manifest 就说明这个来源可用，哪怕进程是被 timeout 掐掉的：
+  # manifest 通常已经先打印出来了。实测 ghcr.nju.edu.cn 就有过
+  # 「rc=124 但输出是完整 manifest」的情况——只看退出码会把它误判为不可用。
+  if printf '%s' "$out" | grep -q '"schemaVersion"'; then
+    return 0
+  fi
+  # 再看报错文本：只有这些字样才算「明确不可达」（连不上 / 解析不了 / TLS 失败）
+  if printf '%s' "$out" | grep -qiE 'connection refused|no such host|dial tcp|tls handshake|x509'; then
+    return 1
+  fi
+  # 其余一律放行。退出码本身不可作为依据：docker CLI 不响应 SIGTERM，被强杀时
+  # rc 会是 137 而输出为空（实测 docker.io 就是如此，同一地址另一次又是 rc=1 带文本）。
+  # 放行一个死源的代价是拉取阶段被 PULL_SOURCE_TIMEOUT 兜住后换源；误杀一个可用来源
+  # 的代价是整次部署变慢甚至失败，后者严重得多。
+  return 0
 }
 
 # 校验拉到的镜像架构与当前主机一致。多架构 manifest 下 docker 会自动选对平台，
@@ -625,6 +653,10 @@ info "拉取 ${IMAGE_TAG} 镜像，依次尝试：${PULL_CHAIN// /、}"
 PULLED_REPO=""
 PULL_FAILED=""
 LAST_PROBE_ERR=""
+# 链上最后一个候选不设拉取预算（见 PULL_SOURCE_TIMEOUT 说明）。
+# PULL_CHAIN 已在 build_pull_chain 里去重，因此用字符串比较判定「后面还有没有候选」是可靠的。
+LAST_REPO=""
+for _r in $PULL_CHAIN; do LAST_REPO="$_r"; done
 for repo in $PULL_CHAIN; do
   if ! probe_repo "${repo}:${IMAGE_TAG}"; then
     LAST_PROBE_ERR="$PROBE_ERR"
@@ -632,7 +664,29 @@ for repo in $PULL_CHAIN; do
     PULL_FAILED="${PULL_FAILED} ${repo}"
     continue
   fi
-  if GHCR_IMAGE="$repo" docker compose --env-file "$ENV_FILE" pull; then
+
+  pull_rc=0
+  if [ "$PULL_SOURCE_TIMEOUT" != "0" ] && [ "$repo" != "$LAST_REPO" ]; then
+    # -k 10：docker CLI 不响应 SIGTERM（实测探测阶段能拖到预算的 3 倍才退），
+    # 没有强杀兜底的话这个「预算」形同虚设。被强杀后守护进程会丢弃半截层，
+    # 已完整的层留在原地，供下一个来源按 digest 直接复用。
+    GHCR_IMAGE="$repo" timeout -k 10 "$PULL_SOURCE_TIMEOUT" \
+      docker compose --env-file "$ENV_FILE" pull || pull_rc=$?
+    # 124 = SIGTERM 生效；137 = SIGTERM 被忽略、由 -k 强杀。两者都表示「太慢」而不是「拉不到」。
+    case "$pull_rc" in
+      124|137)
+        warn "来源 ${repo} 拉取超过 ${PULL_SOURCE_TIMEOUT}s 仍未完成（判定为过慢），换下一个来源；已下载的层会被复用"
+        PULL_FAILED="${PULL_FAILED} ${repo}(过慢)"
+        # 给守护进程一点时间收尾被掐断的拉取，避免下一次 pull 撞上同一个镜像的并发操作
+        sleep 2
+        continue
+        ;;
+    esac
+  else
+    # 末位来源（或显式关闭预算）：不给超时，保留「慢速链路也能拉完」的保证
+    GHCR_IMAGE="$repo" docker compose --env-file "$ENV_FILE" pull || pull_rc=$?
+  fi
+  if [ "$pull_rc" = "0" ]; then
     PULLED_REPO="$repo"
     break
   fi
