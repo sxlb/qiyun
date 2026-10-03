@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Megaphone, Pin, X, BellRing } from "lucide-react";
 
 interface Announcement {
@@ -120,12 +120,27 @@ export default function AnnouncementNotification({
     // 仅组件挂载时预取一次；公告/访客信息在切换 site 后会重新挂载，由组件层面保证刷新
   }, []);
 
+  /**
+   * 是否已经自动弹过一次。
+   *
+   * 「加载动画已移除」事件与 3 秒兜底定时器是两条**并行**的唤出路径，谁先到都算数。
+   * 少了这道闸，先到的那条唤出弹窗、用户随即点「我知道了」关掉，后到的那条仍会
+   * setVisible(true)，弹窗就在关闭后一两秒莫名二次弹出。
+   * 自动展示只允许发生一次；用户的关闭动作一旦发生，本次挂载内不再自动唤出。
+   */
+  const revealedRef = useRef(false);
+
   // 有欢迎语或公告后，等全屏加载动画完全移除再统一弹出
   useEffect(() => {
     if (!hasContent) return;
     let cancelled = false;
     const show = () => {
-      if (!cancelled) setVisible(true);
+      if (cancelled || revealedRef.current) return;
+      revealedRef.current = true;
+      // 已唤出过：另一条路径（事件 / 定时器）到点时会被上面这道闸拦下，
+      // 这里只顺手摘掉监听，定时器等它自然到点即可（最多多挂 3 秒）
+      window.removeEventListener("loading-screen-removed", show);
+      setVisible(true);
     };
     if (!document.getElementById("loader-wrapper")) {
       show();
