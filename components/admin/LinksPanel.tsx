@@ -14,6 +14,7 @@ import { resolveLucideIcon, isLucideIcon } from "@/lib/lucideIconResolver";
 import { resolveIconImageSrc, isInlineSvgValue, isIconifyValue, renderInlineSvg } from "@/lib/iconValue";
 import IconifyIcon from "@/components/home/IconifyIcon";
 import { useExternalApi } from "./useExternalApi";
+import type { SocialPreset } from "@/lib/social-presets";
 
 interface LinkItem {
   id?: number;
@@ -56,6 +57,11 @@ interface LinksPanelProps {
   urlPlaceholder?: string;
   /** Tab 名称（用于保存按钮 aria-label，便于区分社交/网站链接） */
   tabLabel?: string;
+  /**
+   * 常用平台一键预设（仅社交链接传入）。
+   * 点击后追加一行并预填名称 / 图标 / 地址前缀，用户只需补地址后半段。
+   */
+  presets?: SocialPreset[];
 }
 
 /** LinkRow 组件 props */
@@ -89,6 +95,7 @@ export default function LinksPanel({
   iconPlaceholder = "如 github, globe, link",
   urlPlaceholder = "https://example.com",
   tabLabel,
+  presets,
 }: LinksPanelProps) {
   const { items: links, loading, saving, dirty, addItem, removeItem, update: updateItem, save } = useListCrud<LinkItem>({
     id: apiPath,
@@ -116,6 +123,17 @@ export default function LinksPanel({
 
   const handleAdd = () => {
     addItem();
+    setExpandedIndex(links.length);
+  };
+
+  /** 常用平台一键添加：追加一行并预填名称 / 图标 / 地址前缀，随后直接展开供补全地址 */
+  const handleAddPreset = (preset: SocialPreset) => {
+    addItem({
+      name: preset.name,
+      icon: preset.icon,
+      url: preset.urlPrefix,
+      ...(showTip ? { tip: preset.tip } : {}),
+    });
     setExpandedIndex(links.length);
   };
 
@@ -168,6 +186,26 @@ export default function LinksPanel({
             </Button>
           }
         />
+        {presets && presets.length > 0 && (
+          <div className="space-y-1.5 rounded-md border border-dashed border-border px-3 py-2.5">
+            <p className="text-xs text-muted-foreground">
+              常用平台：点一下自动填好名称、图标与地址前缀，只需补地址后半段
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {presets.map((p) => (
+                <button
+                  key={p.name}
+                  type="button"
+                  onClick={() => handleAddPreset(p)}
+                  title={`添加「${p.name}」${p.urlPrefix ? `（地址前缀 ${p.urlPrefix}）` : ""}`}
+                  className="rounded-full border border-border bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-150 hover:border-primary/50 hover:bg-muted hover:text-foreground"
+                >
+                  + {p.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {links.length === 0 && (
           <EmptyState icon={<Plus className="h-5 w-5" />} title={emptyText} />
         )}

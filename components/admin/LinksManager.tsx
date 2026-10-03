@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Share2, Globe, Users, Link2 } from "lucide-react";
 import LinksPanel from "@/components/admin/LinksPanel";
 import FriendLinksPanel from "@/components/admin/FriendLinksPanel";
+import { SOCIAL_PRESETS } from "@/lib/social-presets";
 
 /** 子 tab 标识 */
 type LinkSubTab = "social" | "site" | "friend";
@@ -75,6 +76,7 @@ export default function LinksManager() {
             successMessage="社交链接保存成功"
             tabLabel="社交链接"
             showTip
+            presets={SOCIAL_PRESETS}
             namePlaceholder="如 GitHub"
             iconPlaceholder="图标名 / Iconify(fa:github) / 图片URL或路径 / SVG代码"
             urlPlaceholder="https://github.com/yourname 或 mailto:xxx"
