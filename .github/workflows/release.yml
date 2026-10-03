@@ -346,17 +346,22 @@ jobs:
 
       # 每个架构都要同时推到两个仓库：合成多架构清单时，被引用的单架构清单必须在
       # 目标仓库里存在，否则清单指向一堆不存在的 digest，拉取直接失败。
+      #
+      # ⚠️ 多个仓库必须写成「一个 name 字段 + 引号包裹 + 逗号分隔」，这是官方文档的写法
+      #    （docs.docker.com/build/exporters/image-registry）。实测重复写 `name=a,name=b`
+      #    不会报错，但后一个会覆盖前一个，只有最后一个仓库生效——那样 GHCR 里拿不到
+      #    单架构清单，publish 合成时找不到来源 digest，发布必然失败。
       - name: Compose image names
         id: names
         run: |
           set -euo pipefail
-          NAMES="name=ghcr.io/sxlb/qiyun"
+          GHCR_REPO="ghcr.io/sxlb/qiyun"
           if [ -n "${DOCKERHUB_TOKEN:-}" ] && [ -n "${DOCKERHUB_USERNAME:-}" ]; then
-            NAMES="${NAMES},name=docker.io/${DOCKERHUB_USERNAME}/qiyun"
+            echo "outputs=type=image,\"name=${GHCR_REPO},docker.io/${DOCKERHUB_USERNAME}/qiyun\",push-by-digest=true,name-canonical=true,push=true" >> "$GITHUB_OUTPUT"
           else
             echo "::notice::未配置 DOCKERHUB_TOKEN，本次仅推送 GHCR"
+            echo "outputs=type=image,name=${GHCR_REPO},push-by-digest=true,name-canonical=true,push=true" >> "$GITHUB_OUTPUT"
           fi
-          echo "outputs=type=image,${NAMES},push-by-digest=true,name-canonical=true,push=true" >> "$GITHUB_OUTPUT"
 
       - name: Build and push by digest
         id: build
@@ -431,18 +436,40 @@ jobs:
           set -euo pipefail
           TAG="${{ needs.prepare.outputs.TAG }}"
           SRC="ghcr.io/sxlb/qiyun"
-          TAGS=(-t "${SRC}:${TAG}")
+          # 刻意把 GHCR 放在最后打标签：版本防覆盖守卫检查的正是 GHCR 上的标签。
+          # 若中途失败（例如 Docker Hub 限流），GHCR 上不会留下标签，
+          # 于是修正后可以直接重打标签，而不必走 docs/releasing.md 里的原地重发流程。
+          TAGS=()
           if [ -n "${DOCKERHUB_TOKEN:-}" ] && [ -n "${DOCKERHUB_USERNAME:-}" ]; then
             TAGS+=(-t "docker.io/${DOCKERHUB_USERNAME}/qiyun:${TAG}")
           else
             echo "::notice::未配置 DOCKERHUB_TOKEN，本次仅发布 GHCR"
           fi
-          mapfile -t FILES < <(find artifacts -type f -name 'sha256:*' | sort)
-          [ "${#FILES[@]}" -ge 2 ] || { echo "✗ 架构 digest 少于 2 个，无法合成多架构清单" >&2; exit 1; }
+          TAGS+=(-t "${SRC}:${TAG}")
+          # digest 文件名是**去掉 "sha256:" 前缀的裸十六进制串**（buildx 的惯用做法，
+          # 见上一个 job 的 Export digest）。按 "sha256:*" 匹配会一个文件都取不到，
+          # 进而在下面误报「digest 少于 2 个」。故按 64 位十六进制文件名匹配。
+          mapfile -t FILES < <(find artifacts -type f | grep -E '/[0-9a-f]{64}$' | sort || true)
+          if [ "${#FILES[@]}" -lt 2 ]; then
+            echo "✗ 架构 digest 少于 2 个，无法合成多架构清单。实际取到的构件：" >&2
+            find artifacts -type f >&2 || true
+            exit 1
+          fi
           REFS=()
           for f in "${FILES[@]}"; do REFS+=("${SRC}@sha256:$(basename "$f")"); done
           printf '将合成：%s\n' "${TAGS[*]}"
           printf '来源：%s\n' "${REFS[*]}"
+          # 合成前先确认每个单架构清单在主仓库里取得到。取不到最常见的原因就是构建时
+          # 没有把该架构推到主仓库（例如 outputs 的 name 字段写法有误，只推到了另一个仓库）。
+          # 不带这层检查的话，报错会是一句晦涩的 manifest unknown，指向不了真正的原因。
+          for ref in "${REFS[@]}"; do
+            docker buildx imagetools inspect "$ref" >/dev/null 2>&1 || {
+              echo "✗ 单架构清单在主仓库取不到：${ref}" >&2
+              echo "  请检查 image job 的 Compose image names 步骤：多仓库必须是" >&2
+              echo "  「单个 name 字段 + 引号包裹 + 逗号分隔」，重复 name= 只会保留最后一个。" >&2
+              exit 1
+            }
+          done
           docker buildx imagetools create "${TAGS[@]}" "${REFS[@]}"
 
       # 多架构是本版本的核心交付物，合成之后必须验证清单里真的有两个架构：

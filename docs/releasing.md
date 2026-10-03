@@ -53,7 +53,19 @@ Dockerfile 是在镜像内跑 `npm ci` + `next build` 的完整构建，产物�
 gh workflow run release.yml -f dry_run=true
 ```
 
+没装 `gh` 时直接用 REST：
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  -H "Accept: application/vnd.github+json" \
+  https://api.github.com/repos/sxlb/qiyun/actions/workflows/release.yml/dispatches \
+  -d '{"ref":"master","inputs":{"dry_run":"true"}}'
+```
+
 干跑会跳过 `publish`，因此镜像仓库里不会留下任何标签与无标签残留。
+
+> 干跑**不覆盖** `publish` 的合成逻辑（构建用缓存导出、digest 也不上传）。合成阶段有两个实测踩过的坑，已在代码里写成注释防止回退：digest 文件名是去掉 `sha256:` 前缀的裸十六进制串，按 `sha256:*` 匹配会一个都取不到；多仓库必须写成「单个 `name` 字段 + 引号包裹 + 逗号分隔」，重复写 `name=` 不会报错但只有最后一个仓库生效。
 
 ## 发布产物
 

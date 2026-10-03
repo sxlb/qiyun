@@ -1,7 +1,10 @@
 services:
   qiyun:
     # 预编译镜像，无需本地构建。仓库与标签均可由环境变量覆盖：
-    #   GHCR_IMAGE  镜像仓库（默认 ghcr.io/sxlb/qiyun；可指向 Docker Hub 或镜像加速地址）
+    #   GHCR_IMAGE  镜像仓库（默认 ghcr.io/sxlb/qiyun；可指向 Docker Hub 或镜像加速地址）。
+    #               注意：deploy.sh 与更新执行器总会显式注入该变量（默认 Docker Hub，
+    #               并在官方源不通时自动改用备用源或公共加速器），这里的默认值只服务于
+    #               「不经脚本、手写 compose 命令」的场景。
     #   IMAGE_TAG   镜像标签（必填，如 0.0.1）。发布链路只推版本标签、不推 latest，
     #               故不设默认值；deploy.sh 与更新脚本会自动注入具体版本号。
     image: ${GHCR_IMAGE:-ghcr.io/sxlb/qiyun}:${IMAGE_TAG:?IMAGE_TAG 未设置，请显式指定版本，如 IMAGE_TAG=0.0.1}
