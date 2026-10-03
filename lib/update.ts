@@ -15,7 +15,8 @@ import { CURRENT_VERSION } from "./version";
  *   running-<id>.json  宿主机正在执行（认领后 rename）
  *   result-<id>.json   执行结果                    {id,action,version,status,message,at}
  *   versions.json      版本/历史权威记录            {currentVersion,updatedAt,history:[{version,action,at}]}
- *   backups/*.db       每次更新前的数据库快照
+ *   backups/*.db       每次更新前的数据库快照（配套 *.db-wal 存未 checkpoint 的已提交事务，
+ *                      两者成组还原，手动取用时也要一并拿走）
  */
 
 export type UpdateAction = "update" | "rollback";
