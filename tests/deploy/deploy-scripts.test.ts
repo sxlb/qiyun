@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
  *
  * 环境要求：bash + GNU 风格 coreutils（timeout / awk / mktemp）。
  * 本机为 Windows（PATH 上没有 bash）时整组跳过，CI（ubuntu-latest）会执行。
+ * 「WAL 事务」那一组另需 python3（带 sqlite3 模块），缺了它只跳过该组，不影响其余断言。
  */
 
 const HARNESS = fileURLToPath(new URL("./harness/deploy-logic.sh", import.meta.url));
@@ -34,6 +35,18 @@ function harnessEnvReady(): boolean {
 }
 
 const ENV_READY = harnessEnvReady();
+
+/** WAL 回归组额外需要 python 的 sqlite3 模块：用它造出「事务只在 WAL 里」的真实形态 */
+function sqliteEnvReady(): boolean {
+  // CI 上是 python3，Windows 本地通常只有 python，两种都认
+  for (const bin of ["python3", "python"]) {
+    const probe = spawnSync(bin, ["-c", "import sqlite3"], { stdio: "ignore" });
+    if (probe.status === 0) return true;
+  }
+  return false;
+}
+
+const SQLITE_READY = ENV_READY && sqliteEnvReady();
 
 /** 运行夹具，把 KEY=VALUE 输出解析成对象 */
 function runHarness(...args: string[]): Record<string, string> {
@@ -176,5 +189,78 @@ describe.skipIf(!ENV_READY)("deploy.sh · 镜像源记忆", () => {
 
   it("remember_source 写入的内容能被 read_preferred_source 原样读回", () => {
     expect(runHarness("pref", "c/z", CHAIN).SAVED).toBe("c/z");
+  });
+});
+
+/**
+ * 数据库快照必须连 WAL 一起存。
+ *
+ * 背景（线上实测）：更新脚本先停容器再 `cp prod.db`，注释里写着「停容器即可保证 WAL 落盘」。
+ * 这个前提是错的 —— 容器以 PID 1 跑 shell，SIGTERM 未必转发给 node，10s 后被 Docker SIGKILL，
+ * SQLite 来不及做收尾 checkpoint。结果是一份快照里 VisitRecord 是 0 条，而同一时刻
+ * prod.db-wal 里躺着 14 条已提交记录：那份快照一旦被用来回滚，这 14 条就静默消失了。
+ */
+describe.skipIf(!ENV_READY)("deploy.sh · 数据库快照与还原（WAL 成组）", () => {
+  const snap = (scenario: string) => runHarness("snap", scenario);
+  const files = (r: Record<string, string>) => (r.FILES ?? "").split(",").filter(Boolean);
+
+  it("存在 WAL 时，快照连侧车一起存", () => {
+    const f = files(snap("backup_with_wal"));
+    expect(f.some((x) => /^prod-0\.0\.6-\d{8}-\d{6}\.db$/.test(x))).toBe(true);
+    expect(f.some((x) => /^prod-0\.0\.6-\d{8}-\d{6}\.db-wal$/.test(x))).toBe(true);
+  });
+
+  it("WAL 为空文件时不产生多余侧车", () => {
+    const f = files(snap("backup_empty_wal"));
+    expect(f).toHaveLength(1);
+    expect(f[0]).toMatch(/\.db$/);
+  });
+
+  it("没有 WAL 文件时不凭空造一个", () => {
+    const f = files(snap("backup_no_wal"));
+    expect(f).toHaveLength(1);
+    expect(f[0]).toMatch(/\.db$/);
+  });
+
+  it("还原时把快照里的 WAL 一并还原，并清掉旧的 WAL/SHM 残留", () => {
+    const r = snap("restore_with_wal");
+    expect(r.WAL).toBe("WALDATA");
+    // -shm 只是 WAL 的内存索引，不该被还原（照搬可能与新位置的 WAL 对不上）
+    expect(r.HAS_SHM).toBe("no");
+  });
+
+  it("升级前的旧快照（无侧车）仍能还原，且不留残留 WAL", () => {
+    const r = snap("restore_without_wal");
+    expect(r.HAS_WAL).toBe("no");
+    expect(r.HAS_SHM).toBe("no");
+  });
+
+  it("裁剪超量快照时连侧车一起删，不留孤儿（保留最近 2 份）", () => {
+    const f = files(snap("prune"));
+    expect(f.filter((x) => x.endsWith(".db"))).toHaveLength(2);
+    // 侧车数量与主文件数量一致 = 没有孤儿 -wal 留在目录里
+    expect(f.filter((x) => x.endsWith(".db-wal"))).toHaveLength(2);
+    expect(f.join(",")).toContain("prod-0.0.4-");
+    expect(f.join(",")).toContain("prod-0.0.3-");
+    expect(f.join(",")).not.toContain("prod-0.0.1-");
+    expect(f.join(",")).not.toContain("prod-0.0.2-");
+  });
+});
+
+/**
+ * 真实 SQLite 回归。上面那组是文件级断言，这组直接验证「数据还在不在」：
+ * 用 python 造一个已提交但未 checkpoint 的库（os._exit 跳过收尾），
+ * 再对比「只拷主库」与「成组快照 + 成组还原」两种做法的行数。
+ */
+describe.skipIf(!SQLITE_READY)("deploy.sh · 快照必须保住未 checkpoint 的 WAL 事务", () => {
+  it("只拷主库会丢数据；成组快照 + 成组还原能把数据找回来", () => {
+    const r = runHarness("wal");
+
+    // 前置：确实造出了「数据只在 WAL 里」的形态
+    expect(Number(r.WAL_BYTES)).toBeGreaterThan(0);
+    // 只把主库文件拷走，3 条一条都不剩 —— 这正是线上踩到的坑
+    expect(["none", "0"]).toContain(r.ROWS_DBONLY);
+    // 修完之后：成组快照 → 成组还原，3 条完整回来
+    expect(r.ROWS_RESTORED).toBe("3");
   });
 });

@@ -4,10 +4,12 @@
 # 关键点：它从**真实 deploy.sh** 里抽取函数再执行，断言的是实际代码而不是副本——
 # 复制一份函数来测，只能证明副本是对的，改动原文件后测试照样绿。
 #
-# 用法：deploy-logic.sh <probe|pull|pref> [参数...]
+# 用法：deploy-logic.sh <probe|pull|pref|snap|wal> [参数...]
 #   probe <假docker行为> <repo>   输出 VERDICT=allow|exclude、PROBE_ERR=<首行>
 #   pull  <chain> <budget>        输出 PULLED_REPO=...、PULL_FAILED=...
 #   pref  <saved> <chain>         输出 PULL_CHAIN=...、SAVED=...
+#   snap  <场景>                  输出快照/还原后的目录内容（文件级断言）
+#   wal   （无参数）              用真实 SQLite 复现「未 checkpoint 的 WAL」并断言数据是否还在
 #
 # deploy.sh 依赖真实 docker 与真实网络，这里把 docker 换成 PATH 前置的假命令，
 # 让行为可确定、可离线复现。
@@ -19,6 +21,9 @@ DEPLOY="$ROOT/deploy.sh"
 
 STUB_DIR="$(mktemp -d)"
 trap 'rm -rf "$STUB_DIR"' EXIT
+
+# python 解释器：CI（ubuntu）上是 python3，Windows 本地（git-bash）通常只有 python
+PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
 
 # 被抽取的函数会调用 deploy.sh 的这几个输出函数；夹具里静音即可。
 # 必须**在抽取之前**定义好：apply_preferred_source 会调 info，漏定义会报 command not found。
@@ -34,6 +39,17 @@ oneline() { printf '%s' "$1" | tr '\n' ' '; }
 extract_probe() { awk '/^probe_repo\(\)/{f=1} f{print} f && /^}$/{exit}' "$DEPLOY"; }
 extract_pref()  { awk '/^# ---------- 记住上次成功的来源/{f=1} /^# 询问是否使用镜像加速器/{f=0} f' "$DEPLOY"; }
 extract_pull()  { awk '/^info "拉取 /{f=1} f{print} f && /^done$/{exit}' "$DEPLOY"; }
+
+# 按函数名精确抽取。不用注释做锚点：注释会随改动挪位，锚点一断测试就悄悄抽空。
+extract_fn() { awk -v name="$1" '$0 ~ "^"name"\\(\\)" {f=1} f{print} f && /^}$/{exit}' "$DEPLOY"; }
+extract_snap() {
+  extract_fn snapshot_stopped
+  extract_fn prune_snapshots
+  extract_fn restore_snapshot
+}
+
+# 造一个「文件头合法」的假数据库：snapshot_stopped 会校验前 16 字节是否为 SQLite 魔数
+write_fake_db() { printf 'SQLite format 3+padding\n' > "$1"; }
 
 # 探测阶段的假 docker：行为由 FAKE_DOCKER_MODE 决定
 write_fake_docker_probe() {
@@ -135,9 +151,132 @@ cmd_pref() { # saved chain
   printf 'SAVED=%s\n' "$(read_preferred_source)"
 }
 
+# ---------- 快照 / 还原：文件级断言 ----------
+# 这些函数只做文件操作，不需要假 docker，也不需要真实 SQLite。
+cmd_snap() { # scenario
+  local work="$STUB_DIR/snap"
+  DATA_DIR="$work/data"
+  BACKUP_DIR="$DATA_DIR/deploy/backups"
+  BACKUP_KEEP=2
+  APP_UID="$(id -u)"
+  APP_GID="$(id -g)"
+  mkdir -p "$DATA_DIR"
+  eval "$(extract_snap)"
+
+  local n f
+  case "$1" in
+    backup_with_wal)
+      write_fake_db "$DATA_DIR/prod.db"
+      printf 'WALDATA' > "$DATA_DIR/prod.db-wal"
+      snapshot_stopped 0.0.6 >/dev/null
+      printf 'FILES=%s\n' "$(ls -1 "$BACKUP_DIR" | sort | tr '\n' ',')"
+      ;;
+    backup_empty_wal)
+      # 空 WAL 没有任何内容，不该产出侧车文件
+      write_fake_db "$DATA_DIR/prod.db"
+      : > "$DATA_DIR/prod.db-wal"
+      snapshot_stopped 0.0.6 >/dev/null
+      printf 'FILES=%s\n' "$(ls -1 "$BACKUP_DIR" | sort | tr '\n' ',')"
+      ;;
+    backup_no_wal)
+      write_fake_db "$DATA_DIR/prod.db"
+      snapshot_stopped 0.0.6 >/dev/null
+      printf 'FILES=%s\n' "$(ls -1 "$BACKUP_DIR" | sort | tr '\n' ',')"
+      ;;
+    restore_with_wal)
+      mkdir -p "$BACKUP_DIR"
+      write_fake_db "$BACKUP_DIR/prod-0.0.6-20261003-120000.db"
+      printf 'WALDATA' > "$BACKUP_DIR/prod-0.0.6-20261003-120000.db-wal"
+      write_fake_db "$DATA_DIR/prod.db"
+      printf 'STALEWAL' > "$DATA_DIR/prod.db-wal"
+      printf 'STALESHM' > "$DATA_DIR/prod.db-shm"
+      restore_snapshot "$BACKUP_DIR/prod-0.0.6-20261003-120000.db" >/dev/null
+      printf 'WAL=%s\n' "$(cat "$DATA_DIR/prod.db-wal" 2>/dev/null || echo MISSING)"
+      printf 'HAS_SHM=%s\n' "$([ -f "$DATA_DIR/prod.db-shm" ] && echo yes || echo no)"
+      ;;
+    restore_without_wal)
+      # 兼容升级前的旧快照：没有侧车时不得凭空造一个，且旧的残留 WAL/SHM 必须清掉
+      mkdir -p "$BACKUP_DIR"
+      write_fake_db "$BACKUP_DIR/prod-0.0.6-20261003-120000.db"
+      write_fake_db "$DATA_DIR/prod.db"
+      printf 'STALEWAL' > "$DATA_DIR/prod.db-wal"
+      printf 'STALESHM' > "$DATA_DIR/prod.db-shm"
+      restore_snapshot "$BACKUP_DIR/prod-0.0.6-20261003-120000.db" >/dev/null
+      printf 'HAS_WAL=%s\n' "$([ -f "$DATA_DIR/prod.db-wal" ] && echo yes || echo no)"
+      printf 'HAS_SHM=%s\n' "$([ -f "$DATA_DIR/prod.db-shm" ] && echo yes || echo no)"
+      ;;
+    prune)
+      mkdir -p "$BACKUP_DIR"
+      for n in 1 2 3 4; do
+        f="$BACKUP_DIR/prod-0.0.$n-2026100$n-120000.db"
+        write_fake_db "$f"
+        printf 'WAL' > "${f}-wal"
+        touch -t "2026100${n}1200" "$f" "${f}-wal"
+      done
+      prune_snapshots
+      printf 'FILES=%s\n' "$(ls -1 "$BACKUP_DIR" | sort | tr '\n' ',')"
+      ;;
+    *) echo "未知场景: $1" >&2; exit 2 ;;
+  esac
+}
+
+# ---------- 真实 SQLite 回归：未 checkpoint 的 WAL 里的事务是否被保住 ----------
+rows_of() { # dbpath
+  "$PY" - "$1" <<'PY'
+import sqlite3, sys
+try:
+    con = sqlite3.connect(sys.argv[1])
+    print(con.execute("select count(*) from VisitRecord").fetchone()[0])
+except Exception:
+    print("none")
+PY
+}
+
+cmd_wal() {
+  local work="$STUB_DIR/wal"
+  [ -n "$PY" ] || { echo "NO_PYTHON=1"; return 0; }
+  mkdir -p "$work/data"
+  DATA_DIR="$work/data"
+  BACKUP_DIR="$DATA_DIR/deploy/backups"
+  BACKUP_KEEP=20
+  APP_UID="$(id -u)"
+  APP_GID="$(id -g)"
+  eval "$(extract_snap)"
+
+  # 造出线上真实形态：已提交的事务只在 WAL 里，主库文件尚未更新。
+  # os._exit 跳过解释器收尾 → 连接不 close → 不触发 checkpoint，
+  # 这正是容器被 SIGKILL 收尾时数据库的落盘状态。
+  "$PY" - "$DATA_DIR/prod.db" <<'PY'
+import os, sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+con.execute("pragma journal_mode=wal")
+con.execute("create table VisitRecord(id integer primary key)")
+con.executemany("insert into VisitRecord(id) values(?)", [(i,) for i in (1, 2, 3)])
+con.commit()
+os._exit(0)
+PY
+  printf 'WAL_BYTES=%s\n' "$(wc -c < "$DATA_DIR/prod.db-wal" | tr -d ' ')"
+
+  # 关键顺序：先把两种做法要用的文件都取出来，再去做任何读取。
+  # 一旦用 SQLite 打开过原库，最后一条连接关闭时会触发 checkpoint，WAL 就被并进主库，
+  # 「只拷主库」于是也跟着有数据，问题就复现不出来了（第一版就踩了这个坑）。
+  mkdir -p "$work/dbonly"
+  cp -f "$DATA_DIR/prod.db" "$work/dbonly/prod.db"
+  snapshot_stopped 0.0.6 >/dev/null
+
+  # 旧做法：只把主库文件拷走 → 数据丢
+  printf 'ROWS_DBONLY=%s\n' "$(rows_of "$work/dbonly/prod.db")"
+  # 新做法：成组快照 → 成组还原 → 数据回来
+  rm -f "$DATA_DIR/prod.db" "$DATA_DIR/prod.db-wal" "$DATA_DIR/prod.db-shm"
+  restore_snapshot "$SNAP_PATH" >/dev/null
+  printf 'ROWS_RESTORED=%s\n' "$(rows_of "$DATA_DIR/prod.db")"
+}
+
 case "${1:-}" in
   probe) write_fake_docker_probe; PATH="$STUB_DIR:$PATH"; shift; cmd_probe "$@" ;;
   pull)  write_fake_docker_pull;  PATH="$STUB_DIR:$PATH"; shift; cmd_pull "$@" ;;
   pref)  shift; cmd_pref "$@" ;;
-  *)     echo "用法: $0 <probe|pull|pref> ..." >&2; exit 2 ;;
+  snap)  shift; cmd_snap "$@" ;;
+  wal)   shift; cmd_wal "$@" ;;
+  *)     echo "用法: $0 <probe|pull|pref|snap|wal> ..." >&2; exit 2 ;;
 esac
