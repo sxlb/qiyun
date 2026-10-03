@@ -1,23 +1,36 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import LoginPage from "@/app/admin/login/page";
 
 // vi.hoisted：mock 工厂提升执行时引用同一实例
-const { signInMock, pushMock, prefetchMock } = vi.hoisted(() => ({
+const { signInMock, pushMock, prefetchMock, replaceMock } = vi.hoisted(() => ({
   signInMock: vi.fn(),
   pushMock: vi.fn(),
   prefetchMock: vi.fn(),
+  replaceMock: vi.fn(),
 }));
 
 vi.mock("next-auth/react", () => ({
   signIn: signInMock,
 }));
 
+// 登录页**刻意不使用**客户端路由：跳后台走 window.location.replace（原因见页面内注释与
+// 下方「跳转方式」静态断言）。这里保留 mock 只是防止将来重新引入 useRouter 时整棵渲染树炸掉。
 vi.mock("next/navigation", () => ({
-  // prefetch：登录页挂载时会预取后台路由（缩短点登录后的等待）
   useRouter: () => ({ push: pushMock, refresh: vi.fn(), prefetch: prefetchMock }),
 }));
+
+/** 替换 window.location：jsdom 里 location.replace 不可写，只能整体替换 */
+function stubLocation() {
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    writable: true,
+    value: { ...window.location, replace: replaceMock },
+  });
+}
 
 /** 构造 rate-limit 接口响应（默认未锁定） */
 function mockRateLimitResponse({ locked = false, remainingMinutes = 0 } = {}) {
@@ -62,6 +75,8 @@ describe("LoginPage（登录页交互）", () => {
     vi.clearAllMocks();
     signInMock.mockReset();
     pushMock.mockReset();
+    replaceMock.mockReset();
+    stubLocation();
   });
 
   afterEach(() => {
@@ -123,7 +138,7 @@ describe("LoginPage（登录页交互）", () => {
     expect(signInMock).not.toHaveBeenCalled();
   });
 
-  it("登录成功：跳转后台", async () => {
+  it("登录成功：整页跳转到后台", async () => {
     global.fetch = vi.fn().mockResolvedValue(mockRateLimitResponse());
     signInMock.mockResolvedValue({ ok: true });
 
@@ -131,8 +146,15 @@ describe("LoginPage（登录页交互）", () => {
     submitForm("admin", "correct-password");
 
     await waitFor(() => {
-      expect(pushMock).toHaveBeenCalledWith("/admin");
+      expect(replaceMock).toHaveBeenCalledWith("/admin");
     });
+    // 不能走客户端路由：Router Cache 里 /admin 可能存着未登录时的重定向负载
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("登录成功不依赖客户端路由（未登录时也没有预取 /admin）", () => {
+    render(<LoginPage />);
+    expect(prefetchMock).not.toHaveBeenCalled();
   });
 
   it("提交中：按钮禁用并显示『登录中...』加载态", async () => {
@@ -193,5 +215,40 @@ describe("LoginPage（登录页交互）", () => {
       expect(screen.getByRole("alert").textContent).toContain("两步验证码");
     });
     expect(signInMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 跳转方式的静态断言。
+ *
+ * 这一类回归属于「不报错、但结果不对」：登录按钮转完后一直卡在登录页，手动刷新才进得去。
+ * 根因是未登录时预取 /admin 只会拿到「重定向到 /admin/login」的响应，Router Cache 里
+ * /admin 这个键因此存下了登录页的负载，登录后的 router.push("/admin") 复用了它。
+ *
+ * 运行时用例只能证明「当前实现没有调用客户端路由」，挡不住有人为了「提速」把预取加回来，
+ * 所以这里直接对源码做断言，让改动者在 CI 里就看到原因。
+ */
+describe("登录页的跳转方式（静态断言）", () => {
+  const source = readFileSync(
+    path.join(process.cwd(), "app", "admin", "login", "page.tsx"),
+    "utf8"
+  );
+  // 先剥掉注释再断言：注释里为了解释这个坑会引用 router.push("/admin") 这类写法，
+  // 直接扫全文会把「解释」当成「实现」，断言就永远过不去了
+  const code = source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+  it("不在未登录时预取 /admin", () => {
+    expect(code).not.toMatch(/prefetch\s*\(\s*["'`]\/admin/);
+  });
+
+  it("登录成功后用 window.location.replace 整页跳转，而不是 router.push", () => {
+    expect(code).toMatch(/window\.location\.replace\("\/admin"\)/);
+    expect(code).not.toMatch(/router\.push\(/);
+  });
+
+  it("不再从 next/navigation 引入 useRouter（登录页不需要客户端路由）", () => {
+    expect(code).not.toMatch(/from\s+["']next\/navigation["']/);
   });
 });

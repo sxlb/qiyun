@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,7 +24,6 @@ async function detect2fa(name: string, signal?: AbortSignal): Promise<boolean> {
 }
 
 export default function LoginPage() {
-  const router = useRouter();
   // 仅用于「输入过程中实时探测 2FA」的即时反馈；提交时一律以表单 DOM 实际值为准。
   const [typedUsername, setTypedUsername] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -46,11 +44,13 @@ export default function LoginPage() {
     document.title = "登录 · 个人主页";
   }, []);
 
-  // 提前预取后台路由（RSC 负载 + 页面 chunk）：
-  // 后台是懒加载多面板的重页面，等点击登录后才开始下载会有明显停顿感
-  useEffect(() => {
-    router.prefetch("/admin");
-  }, [router]);
+  // 这里刻意**不**预取 /admin。
+  //
+  // /admin 由 proxy.ts 的 withAuth 保护，未登录时请求它只会得到「重定向到 /admin/login」的响应，
+  // 于是客户端 Router Cache 里 /admin 这个键存下的其实是登录页的负载。登录成功后如果再走
+  // router.push("/admin")，路由会优先复用这份缓存，把登录页再渲染一遍 —— 症状就是
+  // 「登录按钮转完后一直卡在登录页，手动刷新一下才进得去」。也就是说这里预取不但没有提速，
+  // 反而是故障来源；真正的加速交给登录成功后的整页跳转（浏览器会走 HTTP 缓存复用资源）。
 
   // 用户名变化时探测是否开启 2FA（IP 限流防枚举，探测失败视为未开启）
   // 【High 修复】使用 AbortController 替代 setTimeout+cancelled 标志，网络请求可被真正中止
@@ -126,8 +126,15 @@ export default function LoginPage() {
       });
 
       if (res?.ok) {
-        // 只需 push：后台首屏会话已由服务端下发，无需再 refresh 触发一次重复的 RSC 往返
-        router.push("/admin");
+        // 登录成功必须走整页跳转，不能用 router.push。
+        //
+        // /admin 受 proxy 的 withAuth 保护，客户端路由会命中 Router Cache —— 而这份缓存里
+        // /admin 存的可能是未登录时的重定向结果（登录页负载），push 会把登录页再渲染一遍，
+        // 用户看到的就是「登录成功却还卡在登录页」。整页跳转等价于手动刷新：丢弃客户端缓存、
+        // 带上刚下发的会话 Cookie 重新请求，由服务端判定放行，不存在复用旧负载的可能。
+        // 这与「退出登录」的 signOut(callbackUrl) 行为一致（它同样是整页跳转）。
+        // 用 replace 而不是 assign：登录页不该留在浏览历史里，返回键不应退回已登录状态的表单。
+        window.location.replace("/admin");
         return;
       }
 
