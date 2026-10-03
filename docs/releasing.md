@@ -25,15 +25,15 @@
 #    否则它们不会进这次提交，而标签是在推送之后才打的，等于发出去的 tag 少文件。
 git status --short
 git add -u
-git commit -m 'chore: 发版 0.0.5'
+git commit -m 'chore: 发版 0.0.6'
 git push
 
 # 3. 收尾确认：输出应为空。若仍有 ?? 条目，说明第 2 步漏了新增文件，补提交后再打标签
 git status --short
 
 # 4. 打标签并推送（版本号与 package.json 保持一致，工作流会再次同步）
-git tag 0.0.5
-git push origin 0.0.5
+git tag 0.0.6
+git push origin 0.0.6
 ```
 
 推送后工作流分五个任务执行：
@@ -166,7 +166,7 @@ npm run validate:workflow
 后台「系统更新」面板列出的历史版本可一键回滚；命令行等价操作是指定版本重新部署：
 
 ```bash
-./deploy.sh 0.0.5
+./deploy.sh 0.0.6
 ```
 
 因为回滚依赖服务器端存在对应 tag，历史标签不要随意删除。
