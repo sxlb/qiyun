@@ -28,21 +28,39 @@ git tag 0.0.3
 git push origin 0.0.3
 ```
 
-推送后工作流分两个任务执行：
+推送后工作流分五个任务执行：
 
-| 任务 | 内容 |
-|------|------|
-| test | 安装依赖、数据库迁移、ESLint、类型检查、全部单测 |
-| release | 构建应用、打包两个产物、校验发布包、构建并推送镜像、创建 Release |
+| 任务 | 运行环境 | 内容 |
+|------|---------|------|
+| test | ubuntu-latest | 安装依赖、数据库迁移、ESLint、类型检查、全部单测 |
+| prepare | ubuntu-latest | 计算版本号并输出给下游（避免各 job 各算一次算出不同的值） |
+| package | ubuntu-latest | 构建应用、打包两个 tar 包、校验发布包、生成 Release Notes |
+| image | 矩阵：ubuntu-latest + ubuntu-24.04-arm | 两个架构各自**原生**构建，按 digest 推送 |
+| publish | ubuntu-latest | 合成多架构清单、校验清单含两个架构、创建 Release |
 
-任一环节失败都不会产出发布，失败原因在 Actions 的运行日志里。
+`package` 与 `image` 并行，任一环节失败都不会产出发布，失败原因在 Actions 的运行日志里。
+
+### 为什么 arm64 要单独跑一台机器
+
+Dockerfile 是在镜像内跑 `npm ci` + `next build` 的完整构建，产物里含平台相关的二进制（Prisma 查询引擎、`@next/swc`）。**跨架构复用产物会构建成功、运行时报错**，比单架构更糟。用 QEMU 在 amd64 上模拟 arm64 虽然只需要两行配置，但整条 Node 构建链路在模拟下通常要几十分钟且容易 OOM。GitHub 对公开仓库免费提供 arm64 原生 runner（`ubuntu-24.04-arm`），因此按架构分两台机器、各自原生构建，再用 `publish` 合成清单。仓库若转为私有，这部分会开始计费。
+
+### 先干跑再正式发版
+
+改动构建链路后，用手动派发的干跑模式验证两个架构都能编译通过，再打标签：
+
+```bash
+# 只构建不发布：两个架构各编译一次，不推镜像、不建 Release
+gh workflow run release.yml -f dry_run=true
+```
+
+干跑会跳过 `publish`，因此镜像仓库里不会留下任何标签与无标签残留。
 
 ## 发布产物
 
 | 产物 | 说明 |
 |------|------|
-| `ghcr.io/sxlb/qiyun:<版本>` | 预编译镜像，服务器从此拉取 |
-| `docker.io/sxlb/qiyun:<版本>` | Docker Hub 镜像，仅在配置了对应密钥时推送 |
+| `ghcr.io/sxlb/qiyun:<版本>` | 预编译镜像，多架构（linux/amd64 + linux/arm64），服务器从此拉取 |
+| `docker.io/sxlb/qiyun:<版本>` | 同上，Docker Hub 镜像，仅在配置了对应密钥时推送 |
 | `qiyun-<版本>.tar.gz` | 部署包，含 `deploy.sh` 与镜像部署所需文件 |
 | `qiyun-src-<版本>.tar.gz` | 源码包，供不使用 Docker 的部署方式 |
 

@@ -9,13 +9,28 @@ on:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+'
   # PR 门禁：合并前就跑 lint / typecheck / 测试，不必等到打 tag 才发现坏代码。
-  # release job 已用 if 排除 PR，因此 PR 触发只会跑门禁，不会推镜像或建 release。
+  # 发布相关 job 已用 if 排除 PR，因此 PR 触发只会跑门禁，不会推镜像或建 release。
   pull_request: {}
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只构建不发布：两个架构各编译一次，不推镜像、不建 Release'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
   packages: write
+
+# 发布流程之间串行：并发 push 时若各自从本地 tag 计算 patch+1，会竞态产生重复版本号
+# （两个 run 都看到 0.0.2 → 都打出 0.0.3，后到者 tag 冲突失败）。排队（cancel-in-progress:
+# false）保证后一个 run 在前一个完成后才 checkout，因而能读到最新 tag，版本号稳定递增。
+# ⚠️ 不能简单写成 group: release —— 同组内新入队的 run 会取消此前处于 pending 的 run，
+#    那样一个 PR 门禁 run 就能把排队中的发布 run 顶掉、发布被静默跳过。
+#    因此让 PR 走各自独立的分组，只有发布之间才共享同一个组。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.run_id || 'release' }}
+  cancel-in-progress: false
 
 jobs:
   # ── ① 测试先行：tag push 前拦截坏代码 ──
@@ -51,31 +66,18 @@ jobs:
       - name: Run tests
         run: npx vitest run --reporter=verbose
 
-  # ── ② 构建与发布 ──
-  release:
+  # ── ② 版本计算：后续 job 共用同一个版本号 ──
+  # 单独成 job 的原因：镜像要按架构分两台机器构建（amd64 / arm64），
+  # 版本号必须在一处算好再分发；每个 job 各算一次就可能算出不同的值。
+  prepare:
     needs: test
     # 仅 tag 推送 / 手动派发时出包；PR 触发只跑上面的门禁
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    # 串行化发布：并发 push 时若各自从本地 tag 计算 patch+1，会竞态产生重复版本号
-    # （两个 run 都看到 0.0.2 → 都打出 0.0.3，后到者 tag 冲突失败）。
-    # 排队（cancel-in-progress: false）保证后一个 run 在前一个完成后才 checkout，
-    # 因而能读到最新 tag，版本号稳定递增。
-    #
-    # 【为何是 job 级而非 workflow 级】并发组解决的只是「版本号计算」这一个竞态，
-    # 那是本 job 的职责。若放在 workflow 级，PR 的 test run 也会进入同一个组，
-    # 而同组内新排队者会取消「等待中」的旧 run —— 表现为一个 PR 可能把排队中的发布 run
-    # 挤掉，发布被静默跳过。因此收敛到本 job。
-    concurrency:
-      group: release
-      cancel-in-progress: false
-    # Docker Hub 为可选镜像源（境内直连 GHCR 常受限）。未配置密钥时相关步骤自动跳过，
-    # 不阻断发布。需在仓库 Settings → Secrets and variables → Actions 添加：
-    #   DOCKERHUB_USERNAME = sxlb
-    #   DOCKERHUB_TOKEN    = Docker Hub 访问令牌（Access Token，非登录密码）
-    env:
-      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    outputs:
+      VERSION: ${{ steps.version.outputs.VERSION }}
+      TAG: ${{ steps.version.outputs.TAG }}
+      CN_TIME: ${{ steps.version.outputs.CN_TIME }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -108,6 +110,23 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
           echo "TAG=$VERSION" >> "$GITHUB_OUTPUT"
           echo "CN_TIME=$CN_TIME" >> "$GITHUB_OUTPUT"
+
+  # ── ③ 打包发布产物：部署包 + 源码包 + Release Notes ──
+  package:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # 把 job 级输出落回 step 输出：下方步骤沿用既有的 steps.version.outputs.* 引用，
+      # 避免为改名而大范围改动那些带详细注释的打包与校验步骤。
+      - name: Resolve version
+        id: version
+        run: |
+          echo "VERSION=${{ needs.prepare.outputs.VERSION }}" >> "$GITHUB_OUTPUT"
+          echo "TAG=${{ needs.prepare.outputs.TAG }}" >> "$GITHUB_OUTPUT"
+          echo "CN_TIME=${{ needs.prepare.outputs.CN_TIME }}" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v5
@@ -237,7 +256,60 @@ jobs:
           tar -C dist-src -czf "qiyun-src-${{ steps.version.outputs.TAG }}.tar.gz" qiyun
           echo "源码包收录文件数：$(git ls-files | wc -l)"
 
-      # ---------- 推送镜像（GHCR + Docker Hub，供服务器"拉取镜像"更新模式使用） ----------
+      - name: Upload packaged artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: |
+            qiyun-${{ needs.prepare.outputs.TAG }}.tar.gz
+            qiyun-src-${{ needs.prepare.outputs.TAG }}.tar.gz
+            RELEASE_NOTES.md
+          if-no-files-found: error
+          retention-days: 1
+
+  # ── ④ 镜像构建：按架构分两台机器并行，各自原生编译 ──
+  # 为什么必须「各自原生构建」，而不是在一台机器上用 QEMU 模拟出另一个架构：
+  # Dockerfile 是在镜像内跑 npm ci + next build 的完整构建，产物里含平台相关的二进制
+  # （Prisma 查询引擎、@next/swc）。跨架构复用产物会「构建成功、运行时报错」，比单架构更糟。
+  # arm64 用 GitHub 的免费原生 runner（公开仓库免费），构建速度比 QEMU 快一个数量级。
+  image:
+    needs: prepare
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            suffix: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            suffix: arm64
+    # Docker Hub 为可选镜像源（境内直连 GHCR 常受限）。未配置密钥时相关步骤自动跳过，
+    # 不阻断发布。需在仓库 Settings → Secrets and variables → Actions 添加：
+    #   DOCKERHUB_USERNAME = sxlb
+    #   DOCKERHUB_TOKEN    = Docker Hub 访问令牌（Access Token，非登录密码）
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # 版本号必须与 package job 用同一个：镜像内嵌的「当前版本」取自 package.json
+      - name: Sync version into package.json
+        run: |
+          node -e '
+            const fs = require("fs");
+            const v = process.argv[1];
+            for (const f of ["package.json", "package-lock.json"]) {
+              const j = JSON.parse(fs.readFileSync(f, "utf8"));
+              j.version = v;
+              fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n");
+            }
+          ' "${{ needs.prepare.outputs.VERSION }}"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -248,7 +320,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 未配置 DOCKERHUB_TOKEN 时跳过登录（此时也不会生成 Docker Hub 标签）
+      # 未配置 DOCKERHUB_TOKEN 时跳过登录（此时也不会把镜像推到 Docker Hub）
       - name: Log in to Docker Hub
         if: env.DOCKERHUB_TOKEN != ''
         uses: docker/login-action@v3
@@ -263,7 +335,7 @@ jobs:
       - name: Guard against republishing an existing version
         run: |
           set -euo pipefail
-          TAG="${{ steps.version.outputs.TAG }}"
+          TAG="${{ needs.prepare.outputs.TAG }}"
           IMAGE="ghcr.io/sxlb/qiyun:${TAG}"
           if docker buildx imagetools inspect "$IMAGE" >/dev/null 2>&1; then
             echo "✗ 版本 ${TAG} 已发布（${IMAGE} 已存在），拒绝覆盖" >&2
@@ -272,42 +344,129 @@ jobs:
           fi
           echo "✓ 版本 ${TAG} 尚未发布，继续"
 
-      # 只推版本标签（如 0.0.1），不推 latest：latest 是浮动标签，回滚时容易把
-      # 「回退旧版」误做成「拉到最新版」。同一份构建产物按是否配置 Docker Hub 密钥
-      # 动态拼装标签，同时推两个仓库，避免重复构建并保证两边 digest 一致。
-      - name: Compose image tags
-        id: tags
+      # 每个架构都要同时推到两个仓库：合成多架构清单时，被引用的单架构清单必须在
+      # 目标仓库里存在，否则清单指向一堆不存在的 digest，拉取直接失败。
+      - name: Compose image names
+        id: names
         run: |
           set -euo pipefail
-          TAG="${{ steps.version.outputs.TAG }}"
-          DH_TAG=""
+          NAMES="name=ghcr.io/sxlb/qiyun"
           if [ -n "${DOCKERHUB_TOKEN:-}" ] && [ -n "${DOCKERHUB_USERNAME:-}" ]; then
-            DH_TAG="docker.io/${DOCKERHUB_USERNAME}/qiyun:${TAG}"
+            NAMES="${NAMES},name=docker.io/${DOCKERHUB_USERNAME}/qiyun"
           else
             echo "::notice::未配置 DOCKERHUB_TOKEN，本次仅推送 GHCR"
           fi
-          {
-            echo "list<<EOF"
-            echo "ghcr.io/sxlb/qiyun:${TAG}"
-            if [ -n "$DH_TAG" ]; then echo "$DH_TAG"; fi
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          echo "outputs=type=image,${NAMES},push-by-digest=true,name-canonical=true,push=true" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push image
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
-          tags: ${{ steps.tags.outputs.list }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: ${{ matrix.platform }}
+          # 只推 digest、不推版本标签：两个架构并行构建，谁先完成是不确定的，
+          # 直接推同名标签会被后完成者覆盖。等两边都好了再由 publish job 合成一个清单。
+          # provenance / sbom 会额外产出证明清单，使每个架构推上去的是「索引」而非单平台
+          # 清单，合成出来的多架构清单会变成嵌套结构、客户端选平台的行为不可预期。
+          # 本版本的核心目标是「拉取时能选对架构」，故这里关掉，代价是失去镜像来源证明。
+          outputs: ${{ inputs.dry_run && 'type=cacheonly' || steps.names.outputs.outputs }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+
+      - name: Export digest
+        if: ${{ !inputs.dry_run }}
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      - name: Upload digest
+        if: ${{ !inputs.dry_run }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.suffix }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ── ⑤ 合成多架构清单并发布 ──
+  publish:
+    needs: [prepare, package, image]
+    if: github.event_name != 'pull_request' && !inputs.dry_run
+    runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 只推版本标签（如 0.0.1），不推 latest：latest 是浮动标签，回滚时容易把
+      # 「回退旧版」误做成「拉到最新版」。两个仓库用同一次合成，保证两边 digest 一致。
+      - name: Create multi-arch manifest
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.prepare.outputs.TAG }}"
+          SRC="ghcr.io/sxlb/qiyun"
+          TAGS=(-t "${SRC}:${TAG}")
+          if [ -n "${DOCKERHUB_TOKEN:-}" ] && [ -n "${DOCKERHUB_USERNAME:-}" ]; then
+            TAGS+=(-t "docker.io/${DOCKERHUB_USERNAME}/qiyun:${TAG}")
+          else
+            echo "::notice::未配置 DOCKERHUB_TOKEN，本次仅发布 GHCR"
+          fi
+          mapfile -t FILES < <(find artifacts -type f -name 'sha256:*' | sort)
+          [ "${#FILES[@]}" -ge 2 ] || { echo "✗ 架构 digest 少于 2 个，无法合成多架构清单" >&2; exit 1; }
+          REFS=()
+          for f in "${FILES[@]}"; do REFS+=("${SRC}@sha256:$(basename "$f")"); done
+          printf '将合成：%s\n' "${TAGS[*]}"
+          printf '来源：%s\n' "${REFS[*]}"
+          docker buildx imagetools create "${TAGS[@]}" "${REFS[@]}"
+
+      # 多架构是本版本的核心交付物，合成之后必须验证清单里真的有两个架构：
+      # 只判断「命令是否成功」不够——少一个架构同样会返回成功。
+      - name: Verify manifest covers both architectures
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.prepare.outputs.TAG }}"
+          OUT="$(docker buildx imagetools inspect "ghcr.io/sxlb/qiyun:${TAG}" 2>&1)"
+          echo "$OUT"
+          for p in linux/amd64 linux/arm64; do
+            if ! grep -q "Platform: *$p" <<< "$OUT"; then
+              echo "✗ 多架构清单缺少 $p" >&2
+              exit 1
+            fi
+          done
+          echo "✓ 多架构清单已包含 linux/amd64 与 linux/arm64"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ steps.version.outputs.TAG }}
-          name: 栖云 · Qiyun ${{ steps.version.outputs.VERSION }} · ${{ steps.version.outputs.CN_TIME }} (UTC+8)
-          body_path: RELEASE_NOTES.md
+          tag_name: ${{ needs.prepare.outputs.TAG }}
+          name: 栖云 · Qiyun ${{ needs.prepare.outputs.VERSION }} · ${{ needs.prepare.outputs.CN_TIME }} (UTC+8)
+          body_path: artifacts/packages/RELEASE_NOTES.md
           files: |
-            qiyun-${{ steps.version.outputs.TAG }}.tar.gz
-            qiyun-src-${{ steps.version.outputs.TAG }}.tar.gz
+            artifacts/packages/qiyun-${{ needs.prepare.outputs.TAG }}.tar.gz
+            artifacts/packages/qiyun-src-${{ needs.prepare.outputs.TAG }}.tar.gz
