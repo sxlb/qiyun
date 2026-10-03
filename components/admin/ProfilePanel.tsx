@@ -501,7 +501,7 @@ export default function ProfilePanel() {
                       {
                         key: "dynamicTitle" as const,
                         title: "动态页面标题",
-                        desc: "标签页显示问候语与歌名",
+                        desc: "切到后台时标签页显示歌名或问候语，前台始终显示站点名",
                       },
                       {
                         key: "topProgressBar" as const,

@@ -191,14 +191,18 @@ interface TrackDetail {
 
 /**
  * 动态页面标题：
- * - 无音乐播放时：按时间段显示问候语（早上好/下午好/晚上好）+ 站点名
- * - 播放音乐时：显示「♪ 歌名 - 歌手 - 站点名」
+ * - 页面在前台：始终显示站点名。标签页、书签、历史记录都靠它辨认，问候语或歌名常驻会让人
+ *   根本看不到标题（实测反馈：标签页一直只显示「夜深了，欢迎访问 …」）。
+ * - 切到后台：播放音乐时显示「歌名 - 歌手 - 站点名」，否则显示时间段问候语 ——
+ *   这两条信息只有在你看不见页面时才有价值。
  * - 由 MusicPlayer 广播 music-track-change 事件联动
  */
 export function DynamicTitle({ enabled = true, siteName = "" }: DynamicTitleProps) {
   useEffect(() => {
     if (!enabled) return;
     const name = siteName || "个人主页";
+    // 记下页面自身的标题（SSR 渲染的那份），卸载时原样还回去
+    const initialTitle = document.title;
 
     const greeting = () => {
       const h = new Date().getHours();
@@ -211,11 +215,13 @@ export function DynamicTitle({ enabled = true, siteName = "" }: DynamicTitleProp
 
     let track: TrackDetail | null = null;
     const applyTitle = () => {
-      if (track) {
-        document.title = `${track.name} - ${track.artist} - ${name}`;
-      } else {
-        document.title = `${greeting()}，欢迎访问 ${name}`;
+      if (!document.hidden) {
+        document.title = name;
+        return;
       }
+      document.title = track
+        ? `${track.name} - ${track.artist} - ${name}`
+        : `${greeting()}，欢迎访问 ${name}`;
     };
 
     const onTrack = (e: Event) => {
@@ -232,12 +238,15 @@ export function DynamicTitle({ enabled = true, siteName = "" }: DynamicTitleProp
     applyTitle();
     window.addEventListener("music-track-change", onTrack);
     window.addEventListener("music-player-close", onReset);
+    // 切前台/后台都要重算：前台恢复站点名，后台才换成歌名或问候语
+    document.addEventListener("visibilitychange", applyTitle);
     const tick = window.setInterval(applyTitle, 60_000); // 每分钟刷新问候语
     return () => {
       window.removeEventListener("music-track-change", onTrack);
       window.removeEventListener("music-player-close", onReset);
+      document.removeEventListener("visibilitychange", applyTitle);
       window.clearInterval(tick);
-      document.title = name;
+      document.title = initialTitle || name;
     };
   }, [enabled, siteName]);
 
