@@ -1,4 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  AUDIO_LAST_TRACK_KEY,
+  AUDIO_MUTED_KEY,
+  AUDIO_PLAY_MODE_KEY,
+  AUDIO_PROGRESS_KEY,
+  AUDIO_VOLUME_KEY,
+  DEFAULT_MUSIC_PANEL_PREFS,
+  MUSIC_PREFS_RESET_EVENT,
+  type MusicPanelPrefs,
+} from "@/lib/musicPanelThemes";
 
 /* ==================== 播放模式与下一首计算 ==================== */
 
@@ -69,10 +79,14 @@ interface RawTrack {
   lrc?: string;
 }
 
-// 音量 / 静音本地持久化键
-const VOLUME_KEY = "music-player-volume";
-const MUTED_KEY = "music-player-muted";
-const PROGRESS_KEY = "music-player-progress";
+// 音量 / 静音 / 进度 / 续播的本地持久化键。
+// 统一在 lib/musicPanelThemes 里声明：音乐面板的「恢复默认」要按同一张表清理这些键，
+// 字符串散在两处必然会出现「重置后还有一项没清掉」。
+const VOLUME_KEY = AUDIO_VOLUME_KEY;
+const MUTED_KEY = AUDIO_MUTED_KEY;
+const PROGRESS_KEY = AUDIO_PROGRESS_KEY;
+const LAST_TRACK_KEY = AUDIO_LAST_TRACK_KEY;
+const PLAY_MODE_KEY = AUDIO_PLAY_MODE_KEY;
 
 /** 播放进度落盘的最小间隔（ms）：续播只需大致对齐，不必每次 timeupdate 都写 */
 export const PROGRESS_PERSIST_INTERVAL_MS = 5000;
@@ -252,6 +266,20 @@ export interface UseAudioPlayerProps {
   songId?: string;
   /** 后台开关：歌单加载完成后尝试自动播放（浏览器拦截时静默放弃） */
   autoplay?: boolean;
+  /**
+   * 本机偏好（音乐面板「设置」里读写）。只影响播放行为的三项：
+   * 初始音量、是否记住播放模式、是否续播上次曲目。未传时用默认偏好。
+   */
+  prefs?: MusicPanelPrefs;
+  /**
+   * 偏好是否已就绪。
+   *
+   * Provider 首帧读不到 localStorage（要保证 SSR 与服务端渲染一致），偏好得等一个
+   * effect 才可用。若不等这个信号就拿默认偏好去初始化音量 / 播放模式，用户存好的
+   * 设置会被默认值抢先覆盖 —— 表现为「明明设了初始音量，每次打开还是 40%」。
+   * 直接使用本 hook 的场景（如单测）不传即视为已就绪。
+   */
+  prefsReady?: boolean;
 }
 
 /**
@@ -269,6 +297,8 @@ export function useAudioPlayer({
   songServer = "netease",
   songId = "",
   autoplay = false,
+  prefs = DEFAULT_MUSIC_PANEL_PREFS,
+  prefsReady = true,
 }: UseAudioPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
@@ -399,23 +429,27 @@ export function useAudioPlayer({
   // ===== 音量 / 静音持久化 =====
   // 上次的非零音量：音量为 0 时点「取消静音」用它恢复，避免恢复成 0 依旧无声
   const lastAudibleVolumeRef = useRef(DEFAULT_VOLUME);
+  /** 初始音量是否已应用：偏好可能晚一帧就绪（见 prefsReady），必须只应用一次，不能被后到的默认值覆盖 */
+  const volumeInitRef = useRef(false);
   useEffect(() => {
+    if (!prefsReady || volumeInitRef.current) return;
+    volumeInitRef.current = true;
     try {
       // 必须先判断 key 是否存在：localStorage 为空时 Number(null) === 0，
       // 会把首次访问的音量直接设成 0 —— 页面无声、喇叭显示静音态，且点它也不会变。
       const rawVolume = localStorage.getItem(VOLUME_KEY);
-      if (rawVolume !== null) {
-        const v = Number(rawVolume);
-        if (Number.isFinite(v) && v >= 0 && v <= 1) {
-          setVolume(v);
-          if (v > 0) lastAudibleVolumeRef.current = v;
-        }
+      // 没有记住过音量时用本机偏好里的「初始音量」；有记录则以用户实际拖动过的值为准
+      const fallback = prefs.volume / 100;
+      const v = rawVolume !== null ? Number(rawVolume) : fallback;
+      if (Number.isFinite(v) && v >= 0 && v <= 1) {
+        setVolume(v);
+        if (v > 0) lastAudibleVolumeRef.current = v;
       }
       setMuted(localStorage.getItem(MUTED_KEY) === "1");
     } catch {
       /* 隐私模式等场景忽略 */
     }
-  }, []);
+  }, [prefsReady, prefs.volume]);
 
   /** 写入本地存储（隐私模式等场景静默忽略） */
   const persist = useCallback((key: string, value: string) => {
@@ -424,6 +458,64 @@ export function useAudioPlayer({
     } catch {
       /* 忽略 */
     }
+  }, []);
+
+  /** 读取本地存储（隐私模式等场景返回 null） */
+  const readLocal = useCallback((key: string) => {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // ===== 播放模式：按本机偏好决定是否跨会话记住 =====
+  const playModeInitRef = useRef(false);
+  useEffect(() => {
+    if (!prefsReady || playModeInitRef.current) return;
+    playModeInitRef.current = true;
+    if (!prefs.rememberPlayMode) return;
+    const saved = readLocal(PLAY_MODE_KEY);
+    if (saved && (PLAY_MODES as string[]).includes(saved)) setPlayMode(saved as PlayMode);
+  }, [prefsReady, prefs.rememberPlayMode, readLocal]);
+
+  useEffect(() => {
+    if (!prefsReady || !prefs.rememberPlayMode) return;
+    persist(PLAY_MODE_KEY, playMode);
+  }, [playMode, prefsReady, prefs.rememberPlayMode, persist]);
+
+  // ===== 续播上次曲目（只选中，不自动播放）=====
+  const resumeTriedRef = useRef(false);
+  // 记住当前曲目 id（随机播放时的次序无法复现，只记「在听哪一首」）
+  useEffect(() => {
+    if (!prefsReady || !prefs.resumeLastTrack || !currentTrack) return;
+    persist(LAST_TRACK_KEY, currentTrack.id);
+  }, [currentTrack, prefsReady, prefs.resumeLastTrack, persist]);
+
+  useEffect(() => {
+    if (!prefsReady || !prefs.resumeLastTrack || resumeTriedRef.current) return;
+    // 等歌单到手再找：id 要能在歌单里对上才有意义（歌单换过就忽略）
+    if (currentTrack || playlist.length === 0) return;
+    resumeTriedRef.current = true;
+    const savedId = readLocal(LAST_TRACK_KEY);
+    if (!savedId) return;
+    const track = playlist.find((t) => t.id === savedId);
+    if (track) setCurrentTrack(track);
+  }, [playlist, currentTrack, prefsReady, prefs.resumeLastTrack, readLocal]);
+
+  // ===== 「恢复默认」：清掉落盘值后，把留在内存里的播放状态一起复位 =====
+  // 音量 / 静音 / 播放模式 / 进度表都不在 React 树的上层，光删 localStorage 本轮不生效。
+  useEffect(() => {
+    const onReset = () => {
+      const v = DEFAULT_MUSIC_PANEL_PREFS.volume / 100;
+      setVolume(v);
+      setMuted(false);
+      setPlayMode("loop");
+      lastAudibleVolumeRef.current = v > 0 ? v : DEFAULT_VOLUME;
+      progressRef.current = {};
+    };
+    window.addEventListener(MUSIC_PREFS_RESET_EVENT, onReset);
+    return () => window.removeEventListener(MUSIC_PREFS_RESET_EVENT, onReset);
   }, []);
 
   const changeVolume = useCallback(

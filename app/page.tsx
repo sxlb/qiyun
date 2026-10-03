@@ -33,6 +33,10 @@ const FooterLazy = nextDynamic(() => import("@/components/home/Footer"), {
   ssr: true,
   loading: () => <div className="h-12" />,
 });
+// 自定义右键菜单：只在后台开启「自定义菜单」时才挂载，默认模式零开销。
+// 首帧渲染为 null（菜单默认关闭），所有 window/document 访问都在 effect 与事件回调里，
+// 因此可以安全走 SSR —— Server Component 里也不允许 ssr:false。
+const ContextMenuLazy = nextDynamic(() => import("@/components/home/ContextMenu"));
 
 /**
  * 按请求渲染（不预渲染）：首页数据全部来自运行时数据库，而生产库位于容器数据卷，
@@ -137,6 +141,15 @@ export default async function Home() {
         musicAutoplay={d.musicAutoplay}
         musicPanelStyle={d.musicPanelStyle}
       >
+        {/* 前端右键行为：default 时根本不渲染（连 contextmenu 监听都不挂） */}
+        {d.rightClickMode !== "default" && (
+          <ContextMenuLazy
+            mode={d.rightClickMode}
+            coverType={d.coverType}
+            commandPaletteEnabled={d.commandPalette}
+          />
+        )}
+
         {/* 桌面端 main 最小一屏高（md:min-h-dvh）：内容不足一屏时仍整体垂直居中，页脚贴底；
             内容超高（如并入技能云后）自然增长而非裁切，仅超高部分滚动。
             移动端 main 自然高度，页脚在内容后滚动出现 */}

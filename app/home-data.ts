@@ -8,6 +8,7 @@ import { DEFAULT_WELCOME_MESSAGES } from "@/lib/validation";
 import { cacheTagFor, resolveWallpaperUrl } from "@/lib/wallpaperCache";
 import { avatarOrDefault } from "@/lib/default-assets";
 import { EXTERNAL_API_DEFAULTS, type WallpaperDevice } from "@/lib/external-api";
+import { normalizeRightClickMode, type RightClickMode } from "@/lib/rightClick";
 import type { Profile } from "@prisma/client";
 import { isThemeMode, type ThemeMode } from "@/lib/theme";
 
@@ -219,6 +220,8 @@ export async function getHomeData(
   topProgressBar: boolean;
   seasonalEffectEnabled: boolean;
   commandPalette: boolean;
+  /** 前端右键行为：default 原生 / disabled 禁用 / menu 自定义菜单（见 lib/rightClick.ts） */
+  rightClickMode: RightClickMode;
   welcomeEnabled: boolean;
   welcomeIndex: number;
   welcomeMessages: string;
@@ -330,6 +333,9 @@ export async function getHomeData(
     topProgressBar: profile?.topProgressBar ?? true,
     seasonalEffectEnabled: profile?.seasonalEffectEnabled ?? false,
     commandPalette: profile?.commandPalette ?? true,
+    // 白名单收敛，避免脏数据（如手改数据库）让前端拿到一个「什么都不做」的模式，
+    // 那等于把访客的右键静默吃掉
+    rightClickMode: normalizeRightClickMode(profile?.rightClickMode),
     welcomeEnabled: profile?.welcomeEnabled ?? true,
     welcomeIndex: profile?.welcomeIndex ?? 0,
     welcomeMessages: profile?.welcomeMessages || JSON.stringify(DEFAULT_WELCOME_MESSAGES),

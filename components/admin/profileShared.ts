@@ -41,6 +41,8 @@ export interface ProfileShape {
   topProgressBar: boolean;
   seasonalEffectEnabled: boolean;
   commandPalette: boolean;
+  /** 前端右键行为：default 原生 / disabled 静默禁用 / menu 自定义站内功能菜单 */
+  rightClickMode: string;
   useRandomAvatar: boolean;
   welcomeEnabled: boolean;
   welcomeIndex: number;
@@ -120,6 +122,7 @@ export const INITIAL_PROFILE: ProfileShape = {
   topProgressBar: true,
   seasonalEffectEnabled: false,
   commandPalette: true,
+  rightClickMode: "default",
   useRandomAvatar: false,
   welcomeEnabled: true,
   welcomeIndex: 0,

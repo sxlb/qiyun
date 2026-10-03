@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractHostname, faviconCandidates } from "@/lib/favicon";
+import { extractHostname, extractIconHrefs, faviconCandidates } from "@/lib/favicon";
 
 /**
  * 图标探测的第一道关卡：从用户输入里安全地取出主机名。
@@ -51,5 +51,69 @@ describe("faviconCandidates（候选源优先级）", () => {
       expect(item.url).toContain("example.com");
       expect(item.source.length).toBeGreaterThan(0);
     }
+  });
+});
+
+/**
+ * 页面声明的图标：很多站点（尤其是把图标放 CDN/OSS 的博客）根目录没有 favicon.ico，
+ * 只在 HTML 的 <link rel="icon"> 里指向别处。解析不到位就会误判成「站点没有图标」。
+ */
+describe("extractIconHrefs（解析页面声明的图标）", () => {
+  const BASE = "https://blog.example.com/";
+
+  it("解析 rel=icon / shortcut icon / apple-touch-icon，保持声明顺序", () => {
+    const html = `
+      <head>
+        <link rel="icon" type="image/ico" href="https://cdn.example.com/logo.jpg">
+        <link rel="shortcut icon" href="/favicon.png">
+        <link rel="apple-touch-icon" sizes="180x180" href="/apple.png">
+      </head>`;
+    expect(extractIconHrefs(html, BASE)).toEqual([
+      "https://cdn.example.com/logo.jpg",
+      "https://blog.example.com/favicon.png",
+      "https://blog.example.com/apple.png",
+    ]);
+  });
+
+  it("忽略非图标 link 与无关标签", () => {
+    const html = `<link rel="stylesheet" href="/a.css"><link rel="preload" as="image" href="/x.png"><link rel="icon" href="/i.png"><a href="/y">x</a>`;
+    expect(extractIconHrefs(html, BASE)).toEqual(["https://blog.example.com/i.png"]);
+  });
+
+  it("rel 大小写与单词顺序不敏感（ICON SHORTCUT）", () => {
+    expect(extractIconHrefs(`<LINK REL="ICON SHORTCUT" HREF="/i.ico">`, BASE)).toEqual([
+      "https://blog.example.com/i.ico",
+    ]);
+  });
+
+  it("支持单引号与无引号属性写法", () => {
+    const html = `<link rel=icon href='/a.png'><link rel='icon' href=/b.png>`;
+    expect(extractIconHrefs(html, BASE)).toEqual([
+      "https://blog.example.com/a.png",
+      "https://blog.example.com/b.png",
+    ]);
+  });
+
+  it("相对路径以 base 补全，协议相对地址沿用当前协议", () => {
+    const html = `<link rel="icon" href="icon.png"><link rel="icon" href="//cdn.example.com/i.png">`;
+    expect(extractIconHrefs(html, BASE)).toEqual([
+      "https://blog.example.com/icon.png",
+      "https://cdn.example.com/i.png",
+    ]);
+  });
+
+  it("相对路径按 base 的目录层级补全", () => {
+    expect(extractIconHrefs(`<link rel="icon" href="i.png">`, "https://a.com/sub/page")).toEqual([
+      "https://a.com/sub/i.png",
+    ]);
+  });
+
+  it("跳过 data: 等不可探测协议，并对重复地址去重", () => {
+    const html = `<link rel="icon" href="data:image/png;base64,AAA"><link rel="icon" href="/i.png"><link rel="shortcut icon" href="/i.png">`;
+    expect(extractIconHrefs(html, BASE)).toEqual(["https://blog.example.com/i.png"]);
+  });
+
+  it("没有图标声明时返回空数组", () => {
+    expect(extractIconHrefs(`<head><title>x</title></head>`, BASE)).toEqual([]);
   });
 });

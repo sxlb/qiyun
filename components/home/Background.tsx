@@ -358,6 +358,13 @@ export default function Background({
 
     load();
 
+    // 右键菜单的「换一张壁纸」：复用同一条取图链路（缓存分池、预加载、主色提取都在里面），
+    // 不另开一条取图路径，避免两条路径的缓存标签/设备判定漂移
+    const onNextWallpaper = () => {
+      void load();
+    };
+    window.addEventListener("wallpaper-next", onNextWallpaper);
+
     // 定时切换
     const interval = SWITCH_INTERVALS[autoSwitchInterval] ?? 0;
     if (interval > 0) {
@@ -366,6 +373,7 @@ export default function Background({
 
     return () => {
       cancelled = true;
+      window.removeEventListener("wallpaper-next", onNextWallpaper);
       if (timer) window.clearInterval(timer);
     };
   }, [resolveUrl, coverType, autoSwitchInterval, setBgTheme, initialUrl, bundledUnderlay]);

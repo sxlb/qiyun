@@ -31,19 +31,25 @@ import {
   resolveMusicPanelStyle,
   isMusicPanelStyle,
   musicPanelTraits,
-  parseMusicPanelPrefs,
+  readMusicPanelPrefs,
   formatBoolPref,
   lyricSizeLabel,
+  clampPercent,
+  clampPanelOpacity,
   MUSIC_PANEL_STYLE_KEY,
   MUSIC_PANEL_STYLE_OPTIONS,
+  MUSIC_PANEL_BOOL_KEYS,
+  MUSIC_PANEL_VALUE_KEYS,
+  ALL_MUSIC_LOCAL_KEYS,
+  MUSIC_PREFS_RESET_EVENT,
   LYRIC_SIZE_OPTIONS,
+  LYRIC_ALIGN_OPTIONS,
   FOLLOW_SITE,
-  TOP_LYRICS_KEY,
-  TOP_LYRICS_SIZE_KEY,
-  SHOW_LYRICS_KEY,
-  SHOW_PLAYLIST_KEY,
+  MIN_PANEL_OPACITY,
   DEFAULT_MUSIC_PANEL_PREFS,
+  type LyricAlignPref,
   type LyricSizeLevel,
+  type MusicPanelBoolPref,
   type MusicPanelPrefs,
   type MusicPanelStyle,
 } from "@/lib/musicPanelThemes";
@@ -63,6 +69,8 @@ interface MusicContextValue {
   // 播放核心（来自 useAudioPlayer）
   isPlaying: boolean;
   togglePlay: () => void;
+  /** 直接暂停（关闭弹窗时按偏好停止播放用；togglePlay 依赖 state 闭包，不适合这种场合） */
+  pause: () => void;
   currentTrack: Track | null;
   playlist: Track[];
   playMode: PlayMode;
@@ -97,24 +105,28 @@ interface MusicContextValue {
   /** 面板设置浮层是否展开（卡片面板的齿轮会把它连同弹窗一起打开） */
   settingsOpen: boolean;
   setSettingsOpen: (b: boolean) => void;
-  /** 本机偏好：顶部常驻歌词、面板内歌词与曲目开关 */
+  /** 本机偏好：歌词/曲目显示、播放行为、面板观感等（全部只存本机） */
   prefs: MusicPanelPrefs;
-  /** 切换某项布尔偏好（同时写入 localStorage；写不进去不影响本次会话） */
-  setPref: (key: PanelPrefKey, value: boolean) => void;
+  /** 偏好是否已从 localStorage 载入完成（未就绪前播放层不做初始化，见 useAudioPlayer 的 prefsReady） */
+  prefsReady: boolean;
+  /**
+   * 切换某项布尔偏好（同时写入 localStorage；写不进去不影响本次会话）。
+   * 键名取 MusicPanelPrefs 里的布尔字段，落盘键由 MUSIC_PANEL_BOOL_KEYS 统一映射。
+   */
+  setPref: (key: MusicPanelBoolPref, value: boolean) => void;
   /** 顶部悬浮歌词的字号档位（1-7） */
   lyricSize: LyricSizeLevel;
   /** 切换字号档位（同时写入 localStorage） */
   setLyricSize: (level: LyricSizeLevel) => void;
+  /** 设置初始音量（0-100） */
+  setVolumePref: (value: number) => void;
+  /** 设置面板不透明度（40-100） */
+  setPanelOpacity: (value: number) => void;
+  /** 设置歌词对齐（site=跟随面板风格） */
+  setLyricAlign: (value: LyricAlignPref) => void;
+  /** 一键恢复本机偏好的全部默认值（含面板风格与播放行为） */
+  resetPrefs: () => void;
 }
-
-/** 面板内的本机偏好键（与 localStorage 键一一对应，收敛成一张表避免写错） */
-export type PanelPrefKey = "topLyrics" | "showLyrics" | "showPlaylist";
-
-const PREF_STORAGE_KEYS: Record<PanelPrefKey, string> = {
-  topLyrics: TOP_LYRICS_KEY,
-  showLyrics: SHOW_LYRICS_KEY,
-  showPlaylist: SHOW_PLAYLIST_KEY,
-};
 
 const MusicContext = createContext<MusicContextValue | null>(null);
 
@@ -125,18 +137,20 @@ export function useMusic(): MusicContextValue {
 }
 
 /* ===== 曲目行 =====
- * 三套风格共用同一份结构（序号 / 曲名 / 艺人），观感全部交给 .mp-row 令牌。
- * memo 后仅当歌单或当前曲目变化时重渲染。
+ * 三套风格共用同一份结构（序号 / 封面 / 曲名 / 艺人），观感全部交给 .mp-row 令牌。
+ * memo 后仅当歌单、当前曲目或「显示封面」偏好变化时重渲染。
  */
 const TrackRow = memo(function TrackRow({
   track,
   index,
   active,
+  showCover,
   onSelect,
 }: {
   track: Track;
   index: number;
   active: boolean;
+  showCover: boolean;
   onSelect: (t: Track) => void;
 }) {
   return (
@@ -147,6 +161,21 @@ const TrackRow = memo(function TrackRow({
       aria-current={active ? "true" : undefined}
     >
       <span className="mp-row-num">{String(index + 1).padStart(2, "0")}</span>
+      {showCover &&
+        (track.cover ? (
+          // unoptimized：封面来自任意第三方图床，next/image 优化器需要远程域名白名单；与站内其他远程图一致地短路 loader
+          <Image
+            src={track.cover}
+            alt=""
+            width={26}
+            height={26}
+            unoptimized
+            className="mp-row-cover"
+          />
+        ) : (
+          // 占位块：没有封面也要占住同一宽度，否则有无封面的行左右错位
+          <span className="mp-row-cover is-empty" aria-hidden="true" />
+        ))}
       <span className="mp-row-name">{track.name}</span>
       <span className="mp-row-meta">{track.artist || "—"}</span>
     </button>
@@ -259,18 +288,28 @@ function TransportBar() {
   );
 }
 
-/* ===== 面板设置浮层（风格切换 + 三个显示开关） =====
+/* ===== 面板设置浮层（风格 + 外观 + 播放行为开关） =====
  * 后台配置的是「站点默认风格」，这里切换的是「本机覆盖」；选「跟随站点」即清掉本机选择。
+ * 其余设置项都只影响本机（localStorage），不改站点数据。
  */
-const PREF_ROWS: { key: PanelPrefKey; label: string }[] = [
+const PREF_ROWS: { key: MusicPanelBoolPref; label: string }[] = [
   { key: "topLyrics", label: "顶部常驻歌词" },
   { key: "showLyrics", label: "面板内显示歌词" },
   { key: "showPlaylist", label: "面板内显示曲目" },
+  { key: "lyricBlur", label: "歌词聚焦（非当前行模糊）" },
+  { key: "trackCover", label: "歌单显示封面" },
+  { key: "rememberPlayMode", label: "记住播放模式" },
+  { key: "resumeLastTrack", label: "续播上次曲目" },
+  { key: "keepPlaying", label: "关闭弹窗后继续播放" },
+  { key: "hotkeys", label: "键盘快捷键（空格 / PgUp / PgDn）" },
+  { key: "mediaSession", label: "系统媒体控制（锁屏 / 耳机）" },
 ];
 
 function PanelSettings() {
   const m = useMusic();
   const activeHint = MUSIC_PANEL_STYLE_OPTIONS.find((o) => o.value === m.panelStyle)?.hint ?? "";
+  const alignLabel =
+    LYRIC_ALIGN_OPTIONS.find((o) => o.value === m.prefs.lyricAlign)?.label ?? "";
   return (
     <div className="mp-settings">
       <div className="mp-settings-row">
@@ -328,6 +367,61 @@ function PanelSettings() {
         })}
       </div>
 
+      {/* 歌词对齐：默认跟着面板风格（三套风格各有自己的对齐），这里可以强行覆盖 */}
+      <div className="mp-settings-row">
+        <span>歌词对齐</span>
+        <span className="mp-hint">{alignLabel}</span>
+      </div>
+      <div className="mp-styles" role="radiogroup" aria-label="歌词对齐">
+        {LYRIC_ALIGN_OPTIONS.map((option) => {
+          const on = m.prefs.lyricAlign === option.value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              className={`mp-chip${on ? " is-on" : ""}`}
+              onClick={() => m.setLyricAlign(option.value)}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 面板不透明度：只降面板底色 alpha，不透明度用的是 color-mix，文字不会跟着变淡 */}
+      <div className="mp-settings-row">
+        <span>面板不透明度</span>
+        <span className="mp-hint">{m.prefs.panelOpacity}%</span>
+      </div>
+      <input
+        type="range"
+        min={MIN_PANEL_OPACITY}
+        max={100}
+        step={1}
+        value={m.prefs.panelOpacity}
+        onChange={(event) => m.setPanelOpacity(Number(event.currentTarget.value))}
+        className="mp-pref-range"
+        aria-label="面板不透明度"
+      />
+
+      {/* 初始音量：只在还没记住过音量时生效（拖过播放器音量条后以实测值为准） */}
+      <div className="mp-settings-row">
+        <span>初始音量</span>
+        <span className="mp-hint">{m.prefs.volume}%</span>
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={1}
+        value={m.prefs.volume}
+        onChange={(event) => m.setVolumePref(Number(event.currentTarget.value))}
+        className="mp-pref-range"
+        aria-label="初始音量"
+      />
+
       {PREF_ROWS.map((row) => (
         <div className="mp-settings-row" key={row.key}>
           <span>{row.label}</span>
@@ -341,6 +435,10 @@ function PanelSettings() {
           />
         </div>
       ))}
+
+      <button type="button" className="mp-reset" onClick={m.resetPrefs}>
+        恢复默认设置
+      </button>
     </div>
   );
 }
@@ -513,12 +611,24 @@ function MusicModal() {
   const close = () => {
     m.setSettingsOpen(false);
     m.setBoxOpen(false);
+    // 按本机偏好决定关掉弹窗是否停播：默认继续播放（与旧行为一致）
+    if (!m.prefs.keepPlaying) {
+      m.pause();
+      window.dispatchEvent(new Event("music-player-close"));
+      return;
+    }
     // 未播放时广播关闭事件，让动态标题复位
     if (!m.isPlaying) window.dispatchEvent(new Event("music-player-close"));
   };
   const index = m.playlist.findIndex((t) => t.id === m.currentTrack?.id);
   const noData = !m.currentTrack && m.playlist.length === 0;
   const ModeIcon = PLAY_MODE_META[m.playMode].Icon;
+  // 面板观感变量：不透明度（color-mix 只降底色 alpha）与歌词对齐覆盖
+  // （「跟随风格」时不注入，把对齐交给 .mp[data-style] 自己的 --mp-lyric-align）
+  const dialogStyle: CSSProperties & Record<string, string> = {
+    "--mp-panel-alpha": `${m.prefs.panelOpacity}%`,
+    ...(m.prefs.lyricAlign === "site" ? {} : { "--mp-lyric-align": m.prefs.lyricAlign }),
+  };
 
   return (
     <div
@@ -529,7 +639,13 @@ function MusicModal() {
       aria-modal="true"
       aria-label="音乐列表"
     >
-      <div className="mp mp-dialog" data-style={m.panelStyle} onClick={(e) => e.stopPropagation()}>
+      <div
+        className="mp mp-dialog"
+        data-style={m.panelStyle}
+        data-lyric-blur={m.prefs.lyricBlur ? "on" : "off"}
+        style={dialogStyle}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="mp-head">
           <span className="mp-side">{traits.side}</span>
           <span className="mp-spacer" />
@@ -607,6 +723,7 @@ function MusicModal() {
                     track={track}
                     index={i}
                     active={m.currentTrack?.id === track.id}
+                    showCover={m.prefs.trackCover}
                     onSelect={m.selectTrack}
                   />
                 ))}
@@ -640,6 +757,20 @@ export default function MusicProvider({
   /** 站点默认的音乐面板风格（后台配置；访客可在面板里本机覆盖） */
   musicPanelStyle?: string;
 }) {
+  // 面板风格与偏好都留在本机：站点默认来自后台配置，访客可在面板里覆盖（localStorage）。
+  // 首屏先按站点默认 + 默认偏好渲染，挂载后再读本机值
+  // （服务端渲染读不到 localStorage，首屏直接读会导致 hydration 不一致而闪烁）。
+  const [localStyle, setLocalStyle] = useState<string | null>(null);
+  const [prefs, setPrefs] = useState<MusicPanelPrefs>(DEFAULT_MUSIC_PANEL_PREFS);
+  /**
+   * 偏好是否已载入完成。
+   *
+   * 必须显式传给 useAudioPlayer：它要在挂载时用偏好里的初始音量 / 播放模式 / 续播曲目
+   * 做一次初始化。若不等这个信号，初始化会先用默认偏好跑掉（首帧 prefs 还是默认值），
+   * 用户存好的设置就被默认值顶掉了。
+   */
+  const [prefsReady, setPrefsReady] = useState(false);
+
   const {
     isPlaying,
     setIsPlaying,
@@ -663,62 +794,105 @@ export default function MusicProvider({
     lyricIndex,
     audioEl,
     setAudioEl,
-  } = useAudioPlayer(props);
+  } = useAudioPlayer({ ...props, prefs, prefsReady });
 
   const [panelOpen, setPanelOpen] = useState(false);
   const [boxOpen, setBoxOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // 面板风格与偏好都留在本机：站点默认来自后台配置，访客可在面板里覆盖（localStorage）。
-  // 首屏先按站点默认 + 默认偏好渲染，挂载后再读本机值
-  // （服务端渲染读不到 localStorage，首屏直接读会导致 hydration 不一致而闪烁）。
-  const [localStyle, setLocalStyle] = useState<string | null>(null);
-  const [prefs, setPrefs] = useState<MusicPanelPrefs>(DEFAULT_MUSIC_PANEL_PREFS);
-
   useEffect(() => {
     try {
       const ls = window.localStorage;
       setLocalStyle(ls.getItem(MUSIC_PANEL_STYLE_KEY));
-      setPrefs(
-        parseMusicPanelPrefs({
-          topLyrics: ls.getItem(TOP_LYRICS_KEY),
-          showLyrics: ls.getItem(SHOW_LYRICS_KEY),
-          showPlaylist: ls.getItem(SHOW_PLAYLIST_KEY),
-          lyricSize: ls.getItem(TOP_LYRICS_SIZE_KEY),
-        })
-      );
+      // 键名表在 lib/musicPanelThemes 里，新增偏好项不必改这里（改漏的症状是「设置完刷新就还原」）
+      setPrefs(readMusicPanelPrefs(ls));
     } catch {
       // 隐私模式等场景下 localStorage 不可用：保持站点默认与默认偏好
+    } finally {
+      // 读失败也要放行：否则播放层会因为等不到信号而永远不做音量/播放模式初始化
+      setPrefsReady(true);
     }
   }, []);
 
-  const setPanelStyle = useCallback((value: string) => {
-    setLocalStyle(value);
+  /** 写入本机存储（隐私模式等场景静默忽略） */
+  const writeLocal = useCallback((key: string, value: string) => {
     try {
-      window.localStorage.setItem(MUSIC_PANEL_STYLE_KEY, value);
+      window.localStorage.setItem(key, value);
     } catch {
       // 写不进去也不影响本次会话内的切换
     }
   }, []);
 
-  const setPref = useCallback((key: PanelPrefKey, value: boolean) => {
-    setPrefs((prev) => ({ ...prev, [key]: value }));
-    try {
-      window.localStorage.setItem(PREF_STORAGE_KEYS[key], formatBoolPref(value));
-    } catch {
-      // 同上：写不进去不影响本次会话
-    }
-  }, []);
+  const setPanelStyle = useCallback(
+    (value: string) => {
+      setLocalStyle(value);
+      writeLocal(MUSIC_PANEL_STYLE_KEY, value);
+    },
+    [writeLocal]
+  );
+
+  const setPref = useCallback(
+    (key: MusicPanelBoolPref, value: boolean) => {
+      setPrefs((prev) => ({ ...prev, [key]: value }));
+      writeLocal(MUSIC_PANEL_BOOL_KEYS[key], formatBoolPref(value));
+    },
+    [writeLocal]
+  );
 
   // 字号档位是数值而非布尔，单独一个 setter（落盘为 "4" 这类字符串）
-  const setLyricSize = useCallback((level: LyricSizeLevel) => {
-    setPrefs((prev) => ({ ...prev, lyricSize: level }));
+  const setLyricSize = useCallback(
+    (level: LyricSizeLevel) => {
+      setPrefs((prev) => ({ ...prev, lyricSize: level }));
+      writeLocal(MUSIC_PANEL_VALUE_KEYS.lyricSize, String(level));
+    },
+    [writeLocal]
+  );
+
+  const setVolumePref = useCallback(
+    (value: number) => {
+      const level = clampPercent(value);
+      setPrefs((prev) => ({ ...prev, volume: level }));
+      writeLocal(MUSIC_PANEL_VALUE_KEYS.volume, String(level));
+    },
+    [writeLocal]
+  );
+
+  const setPanelOpacity = useCallback(
+    (value: number) => {
+      const level = clampPanelOpacity(value);
+      setPrefs((prev) => ({ ...prev, panelOpacity: level }));
+      writeLocal(MUSIC_PANEL_VALUE_KEYS.panelOpacity, String(level));
+    },
+    [writeLocal]
+  );
+
+  const setLyricAlign = useCallback(
+    (value: LyricAlignPref) => {
+      setPrefs((prev) => ({ ...prev, lyricAlign: value }));
+      writeLocal(MUSIC_PANEL_VALUE_KEYS.lyricAlign, value);
+    },
+    [writeLocal]
+  );
+
+  /**
+   * 一键恢复默认：清掉全部本机键并复位内存态。
+   * 音量 / 静音 / 播放模式 / 进度表留在 useAudioPlayer 里，不在 React 树上，
+   * 因此清完存储后还要广播一次事件让常驻播放层同步复位（否则本轮仍是旧值）。
+   */
+  const resetPrefs = useCallback(() => {
+    setPrefs(DEFAULT_MUSIC_PANEL_PREFS);
+    setLocalStyle(null);
     try {
-      window.localStorage.setItem(TOP_LYRICS_SIZE_KEY, String(level));
+      const ls = window.localStorage;
+      for (const key of ALL_MUSIC_LOCAL_KEYS) ls.removeItem(key);
     } catch {
-      // 同上：写不进去不影响本次会话
+      // 隐私模式等场景忽略
     }
+    window.dispatchEvent(new Event(MUSIC_PREFS_RESET_EVENT));
   }, []);
+
+  /** 直接暂停：关闭弹窗按偏好停播时使用（togglePlay 依赖 state 闭包，这里要的是确定性的停） */
+  const pause = useCallback(() => setIsPlaying(false), [setIsPlaying]);
 
   const panelStyle = resolveMusicPanelStyle({
     siteDefault: musicPanelStyle,
@@ -730,8 +904,10 @@ export default function MusicProvider({
   // 音频元素 ref 回调（稳定引用，避免每次渲染重绑）
   const audioRefCallback = useCallback((el: HTMLAudioElement | null) => setAudioEl(el), [setAudioEl]);
 
-  // 键盘快捷键（对齐 home：Space 播放暂停 / PageUp 上一曲 / PageDown 下一曲）
+  // 键盘快捷键（对齐 home：Space 播放暂停 / PageUp 上一曲 / PageDown 下一首）
+  // 可在面板设置里关闭：空格是页面滚动与按钮激活的通用键，被全站劫持并不总是用户想要的
   useEffect(() => {
+    if (!prefs.hotkeys) return;
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       // 输入控件与按钮聚焦时放行原生行为：Space 激活按钮、PageUp/Down 操作下拉，
@@ -754,7 +930,7 @@ export default function MusicProvider({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [playlist.length, togglePlay, playPrev, playNext]);
+  }, [playlist.length, togglePlay, playPrev, playNext, prefs.hotkeys]);
 
   // 外部「音乐」链接（SiteLinks）触发：打开列表弹窗（对齐 home Links.vue）
   useEffect(() => {
@@ -764,17 +940,20 @@ export default function MusicProvider({
   }, []);
 
   // Media Session：更新系统媒体元数据（锁屏/系统 UI 显示歌名与封面）
+  // 三个 Media Session effect 都受「系统媒体控制」偏好约束：关掉后不再向系统暴露播放状态
   useEffect(() => {
+    if (!prefs.mediaSession) return;
     if (!("mediaSession" in navigator) || !currentTrack) return;
     navigator.mediaSession.metadata = new MediaMetadata({
       title: currentTrack.name,
       artist: currentTrack.artist,
       artwork: currentTrack.cover ? [{ src: currentTrack.cover, sizes: "512x512", type: "image/jpeg" }] : undefined,
     });
-  }, [currentTrack]);
+  }, [currentTrack, prefs.mediaSession]);
 
   // Media Session：系统媒体控制（耳机/锁屏按键）
   useEffect(() => {
+    if (!prefs.mediaSession) return;
     if (!("mediaSession" in navigator)) return;
     const ms = navigator.mediaSession;
     ms.setActionHandler("play", togglePlay);
@@ -799,9 +978,10 @@ export default function MusicProvider({
       ms.setActionHandler("seekforward", null);
       ms.setActionHandler("seekto", null);
     };
-  }, [audioEl, togglePlay, playNext, playPrev]);
+  }, [audioEl, togglePlay, playNext, playPrev, prefs.mediaSession]);
 
   useEffect(() => {
+    if (!prefs.mediaSession) return;
     if (!("mediaSession" in navigator) || !audioEl || !Number.isFinite(duration) || duration <= 0) return;
     try {
       navigator.mediaSession.setPositionState({
@@ -812,11 +992,12 @@ export default function MusicProvider({
     } catch {
       // Browsers reject position state until metadata is available.
     }
-  }, [audioEl, currentTime, duration]);
+  }, [audioEl, currentTime, duration, prefs.mediaSession]);
 
   const value: MusicContextValue = {
     isPlaying,
     togglePlay,
+    pause,
     currentTrack,
     playlist,
     playMode,
@@ -845,9 +1026,14 @@ export default function MusicProvider({
     setPanelStyle,
     panelStyleFollowsSite,
     prefs,
+    prefsReady,
     setPref,
     lyricSize: prefs.lyricSize,
     setLyricSize,
+    setVolumePref,
+    setPanelOpacity,
+    setLyricAlign,
+    resetPrefs,
   };
 
   return (

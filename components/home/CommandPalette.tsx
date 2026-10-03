@@ -72,6 +72,13 @@ export default function CommandPalette({ siteLinks = [], friendLinks = [], siteT
     };
   }, [open]);
 
+  // 外部入口（右键菜单的「打开命令面板」）呼出面板：等价于按了一次 Ctrl/Cmd+K
+  useEffect(() => {
+    const onOpen = () => setOpen(true);
+    window.addEventListener("open-command-palette", onOpen);
+    return () => window.removeEventListener("open-command-palette", onOpen);
+  }, []);
+
   // 打开时聚焦输入框并重置查询
   useEffect(() => {
     if (open) {

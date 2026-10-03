@@ -238,6 +238,15 @@ export const profileSchema = z.object({
   seasonalEffectEnabled: z.boolean().optional().default(false),
   // 命令面板（Ctrl/Cmd+K）
   commandPalette: z.boolean().optional().default(true),
+  // 前端右键行为：default 原生右键 / disabled 静默禁用 / menu 弹自定义站内功能菜单。
+  // 枚举而非字符串：非法值会让前端拿到一个「什么都不做」的模式，等于把右键静默吃掉，
+  // 这里直接拒绝更安全（后台下拉只提供这三个值）。
+  rightClickMode: z
+    .enum(["default", "disabled", "menu"], {
+      errorMap: () => ({ message: "右键行为不合法" }),
+    })
+    .optional()
+    .default("default"),
   // 昵称艺术字体（内置仅一款「有爱圆体」，因此只保留开关，不再提供字体选择）
   // 自定义字体（方案 A：输入 CSS 字体名，不存文件）
   customFontEnabled: z.boolean().optional().default(false),

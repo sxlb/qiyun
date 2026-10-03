@@ -53,6 +53,8 @@ model Profile {
   seasonalEffectEnabled Boolean  @default(false) // 季节装饰特效开关（萤火虫/雪花/灯笼）
   useRandomAvatar      Boolean  @default(false)
   commandPalette       Boolean  @default(true) // 全局命令面板（Ctrl/Cmd+K 呼出）
+  // 前端右键行为：default 原生 / disabled 静默禁用 / menu 自定义站内功能菜单
+  rightClickMode       String   @default("default")
   welcomeEnabled         Boolean  @default(true)
   welcomeIndex           Int      @default(0)
   welcomeMessages        String   @default("[\"欢迎来到本站～\",\"很高兴遇见你，祝你愉快！\",\"愿时光温柔，伴你左右\",\"相逢即是缘分，欢迎光临\",\"欢迎回来，好久不见\"]")

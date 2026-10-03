@@ -135,6 +135,13 @@ export function musicPanelTraits(style: MusicPanelStyle): MusicPanelTraits {
 }
 
 /* ==================== 面板内的本机偏好 ==================== */
+/*
+ * 全部偏好只存本机（localStorage），不上报服务端 —— 与「站点默认风格在后台配置、
+ * 访客可在面板里本机覆盖」的两层设计一致。因此新增设置项不需要动数据库与迁移。
+ *
+ * 键名统一收敛在本模块：组件与 useAudioPlayer 都从这里取，避免同一个键在两处
+ * 各写一遍字符串（漏改一处就会出现「设置完刷新就失效」这类难查的问题）。
+ */
 
 /** 顶部常驻歌词胶囊开关 */
 export const TOP_LYRICS_KEY = "music-player-top-lyrics";
@@ -144,6 +151,38 @@ export const SHOW_LYRICS_KEY = "music-player-show-lyrics";
 export const SHOW_PLAYLIST_KEY = "music-player-show-playlist";
 /** 顶部悬浮歌词的字号档位 */
 export const TOP_LYRICS_SIZE_KEY = "music-player-top-lyrics-size";
+/** 初始音量（0-100） */
+export const DEFAULT_VOLUME_KEY = "music-player-default-volume";
+/** 记住播放模式 */
+export const REMEMBER_PLAY_MODE_KEY = "music-player-remember-mode";
+/** 续播上次曲目 */
+export const RESUME_LAST_TRACK_KEY = "music-player-resume-track";
+/** 关闭音乐列表弹窗后是否继续播放 */
+export const KEEP_PLAYING_KEY = "music-player-keep-playing";
+/** 面板不透明度（40-100，百分比） */
+export const PANEL_OPACITY_KEY = "music-player-panel-opacity";
+/** 歌词聚焦：非当前行模糊淡出 */
+export const LYRIC_BLUR_KEY = "music-player-lyric-blur";
+/** 歌词对齐覆盖（site=跟随面板风格） */
+export const LYRIC_ALIGN_KEY = "music-player-lyric-align";
+/** 歌单显示封面缩略图 */
+export const TRACK_COVER_KEY = "music-player-track-cover";
+/** 键盘快捷键（空格 / PgUp / PgDn） */
+export const HOTKEYS_KEY = "music-player-hotkeys";
+/** 系统媒体控制（锁屏 / 耳机按键） */
+export const MEDIA_SESSION_KEY = "music-player-media-session";
+
+/* —— 播放行为类键：由 useAudioPlayer 读写（音量 / 静音 / 进度 / 上次曲目） —— */
+/** 上一次的音量 */
+export const AUDIO_VOLUME_KEY = "music-player-volume";
+/** 是否静音 */
+export const AUDIO_MUTED_KEY = "music-player-muted";
+/** 每首曲目的播放进度表 */
+export const AUDIO_PROGRESS_KEY = "music-player-progress";
+/** 上次播放的曲目 id（续播用） */
+export const AUDIO_LAST_TRACK_KEY = "music-player-last-track";
+/** 上次的播放模式（顺序/列表循环/单曲循环/随机） */
+export const AUDIO_PLAY_MODE_KEY = "music-player-play-mode";
 
 /**
  * 顶部悬浮歌词的字号档位，共 7 档。
@@ -169,16 +208,17 @@ export const LYRIC_SIZE_OPTIONS: { value: LyricSizeLevel; label: string }[] = [
 
 const LYRIC_SIZE_VALUES: number[] = LYRIC_SIZE_OPTIONS.map((o) => o.value);
 
-/** 收敛任意来源的档位值（字符串 / 数字 / null / 历史脏值），非法一律回落默认档 */
-export function parseLyricSize(value: unknown): LyricSizeLevel {
-  const level = typeof value === "number" ? value : Number(value);
-  return LYRIC_SIZE_VALUES.includes(level) ? (level as LyricSizeLevel) : DEFAULT_LYRIC_SIZE;
-}
+/* —— 歌词对齐：默认跟随面板风格（三套风格各有自己的对齐），可本机强制覆盖 —— */
+export const LYRIC_ALIGN_SITE = "site";
+export type LyricAlignPref = typeof LYRIC_ALIGN_SITE | "center" | "left";
 
-/** 档位对应的中文名（设置面板里回显当前档位） */
-export function lyricSizeLabel(level: LyricSizeLevel): string {
-  return LYRIC_SIZE_OPTIONS.find((o) => o.value === level)?.label ?? "";
-}
+export const LYRIC_ALIGN_OPTIONS: { value: LyricAlignPref; label: string }[] = [
+  { value: LYRIC_ALIGN_SITE, label: "跟随风格" },
+  { value: "center", label: "居中" },
+  { value: "left", label: "左对齐" },
+];
+
+const LYRIC_ALIGN_VALUES: string[] = LYRIC_ALIGN_OPTIONS.map((o) => o.value);
 
 export interface MusicPanelPrefs {
   /** 顶部常驻歌词胶囊（与顶部进度条共用同一开关习惯） */
@@ -189,6 +229,26 @@ export interface MusicPanelPrefs {
   showPlaylist: boolean;
   /** 顶部悬浮歌词的字号档位 */
   lyricSize: LyricSizeLevel;
+  /** 歌词聚焦：非当前行模糊淡出 */
+  lyricBlur: boolean;
+  /** 歌词对齐：site 表示跟随面板风格 */
+  lyricAlign: LyricAlignPref;
+  /** 歌单行显示封面缩略图 */
+  trackCover: boolean;
+  /** 初始音量（0-100）：还没有记住过音量时使用 */
+  volume: number;
+  /** 面板不透明度（40-100，百分比） */
+  panelOpacity: number;
+  /** 记住播放模式（顺序/列表循环/单曲循环/随机） */
+  rememberPlayMode: boolean;
+  /** 续播上次曲目：加载歌单后自动选中上次在听的那首（不自动播放） */
+  resumeLastTrack: boolean;
+  /** 关闭音乐列表弹窗后是否继续播放 */
+  keepPlaying: boolean;
+  /** 键盘快捷键：空格播放暂停 / PgUp 上一首 / PgDn 下一首 */
+  hotkeys: boolean;
+  /** 系统媒体控制：锁屏与耳机按键 */
+  mediaSession: boolean;
 }
 
 export const DEFAULT_MUSIC_PANEL_PREFS: MusicPanelPrefs = {
@@ -196,7 +256,111 @@ export const DEFAULT_MUSIC_PANEL_PREFS: MusicPanelPrefs = {
   showLyrics: true,
   showPlaylist: true,
   lyricSize: DEFAULT_LYRIC_SIZE,
+  // 默认开启：把注意力收在当前句上，是「歌词」这一区块本该有的阅读层级
+  lyricBlur: true,
+  lyricAlign: LYRIC_ALIGN_SITE,
+  // 默认关闭：多一张缩略图意味着多一轮第三方图片请求，按需开启
+  trackCover: false,
+  volume: 40,
+  panelOpacity: 100,
+  rememberPlayMode: true,
+  // 默认开启：仅选中不播放，不会制造「页面一打开就有声音」的意外
+  resumeLastTrack: true,
+  keepPlaying: true,
+  hotkeys: true,
+  mediaSession: true,
 };
+
+/** 面板不透明度的可调下限：再低就看不清面板里的文字了 */
+export const MIN_PANEL_OPACITY = 40;
+
+/** MusicPanelPrefs 里所有布尔字段的键名（开关行与落盘表都以此为准） */
+export type MusicPanelBoolPref = {
+  [K in keyof MusicPanelPrefs]: MusicPanelPrefs[K] extends boolean ? K : never;
+}[keyof MusicPanelPrefs];
+
+/** 布尔偏好 → localStorage 键（收敛成一张表，避免组件与设置项两处写错） */
+export const MUSIC_PANEL_BOOL_KEYS: Record<MusicPanelBoolPref, string> = {
+  topLyrics: TOP_LYRICS_KEY,
+  showLyrics: SHOW_LYRICS_KEY,
+  showPlaylist: SHOW_PLAYLIST_KEY,
+  lyricBlur: LYRIC_BLUR_KEY,
+  trackCover: TRACK_COVER_KEY,
+  rememberPlayMode: REMEMBER_PLAY_MODE_KEY,
+  resumeLastTrack: RESUME_LAST_TRACK_KEY,
+  keepPlaying: KEEP_PLAYING_KEY,
+  hotkeys: HOTKEYS_KEY,
+  mediaSession: MEDIA_SESSION_KEY,
+};
+
+/** 非布尔偏好的落盘键（面板风格另有自己的键，见 MUSIC_PANEL_STYLE_KEY） */
+export const MUSIC_PANEL_VALUE_KEYS = {
+  lyricSize: TOP_LYRICS_SIZE_KEY,
+  volume: DEFAULT_VOLUME_KEY,
+  panelOpacity: PANEL_OPACITY_KEY,
+  lyricAlign: LYRIC_ALIGN_KEY,
+} as const;
+
+/**
+ * 「恢复默认」需要清理的全部本机键（含播放行为类与面板风格）。
+ * 集中在这里而不是散在组件里：漏清一个键就会出现「重置后某项仍是旧值」。
+ */
+export const ALL_MUSIC_LOCAL_KEYS: string[] = [
+  MUSIC_PANEL_STYLE_KEY,
+  ...Object.values(MUSIC_PANEL_BOOL_KEYS),
+  ...Object.values(MUSIC_PANEL_VALUE_KEYS),
+  AUDIO_VOLUME_KEY,
+  AUDIO_MUTED_KEY,
+  AUDIO_PROGRESS_KEY,
+  AUDIO_LAST_TRACK_KEY,
+  AUDIO_PLAY_MODE_KEY,
+];
+
+/** 「恢复默认」时通知常驻播放层复位内存态（音量/静音/进度表不在 React 树里） */
+export const MUSIC_PREFS_RESET_EVENT = "music-prefs-reset";
+
+/** 收敛 0-100 的百分比档位（音量 / 不透明度），非法值回落 fallback */
+export function parsePercentPref(value: unknown, fallback: number): number {
+  // 「没设置过」必须先判掉：Number(null) / Number("") / Number("  ") 都是 0，
+  // 直接转数字会把「未设置」误判成「用户设成了 0%」——
+  // 与当年「首次访问音量被读成 0、喇叭显示静音且点不动」是同一类 bug。
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === "string" && value.trim() === "") return fallback;
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  const rounded = Math.round(n);
+  return rounded >= 0 && rounded <= 100 ? rounded : fallback;
+}
+
+/** 把任意数值夹到 0-100 的整数区间（供设置面板的滑杆直接调用） */
+export function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_MUSIC_PANEL_PREFS.volume;
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+/** 收敛面板不透明度：低于下限会让文字不可读，因此下限比音量更高 */
+export function clampPanelOpacity(value: number): number {
+  const n = clampPercent(value);
+  return Math.min(100, Math.max(MIN_PANEL_OPACITY, n));
+}
+
+/** 收敛任意来源的档位值（字符串 / 数字 / null / 历史脏值），非法一律回落默认档 */
+export function parseLyricSize(value: unknown): LyricSizeLevel {
+  const level = typeof value === "number" ? value : Number(value);
+  return LYRIC_SIZE_VALUES.includes(level) ? (level as LyricSizeLevel) : DEFAULT_LYRIC_SIZE;
+}
+
+/** 收敛歌词对齐取值：非法值一律视为「跟随风格」 */
+export function parseLyricAlign(value: unknown): LyricAlignPref {
+  return typeof value === "string" && LYRIC_ALIGN_VALUES.includes(value)
+    ? (value as LyricAlignPref)
+    : LYRIC_ALIGN_SITE;
+}
+
+/** 档位对应的中文名（设置面板里回显当前档位） */
+export function lyricSizeLabel(level: LyricSizeLevel): string {
+  return LYRIC_SIZE_OPTIONS.find((o) => o.value === level)?.label ?? "";
+}
 
 /**
  * 解析布尔偏好：只认 `"1"` / `"0"`，其余（null / 空串 / 历史脏值）一律回落到默认值。
@@ -213,17 +377,45 @@ export function formatBoolPref(value: boolean): string {
   return value ? "1" : "0";
 }
 
-/** 把 localStorage 里逐键读取的裸值收敛成完整偏好对象 */
-export function parseMusicPanelPrefs(raw: {
-  topLyrics?: string | null;
-  showLyrics?: string | null;
-  showPlaylist?: string | null;
-  lyricSize?: string | null;
-}): MusicPanelPrefs {
+/** 逐键读出的裸值（localStorage 只存字符串，null 表示未设置过） */
+export type MusicPanelPrefsRaw = Partial<Record<keyof MusicPanelPrefs, string | null>>;
+
+/** 把 localStorage 里逐键读取的裸值收敛成完整偏好对象（缺键一律取默认值） */
+export function parseMusicPanelPrefs(raw: MusicPanelPrefsRaw): MusicPanelPrefs {
+  const d = DEFAULT_MUSIC_PANEL_PREFS;
   return {
-    topLyrics: parseBoolPref(raw.topLyrics, DEFAULT_MUSIC_PANEL_PREFS.topLyrics),
-    showLyrics: parseBoolPref(raw.showLyrics, DEFAULT_MUSIC_PANEL_PREFS.showLyrics),
-    showPlaylist: parseBoolPref(raw.showPlaylist, DEFAULT_MUSIC_PANEL_PREFS.showPlaylist),
+    topLyrics: parseBoolPref(raw.topLyrics, d.topLyrics),
+    showLyrics: parseBoolPref(raw.showLyrics, d.showLyrics),
+    showPlaylist: parseBoolPref(raw.showPlaylist, d.showPlaylist),
     lyricSize: parseLyricSize(raw.lyricSize),
+    lyricBlur: parseBoolPref(raw.lyricBlur, d.lyricBlur),
+    lyricAlign: parseLyricAlign(raw.lyricAlign),
+    trackCover: parseBoolPref(raw.trackCover, d.trackCover),
+    volume: parsePercentPref(raw.volume, d.volume),
+    panelOpacity: clampPanelOpacity(parsePercentPref(raw.panelOpacity, d.panelOpacity)),
+    rememberPlayMode: parseBoolPref(raw.rememberPlayMode, d.rememberPlayMode),
+    resumeLastTrack: parseBoolPref(raw.resumeLastTrack, d.resumeLastTrack),
+    keepPlaying: parseBoolPref(raw.keepPlaying, d.keepPlaying),
+    hotkeys: parseBoolPref(raw.hotkeys, d.hotkeys),
+    mediaSession: parseBoolPref(raw.mediaSession, d.mediaSession),
   };
+}
+
+/**
+ * 从 localStorage 读取全部音乐本机偏好。
+ *
+ * 键名表就在本模块，调用方不必逐个列出 —— 将来新增一项偏好，只需补
+ * MUSIC_PANEL_BOOL_KEYS / MUSIC_PANEL_VALUE_KEYS 与 parseMusicPanelPrefs，
+ * 读取端不用改，也就不会漏读（漏读的症状是「设置完刷新就还原」，很难查）。
+ */
+export function readMusicPanelPrefs(storage: Storage): MusicPanelPrefs {
+  const raw: MusicPanelPrefsRaw = {};
+  for (const field of Object.keys(MUSIC_PANEL_BOOL_KEYS) as MusicPanelBoolPref[]) {
+    raw[field] = storage.getItem(MUSIC_PANEL_BOOL_KEYS[field]);
+  }
+  raw.lyricSize = storage.getItem(MUSIC_PANEL_VALUE_KEYS.lyricSize);
+  raw.volume = storage.getItem(MUSIC_PANEL_VALUE_KEYS.volume);
+  raw.panelOpacity = storage.getItem(MUSIC_PANEL_VALUE_KEYS.panelOpacity);
+  raw.lyricAlign = storage.getItem(MUSIC_PANEL_VALUE_KEYS.lyricAlign);
+  return parseMusicPanelPrefs(raw);
 }

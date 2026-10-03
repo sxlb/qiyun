@@ -54,6 +54,8 @@ interface Profile {
    * 缺字段会让首屏渲染 checked={undefined}（非受控），数据到达后变 true（受控），
    * React 随即抛出「changing an uncontrolled input to be controlled」告警。 */
   commandPalette: boolean;
+  /** 前端右键行为：default 原生 / disabled 静默禁用 / menu 自定义站内功能菜单 */
+  rightClickMode: string;
   welcomeEnabled: boolean;
   welcomeIndex: number;
   welcomeMessages: string;
@@ -121,6 +123,7 @@ const INITIAL: Profile = {
   seasonalEffectEnabled: false,
   useRandomAvatar: false,
   commandPalette: true,
+  rightClickMode: "default",
   welcomeEnabled: true,
   welcomeIndex: 0,
   welcomeMessages: JSON.stringify(DEFAULT_WELCOME_MESSAGES),
@@ -546,6 +549,29 @@ export default function ProfilePanel() {
                       />
                     </label>
                   ))}
+                </div>
+
+                {/* 右键行为：三选一，不适合塞进上面的布尔开关网格 */}
+                <div>
+                  <Label htmlFor="rightClickMode">前端右键行为</Label>
+                  <select
+                    id="rightClickMode"
+                    name="rightClickMode"
+                    className={selectClass}
+                    value={profile.rightClickMode}
+                    onChange={(e) => set("rightClickMode", e.target.value)}
+                  >
+                    <option value="default">浏览器原生菜单（默认）</option>
+                    <option value="disabled">禁用右键</option>
+                    <option value="menu">自定义站内功能菜单</option>
+                  </select>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    自定义菜单用的都是本站功能：播放暂停 / 上一首 / 下一首 / 打开音乐列表 / 切换主题 /
+                    换一张壁纸 / 回到顶部 / 打开命令面板 / 复制本页链接；页面有选中文字时会在顶部追加「复制」
+                    「搜索选中文字」。<br />
+                    注意：「禁用右键」只是提高复制门槛，做不到内容保护 —— F12、地址栏、禁用 JS 都能绕过，
+                    真要防抓取应靠服务端渲染水印或权限控制。移动端长按一律保留原生菜单，不做拦截。
+                  </p>
                 </div>
 
                 <div className="space-y-2">

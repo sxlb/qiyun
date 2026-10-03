@@ -1116,13 +1116,23 @@ Cookie 头中会设置 `qiyun-uv=1`（httpOnly, sameSite=lax, maxAge=365 天）�
 | 认证要求   | 需要 NextAuth Session  |
 | URL 参数   | `url`(string): 目标网址 |
 
-**描述**：探测并返回首个可用的网站图标地址。
+**描述**：探测并返回首个可用的网站图标地址。按以下优先级依次尝试，命中即返回：
+
+1. **首页 HTML 声明的图标** —— 解析 `<link rel="icon">` / `rel="shortcut icon"` / `rel="apple-touch-icon(-precomposed)"`（大小写与单词顺序不敏感，支持单双引号与无引号写法），相对路径按**跳转后**的最终地址补全，再逐个校验是否真的返回图片。这是唯一能覆盖「图标托管在 OSS/CDN、根目录没有 favicon.ico」这类站点的路径。
+2. **站点自身 `/favicon.ico`** —— 没有声明时的通用约定（与第 1 步并行发起，声明命中时优先取声明）。
+3. **第三方图标服务** —— favicon.im / icon.horse / xinac 图标库 / Google favicon（含后台「外部服务」配置的自定义源，插在内置源之前）。
+
+前两步都落空才会去打第三方源。所有候选都要求返回 `image/*`（或体积合规的 `octet-stream`），返回 HTML 的候选一律视为无效，避免把 SPA 首页当成图标。首页 HTML 最多读取 256KB（图标声明必在 `<head>`），单次出站请求带超时与逐跳 SSRF 校验。
 
 **成功响应 (200)**：
 
 ```json
-{ "ok": true, "host": "github.com", "url": "https://github.com/favicon.ico", "source": "default" }
+{ "ok": true, "host": "github.com", "url": "https://github.com/favicon.ico", "source": "站点自身 favicon.ico" }
 ```
+
+`source` 取值：`页面声明的图标`、`站点自身 favicon.ico`、`自定义 favicon 服务`、`favicon.im`、`icon.horse`、`xinac 图标库`、`Google favicon（备用）`。
+
+**失败响应 (200)**：`{ "ok": false, "host": "...", "error": "未探测到 ... 的可用图标（域名无法解析，或站点未提供 favicon）" }`
 
 ---
 
@@ -1630,6 +1640,7 @@ Cookie 头中会设置 `qiyun-uv=1`（httpOnly, sameSite=lax, maxAge=365 天）�
 | `seasonalEffectEnabled` | Boolean | false | 季节装饰特效开关 |
 | `useRandomAvatar` | Boolean | false | 随机头像开关 |
 | `commandPalette` | Boolean | true | 全局命令面板开关 |
+| `rightClickMode` | String | "default" | 前端右键行为：`default` 原生 / `disabled` 禁用 / `menu` 自定义站内功能菜单 |
 | `welcomeEnabled` | Boolean | true | 欢迎弹窗开关 |
 | `welcomeIndex` | Int | 0 | 欢迎语索引 |
 | `welcomeMessages` | String | [...] | 欢迎语 JSON 字符串 |

@@ -29,15 +29,19 @@ describe("probeFavicon（候选源探测策略）", () => {
   });
 
   it("站点自身 favicon.ico 可用时直接采用，不再请求第三方源", async () => {
-    const fetchMock = vi.fn(async (url: string | URL | Request) =>
-      String(url) === PRIMARY ? imageResponse("image/x-icon") : imageResponse("image/png"),
-    );
+    const requested: string[] = [];
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      requested.push(String(url));
+      return String(url) === PRIMARY ? imageResponse("image/x-icon") : imageResponse("image/png");
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const hit = await probeFavicon(HOST);
 
     expect(hit?.url).toBe(PRIMARY);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // 只请求了首页（用于解析图标声明）与 favicon.ico 本身；首页返回图片即视为「没有声明」
+    expect(requested).toHaveLength(2);
+    expect(requested.some((u) => u.includes("favicon.im"))).toBe(false);
   });
 
   it("站点自身图标不可用时，按优先级取其余源中第一个成功的", async () => {
@@ -53,6 +57,67 @@ describe("probeFavicon（候选源探测策略）", () => {
 
     // favicon.im（第二个候选）优先级高于 iowen / Google
     expect(hit?.url).toBe(SECOND);
+  });
+
+  it("页面声明的图标优先于 favicon.ico（图标放在 CDN/OSS 的站点）", async () => {
+    const PAGE = `https://${HOST}/`;
+    const DECLARED = "https://cdn.example.com/logo.jpg";
+    const requested: string[] = [];
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      requested.push(u);
+      if (u === PAGE) {
+        return new Response(
+          `<html><head><link rel="icon" type="image/ico" href="${DECLARED}"></head></html>`,
+          { status: 200, headers: { "content-type": "text/html; charset=utf-8" } }
+        );
+      }
+      if (u === DECLARED) return imageResponse("image/jpeg");
+      if (u === PRIMARY) return imageResponse("image/x-icon");
+      return imageResponse("image/png", 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const hit = await probeFavicon(HOST);
+
+    expect(hit?.url).toBe(DECLARED);
+    expect(hit?.source).toBe("页面声明的图标");
+    // 命中声明后不再打第三方源
+    expect(requested.some((u) => u.includes("favicon.im"))).toBe(false);
+  });
+
+  it("页面声明的地址都不可用时，回退到站点自身 favicon.ico", async () => {
+    const PAGE = `https://${HOST}/`;
+    const MISSING = `https://${HOST}/missing.png`;
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u === PAGE) {
+        return new Response(`<link rel="icon" href="/missing.png">`, {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        });
+      }
+      if (u === MISSING) return imageResponse("text/html", 404);
+      if (u === PRIMARY) return imageResponse("image/x-icon");
+      return imageResponse("image/png", 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect((await probeFavicon(HOST))?.url).toBe(PRIMARY);
+  });
+
+  it("首页不可用（超时/异常）时不影响 favicon.ico 与第三方源回退", async () => {
+    const PAGE = `https://${HOST}/`;
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u === PAGE) throw new Error("homepage down");
+      if (u === PRIMARY) return imageResponse("text/html", 404);
+      if (u === SECOND) return imageResponse("image/svg+xml");
+      return imageResponse("image/png");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect((await probeFavicon(HOST))?.url).toBe(SECOND);
   });
 
   it("返回 HTML 的候选视为无效（避免把 SPA 首页当成图标）", async () => {
@@ -76,8 +141,8 @@ describe("probeFavicon（候选源探测策略）", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await probeFavicon(HOST)).toBeNull();
-    // 主候选 1 次 + 其余候选并行各 1 次
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    // 首页（解析声明）1 次 + 每个候选各 1 次（不把候选数量写死，换源时不必改测试）
+    expect(fetchMock).toHaveBeenCalledTimes(1 + faviconCandidates(HOST).length);
   });
 
   it("目标域名无法解析时直接返回 null，且不发起任何请求", async () => {

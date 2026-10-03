@@ -1,15 +1,27 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
+  ALL_MUSIC_LOCAL_KEYS,
+  AUDIO_VOLUME_KEY,
   DEFAULT_LYRIC_SIZE,
   DEFAULT_MUSIC_PANEL_PREFS,
+  LYRIC_ALIGN_OPTIONS,
   LYRIC_SIZE_OPTIONS,
+  MIN_PANEL_OPACITY,
+  MUSIC_PANEL_BOOL_KEYS,
+  MUSIC_PANEL_STYLE_KEY,
   MUSIC_PANEL_TRAITS,
+  MUSIC_PANEL_VALUE_KEYS,
   musicPanelTraits,
+  clampPanelOpacity,
+  clampPercent,
+  formatBoolPref,
   lyricSizeLabel,
   parseBoolPref,
-  formatBoolPref,
+  parseLyricAlign,
   parseLyricSize,
   parseMusicPanelPrefs,
+  parsePercentPref,
+  readMusicPanelPrefs,
   TOP_LYRICS_KEY,
   TOP_LYRICS_SIZE_KEY,
   SHOW_LYRICS_KEY,
@@ -76,23 +88,34 @@ describe("悬浮歌词字号档位（parseLyricSize）", () => {
 });
 
 describe("parseMusicPanelPrefs（面板偏好）", () => {
-  it("缺省时全部取默认值（开关默认全开、字号默认标准）", () => {
+  it("缺省时全部取默认值", () => {
     expect(parseMusicPanelPrefs({})).toEqual(DEFAULT_MUSIC_PANEL_PREFS);
-    expect(DEFAULT_MUSIC_PANEL_PREFS).toEqual({
+  });
+
+  it("默认值就是「不改变现有观感」的那一组：开关全开、字号标准、面板不透化、歌词对齐跟随风格", () => {
+    expect(DEFAULT_MUSIC_PANEL_PREFS).toMatchObject({
       topLyrics: true,
       showLyrics: true,
       showPlaylist: true,
       lyricSize: 4,
+      lyricAlign: "site",
+      panelOpacity: 100,
+      rememberPlayMode: true,
+      resumeLastTrack: true,
+      keepPlaying: true,
+      hotkeys: true,
+      mediaSession: true,
     });
+    // 这两项是例外：默认开启会改变观感 / 多发一轮图片请求，故默认关
+    expect(DEFAULT_MUSIC_PANEL_PREFS.trackCover).toBe(false);
+    expect(DEFAULT_MUSIC_PANEL_PREFS.volume).toBe(40);
   });
 
   it("逐键独立解析：关掉歌词不影响曲目", () => {
-    expect(parseMusicPanelPrefs({ showLyrics: "0" })).toEqual({
-      topLyrics: true,
-      showLyrics: false,
-      showPlaylist: true,
-      lyricSize: 4,
-    });
+    const prefs = parseMusicPanelPrefs({ showLyrics: "0" });
+    expect(prefs.showLyrics).toBe(false);
+    expect(prefs.showPlaylist).toBe(true);
+    expect(prefs.topLyrics).toBe(true);
   });
 
   it("字号与开关互不干扰，各自独立解析", () => {
@@ -105,6 +128,10 @@ describe("parseMusicPanelPrefs（面板偏好）", () => {
   it("历史脏值被忽略", () => {
     expect(parseMusicPanelPrefs({ topLyrics: "on" })).toEqual(DEFAULT_MUSIC_PANEL_PREFS);
     expect(parseMusicPanelPrefs({ lyricSize: "huge" })).toEqual(DEFAULT_MUSIC_PANEL_PREFS);
+    expect(parseMusicPanelPrefs({ lyricAlign: "right" }).lyricAlign).toBe("site");
+    expect(parseMusicPanelPrefs({ volume: "abc" }).volume).toBe(
+      DEFAULT_MUSIC_PANEL_PREFS.volume
+    );
   });
 
   it("四个键名与既有 music-player-* 前缀一致", () => {
@@ -114,6 +141,124 @@ describe("parseMusicPanelPrefs（面板偏好）", () => {
       "music-player-show-playlist",
       "music-player-top-lyrics-size",
     ]);
+  });
+});
+
+/**
+ * 布尔偏好 → localStorage 键的映射表。
+ * 这张表是唯一的键名来源，「恢复默认」也按它清理；漏一项的症状是「重置后某个开关还留着」。
+ */
+describe("MUSIC_PANEL_BOOL_KEYS（偏好键映射）", () => {
+  it("覆盖 MusicPanelPrefs 的全部布尔字段，且键名互不重复", () => {
+    const boolFields = Object.keys(DEFAULT_MUSIC_PANEL_PREFS).filter(
+      (k) => typeof DEFAULT_MUSIC_PANEL_PREFS[k as keyof typeof DEFAULT_MUSIC_PANEL_PREFS] === "boolean"
+    );
+    expect(Object.keys(MUSIC_PANEL_BOOL_KEYS).sort()).toEqual(boolFields.sort());
+    const values = Object.values(MUSIC_PANEL_BOOL_KEYS);
+    expect(new Set(values).size).toBe(values.length);
+  });
+
+  it("全部键都带 music-player- 前缀，且不与数值键冲突", () => {
+    for (const key of Object.values(MUSIC_PANEL_BOOL_KEYS)) {
+      expect(key.startsWith("music-player-")).toBe(true);
+    }
+    const overlap = Object.values(MUSIC_PANEL_BOOL_KEYS).filter((k) =>
+      Object.values(MUSIC_PANEL_VALUE_KEYS).includes(k as never)
+    );
+    expect(overlap).toEqual([]);
+  });
+
+  it("「恢复默认」的清理清单包含风格、全部偏好与播放行为键，且无重复", () => {
+    for (const key of [
+      MUSIC_PANEL_STYLE_KEY,
+      ...Object.values(MUSIC_PANEL_BOOL_KEYS),
+      ...Object.values(MUSIC_PANEL_VALUE_KEYS),
+      AUDIO_VOLUME_KEY,
+    ]) {
+      expect(ALL_MUSIC_LOCAL_KEYS).toContain(key);
+    }
+    expect(new Set(ALL_MUSIC_LOCAL_KEYS).size).toBe(ALL_MUSIC_LOCAL_KEYS.length);
+  });
+});
+
+describe("百分比档位（音量 / 面板不透明度）", () => {
+  it("parsePercentPref 认数字与数字字符串，越界与垃圾值回落", () => {
+    expect(parsePercentPref("70", 40)).toBe(70);
+    expect(parsePercentPref(70, 40)).toBe(70);
+    expect(parsePercentPref("70.4", 40)).toBe(70);
+    expect(parsePercentPref("", 40)).toBe(40);
+    expect(parsePercentPref(null, 40)).toBe(40);
+    expect(parsePercentPref("abc", 40)).toBe(40);
+    expect(parsePercentPref("-1", 40)).toBe(40);
+    expect(parsePercentPref("101", 40)).toBe(40);
+  });
+
+  it("clampPercent 夹到 0-100 的整数，非数字回落默认", () => {
+    expect(clampPercent(120)).toBe(100);
+    expect(clampPercent(-5)).toBe(0);
+    expect(clampPercent(66.6)).toBe(67);
+    expect(clampPercent(Number.NaN)).toBe(DEFAULT_MUSIC_PANEL_PREFS.volume);
+  });
+
+  it("面板不透明度有下限：再低文字就看不清了", () => {
+    expect(clampPanelOpacity(10)).toBe(MIN_PANEL_OPACITY);
+    expect(clampPanelOpacity(100)).toBe(100);
+    // 越界值经 parseMusicPanelPrefs 也会被夹到下限，而不是原样留下
+    expect(parseMusicPanelPrefs({ panelOpacity: "5" }).panelOpacity).toBe(MIN_PANEL_OPACITY);
+  });
+});
+
+describe("歌词对齐（parseLyricAlign）", () => {
+  it("三个合法取值原样返回，非法值一律视为「跟随风格」", () => {
+    for (const option of LYRIC_ALIGN_OPTIONS) {
+      expect(parseLyricAlign(option.value)).toBe(option.value);
+    }
+    expect(parseLyricAlign("right")).toBe("site");
+    expect(parseLyricAlign(null)).toBe("site");
+    expect(parseLyricAlign(undefined)).toBe("site");
+  });
+});
+
+/** readMusicPanelPrefs：Provider 用它一次性读出全部偏好（键名表在模块内，调用方不逐个列） */
+describe("readMusicPanelPrefs（从存储读取全部偏好）", () => {
+  function fakeStorage(entries: Record<string, string>) {
+    return { getItem: vi.fn((key: string) => entries[key] ?? null) } as unknown as Storage;
+  }
+
+  it("空存储 → 全默认", () => {
+    expect(readMusicPanelPrefs(fakeStorage({}))).toEqual(DEFAULT_MUSIC_PANEL_PREFS);
+  });
+
+  it("逐个键都被读到：布尔、字号、音量、不透明度、对齐", () => {
+    const storage = fakeStorage({
+      [MUSIC_PANEL_BOOL_KEYS.showPlaylist]: "0",
+      [MUSIC_PANEL_BOOL_KEYS.hotkeys]: "0",
+      [MUSIC_PANEL_VALUE_KEYS.lyricSize]: "7",
+      [MUSIC_PANEL_VALUE_KEYS.volume]: "80",
+      [MUSIC_PANEL_VALUE_KEYS.panelOpacity]: "60",
+      [MUSIC_PANEL_VALUE_KEYS.lyricAlign]: "left",
+    });
+    const prefs = readMusicPanelPrefs(storage);
+
+    expect(prefs.showPlaylist).toBe(false);
+    expect(prefs.hotkeys).toBe(false);
+    expect(prefs.lyricSize).toBe(7);
+    expect(prefs.volume).toBe(80);
+    expect(prefs.panelOpacity).toBe(60);
+    expect(prefs.lyricAlign).toBe("left");
+    // 没存的键保持默认，不会被「读到了别的值」带着走
+    expect(prefs.showLyrics).toBe(true);
+  });
+
+  it("每个布尔字段都会去读对应的键（新增偏好忘了接进读取端会在这里暴露）", () => {
+    const storage = fakeStorage({});
+    readMusicPanelPrefs(storage);
+    for (const key of Object.values(MUSIC_PANEL_BOOL_KEYS)) {
+      expect(storage.getItem).toHaveBeenCalledWith(key);
+    }
+    for (const key of Object.values(MUSIC_PANEL_VALUE_KEYS)) {
+      expect(storage.getItem).toHaveBeenCalledWith(key);
+    }
   });
 });
 
