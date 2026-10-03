@@ -491,19 +491,27 @@ jobs:
 
       # 多架构是本版本的核心交付物，合成之后必须验证清单里真的有两个架构：
       # 只判断「命令是否成功」不够——少一个架构同样会返回成功。
+      # 两个仓库都要验：它们各自会被用户直接拉取，只验 GHCR 会漏掉 Docker Hub 侧的问题。
       - name: Verify manifest covers both architectures
         run: |
           set -euo pipefail
           TAG="${{ needs.prepare.outputs.TAG }}"
-          OUT="$(docker buildx imagetools inspect "ghcr.io/sxlb/qiyun:${TAG}" 2>&1)"
-          echo "$OUT"
-          for p in linux/amd64 linux/arm64; do
-            if ! grep -q "Platform: *$p" <<< "$OUT"; then
-              echo "✗ 多架构清单缺少 $p" >&2
-              exit 1
-            fi
+          IMAGES=("ghcr.io/sxlb/qiyun:${TAG}")
+          if [ -n "${DOCKERHUB_TOKEN:-}" ] && [ -n "${DOCKERHUB_USERNAME:-}" ]; then
+            IMAGES+=("docker.io/${DOCKERHUB_USERNAME}/qiyun:${TAG}")
+          fi
+          for img in "${IMAGES[@]}"; do
+            OUT="$(docker buildx imagetools inspect "$img" 2>&1)"
+            echo "── ${img} ──"
+            echo "$OUT"
+            for p in linux/amd64 linux/arm64; do
+              if ! grep -q "Platform: *$p" <<< "$OUT"; then
+                echo "✗ ${img} 的多架构清单缺少 $p" >&2
+                exit 1
+              fi
+            done
+            echo "✓ ${img} 已包含 linux/amd64 与 linux/arm64"
           done
-          echo "✓ 多架构清单已包含 linux/amd64 与 linux/arm64"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3

@@ -159,6 +159,8 @@ check(/-t "\$\{SRC\}:\$\{TAG\}"\s*$/.test(mergeRun.trim()) || /TAGS\+=\(-t "\$\{
   "GHCR 的标签最后打（中途失败时不留标签，可直接重打而不必原地重发）");
 check(!!verifyStep && /linux\/amd64/.test(runOf(verifyStep)) && /linux\/arm64/.test(runOf(verifyStep)),
   "合成后校验清单确实包含两个架构（少一个架构同样会返回成功）");
+check(/docker\.io/.test(runOf(verifyStep)),
+  "校验同时覆盖 Docker Hub 侧（两个仓库都会被用户直接拉取）");
 check(/-t .*docker\.io/.test(mergeRun) === /DOCKERHUB_TOKEN/.test(mergeRun),
   "Docker Hub 标签与是否配置密钥保持一致");
 check(!!releaseStep && /artifacts\/packages\//.test(JSON.stringify(releaseStep.with || {})),
