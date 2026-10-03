@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { Button } from "@/components/ui/button";
@@ -9,17 +9,35 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Eye, EyeOff, AlertCircle } from "lucide-react";
 
+/**
+ * 探测账号是否开启两步验证。
+ * 探测失败/接口异常一律视为未开启：探测只是优化体验，不能阻塞登录。
+ */
+async function detect2fa(name: string, signal?: AbortSignal): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/auth/2fa-status?username=${encodeURIComponent(name)}`, { signal });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { requires2fa?: boolean };
+    return !!data.requires2fa;
+  } catch {
+    return false;
+  }
+}
+
 export default function LoginPage() {
   const router = useRouter();
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  // 仅用于「输入过程中实时探测 2FA」的即时反馈；提交时一律以表单 DOM 实际值为准。
+  const [typedUsername, setTypedUsername] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   // 表单内错误提示（区别于右上角 toast）：登录失败/限流时显示在表单顶部，更醒目
   const [formError, setFormError] = useState("");
   // 两步验证：该账号是否开启 2FA（探测后显示验证码输入框）
   const [requires2fa, setRequires2fa] = useState(false);
-  const [totpCode, setTotpCode] = useState("");
+  const passwordRef = useRef<HTMLInputElement>(null);
+  // 已完成 2FA 探测的账号。提交时若表单里的账号与它不一致（典型场景是密码管理器
+  // 自动填充未触发 onChange），需要补一次探测，否则会漏掉验证码输入框。
+  const probedUsernameRef = useRef("");
 
   // 已登录用户访问登录页由 proxy（原 middleware）服务端重定向到 /admin，
   // 此处不再做客户端自动跳转，避免与网络边界判断不一致造成重定向循环。
@@ -37,33 +55,46 @@ export default function LoginPage() {
   // 用户名变化时探测是否开启 2FA（IP 限流防枚举，探测失败视为未开启）
   // 【High 修复】使用 AbortController 替代 setTimeout+cancelled 标志，网络请求可被真正中止
   useEffect(() => {
-    const name = username.trim();
+    const name = typedUsername.trim();
     if (!name) {
       setRequires2fa(false);
+      probedUsernameRef.current = "";
       return;
     }
     const controller = new AbortController();
     const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/auth/2fa-status?username=${encodeURIComponent(name)}`, {
-          signal: controller.signal,
-        });
-        const data = await res.json();
-        setRequires2fa(!!data.requires2fa);
-      } catch {
-        /* 探测失败视为未开启 */
-      }
+      const need = await detect2fa(name, controller.signal);
+      if (controller.signal.aborted) return;
+      probedUsernameRef.current = name;
+      setRequires2fa(need);
     }, 300);
     return () => {
       clearTimeout(timer);
       controller.abort(); // 立即中止仍在进行的网络请求，避免残留响应覆盖状态
     };
-  }, [username]);
+  }, [typedUsername]);
 
-  async function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setLoading(true);
     setFormError("");
+
+    // 【核心修复】提交值取自表单 DOM，而不是受控 state。
+    // 浏览器与密码管理器自动填充常常不触发 React 的 onChange，此时 state 仍为空，
+    // 会把「空白凭证」提交给服务端：服务端在比对密码前就直接判失败，因此既不会
+    // 计入失败次数（永远等不到「已锁定」提示），页面也只会一直显示「账号或密码错误」。
+    // 必须在 await 之前同步取表单，事件对象的 currentTarget 在 await 之后会被回收。
+    const fd = new FormData(e.currentTarget);
+    const username = String(fd.get("username") ?? "").trim();
+    const password = String(fd.get("password") ?? "");
+    const totpCode = String(fd.get("totpCode") ?? "").trim();
+
+    // 兜底校验：避免把空凭证发出去换来一条没有信息量的「账号或密码错误」
+    if (!username || !password) {
+      setFormError("请输入账号和密码");
+      return;
+    }
+
+    setLoading(true);
     try {
       // 提交前先检查是否被限流锁定
       const limitRes = await fetch("/api/auth/rate-limit");
@@ -71,43 +102,49 @@ export default function LoginPage() {
         const limitData = await limitRes.json();
         if (limitData.locked) {
           setFormError(`登录失败次数过多，请 ${limitData.remainingMinutes || 1} 分钟后再试`);
-          setLoading(false);
           return;
         }
       }
 
-      // 两步验证：需填写 6 位验证码才能提交
-      if (requires2fa && !/^\d{6}$/.test(totpCode)) {
+      // 两步验证：表单里的账号若尚未探测过，这里补探一次，避免自动填充导致的漏判
+      let need2fa = requires2fa;
+      if (!need2fa && username !== probedUsernameRef.current) {
+        need2fa = await detect2fa(username);
+        probedUsernameRef.current = username;
+        if (need2fa) setRequires2fa(true);
+      }
+      if (need2fa && !/^\d{6}$/.test(totpCode)) {
         setFormError("请输入 6 位两步验证码");
-        setLoading(false);
         return;
       }
 
       const res = await signIn("credentials", {
         username,
         password,
-        ...(requires2fa ? { totpCode } : {}),
+        ...(need2fa ? { totpCode } : {}),
         redirect: false,
       });
 
       if (res?.ok) {
         // 只需 push：后台首屏会话已由服务端下发，无需再 refresh 触发一次重复的 RSC 往返
         router.push("/admin");
-      } else {
-        // 登录失败：立即清空密码框（防窥屏 + 防暴破脚本残留），并展示错误提示
-        setPassword("");
-        // 失败后再次检查是否触发了限流
-        const afterLimitRes = await fetch("/api/auth/rate-limit");
-        if (afterLimitRes.ok) {
-          const afterLimitData = await afterLimitRes.json();
-          if (afterLimitData.locked) {
-            setFormError(`登录失败次数过多，请 ${afterLimitData.remainingMinutes || 1} 分钟后再试`);
-            setLoading(false);
-            return;
-          }
-        }
-        setFormError("账号或密码错误，请重新输入");
+        return;
       }
+
+      // 登录失败：立即清空密码框（防窥屏 + 防暴破脚本残留），账号保留。
+      // 输入框是非受控的，只能直接写 DOM 值。
+      if (passwordRef.current) passwordRef.current.value = "";
+
+      // 失败后再次检查是否触发了限流（来源 IP 维度）
+      const afterLimitRes = await fetch("/api/auth/rate-limit");
+      if (afterLimitRes.ok) {
+        const afterLimitData = await afterLimitRes.json();
+        if (afterLimitData.locked) {
+          setFormError(`登录失败次数过多，请 ${afterLimitData.remainingMinutes || 1} 分钟后再试`);
+          return;
+        }
+      }
+      setFormError("账号或密码错误，请重新输入");
     } catch {
       setFormError("登录失败，请稍后重试");
     } finally {
@@ -151,13 +188,13 @@ export default function LoginPage() {
 
             <div className="space-y-2">
               <Label htmlFor="username" className="text-white/80">账号</Label>
+              {/* 非受控输入：值以 DOM 为准，自动填充不会因未触发 onChange 而丢失 */}
               <Input
                 id="username"
                 name="username"
                 type="text"
                 autoComplete="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                onChange={(e) => setTypedUsername(e.target.value)}
                 placeholder="请输入账号"
                 className="input-glass"
                 required
@@ -171,10 +208,9 @@ export default function LoginPage() {
                 <Input
                   id="password"
                   name="password"
+                  ref={passwordRef}
                   type={showPassword ? "text" : "password"}
                   autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
                   placeholder="请输入密码"
                   className="input-glass pr-10"
                   required
@@ -205,8 +241,6 @@ export default function LoginPage() {
                   inputMode="numeric"
                   autoComplete="one-time-code"
                   maxLength={6}
-                  value={totpCode}
-                  onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ""))}
                   placeholder="6 位验证码（Authenticator）"
                   className="input-glass text-center tracking-[0.3em]"
                   required={requires2fa}

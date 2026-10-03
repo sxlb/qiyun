@@ -34,6 +34,29 @@ function submitForm(username: string, password: string) {
   fireEvent.submit(form!);
 }
 
+/** 模拟浏览器/密码管理器直接写入 DOM：不派发 React 的 change 事件（onChange 不会触发） */
+function autofillForm(username: string, password: string) {
+  (screen.getByLabelText("账号") as HTMLInputElement).value = username;
+  (screen.getByLabelText("密码") as HTMLInputElement).value = password;
+}
+
+function submitCurrentForm() {
+  fireEvent.submit(screen.getByRole("button", { name: "登录" }).closest("form")!);
+}
+
+/** 按 URL 路由的 fetch 打桩：2fa-status 与 rate-limit 返回不同结果 */
+function mockFetchRouting({ requires2fa = false } = {}) {
+  return vi.fn().mockImplementation((input: RequestInfo | URL) => {
+    if (String(input).includes("/api/auth/2fa-status")) {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ requires2fa }),
+      } as Response);
+    }
+    return Promise.resolve(mockRateLimitResponse());
+  });
+}
+
 describe("LoginPage（登录页交互）", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -128,5 +151,47 @@ describe("LoginPage（登录页交互）", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "登录" })).toBeTruthy();
     });
+  });
+
+  it("自动填充未触发 onChange：仍以表单 DOM 的真实值提交（回归：反复『账号或密码错误』）", async () => {
+    global.fetch = mockFetchRouting();
+    signInMock.mockResolvedValue({ error: "CredentialsSignin" });
+
+    render(<LoginPage />);
+    // 密码管理器直接写 DOM，不触发 React 的 onChange——此时受控 state 仍为空
+    autofillForm("admin", "autofilled-password");
+    submitCurrentForm();
+
+    await waitFor(() => expect(signInMock).toHaveBeenCalledTimes(1));
+    expect(signInMock).toHaveBeenCalledWith(
+      "credentials",
+      expect.objectContaining({ username: "admin", password: "autofilled-password" })
+    );
+  });
+
+  it("凭证为空：直接提示，不发起任何网络请求", async () => {
+    global.fetch = mockFetchRouting();
+
+    render(<LoginPage />);
+    submitCurrentForm();
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent).toContain("请输入账号和密码");
+    });
+    expect(signInMock).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("自动填充的账号开启了 2FA：提交时补探并提示验证码，不调用 signIn", async () => {
+    global.fetch = mockFetchRouting({ requires2fa: true });
+
+    render(<LoginPage />);
+    autofillForm("admin", "pw");
+    submitCurrentForm();
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent).toContain("两步验证码");
+    });
+    expect(signInMock).not.toHaveBeenCalled();
   });
 });
