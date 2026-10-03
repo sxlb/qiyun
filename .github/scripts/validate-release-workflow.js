@@ -13,6 +13,8 @@
  * 运行：node .github/scripts/validate-release-workflow.js
  * 依赖：js-yaml（已在 devDependencies 中显式声明，不再依赖传递依赖）
  */
+/* eslint-disable @typescript-eslint/no-require-imports -- 这是以 CommonJS 运行的 CI 工具脚本，
+   不经打包器处理，require 是它在 Node 下的正确写法；其余规则仍然生效 */
 "use strict";
 
 const fs = require("fs");
@@ -153,7 +155,6 @@ check(!!releaseStep && /artifacts\/packages\//.test(JSON.stringify(releaseStep.w
 
 // ---------- 输出 ----------
 const failed = results.filter((r) => !r.ok);
-const pad = (s, n) => s + " ".repeat(Math.max(0, n - [...s].length));
 console.log(`发布链路结构校验：${results.length} 项`);
 for (const r of results) {
   console.log(`  ${r.ok ? "✓" : "✗"} ${r.label}`);
