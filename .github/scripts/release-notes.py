@@ -34,6 +34,11 @@ OTHER_GROUP = "其他"
 GROUP_ORDER = ("新增", "修复", OTHER_GROUP)
 _COMMIT_RE = re.compile(r"^([a-zA-Z]+)(?:\([^)]*\))?!?:\s*(.+)$")
 
+# 发布流程自身的版本号同步提交（约定写作 `chore: 发版 X.Y.Z`）不是「本版改了什么」，
+# 但它必然落在 <上一版本>..HEAD 区间内，会稳定地往说明里塞一行「发版 X.Y.Z」。
+# 只认「描述恰为 发版 + 版本号」这一整条，避免误伤正常提交（如「发版脚本改为只推两个架构」）。
+_RELEASE_BUMP_RE = re.compile(r"^发版\s*v?\d+\.\d+\.\d+$")
+
 # 超过 MAX_CHANGES 时的占位说明（追加到「其他」分组）
 TRUNCATED_HINT = "…另有 {n} 条提交"
 
@@ -53,6 +58,13 @@ def group_subject(subject: str):
         if kind == key:
             return label, desc
     return OTHER_GROUP, desc
+
+
+def is_release_bump(subject: str) -> bool:
+    """是否为发布流程自身的版本号同步提交（描述恰为「发版 X.Y.Z」）"""
+    m = _COMMIT_RE.match(subject)
+    desc = m.group(2) if m else subject
+    return bool(_RELEASE_BUMP_RE.match(desc.strip()))
 
 
 def semver_key(tag: str):
@@ -79,10 +91,14 @@ def main() -> None:
     log_range = f"{prev}..HEAD" if prev else "HEAD"
     # 多取一条用于判断是否被截断
     log = git("log", "--oneline", "--no-merges", f"-{MAX_CHANGES + 1}", log_range)
-    subjects = [line.split(maxsplit=1)[-1] for line in log.splitlines() if line.strip()]
+    raw_subjects = [line.split(maxsplit=1)[-1] for line in log.splitlines() if line.strip()]
+    # 先剔除版本号同步提交再分组。截断判断刻意落在过滤**之后**：
+    # 否则那条被剔除的提交会被算成「另有 1 条提交」，而实际该展示的都已展示。
+    subjects = [s for s in raw_subjects if not is_release_bump(s)]
 
     if not subjects:
-        changes = "### 变更\n- 首次发布"
+        # 区间为空 = 首次发布；区间非空却全被过滤 = 本版只有版本号同步
+        changes = "### 变更\n- 首次发布" if not raw_subjects else "### 变更\n- 仅版本号同步，无其他改动"
     else:
         buckets: dict[str, list[str]] = {g: [] for g in GROUP_ORDER}
         for subject in subjects[:MAX_CHANGES]:
