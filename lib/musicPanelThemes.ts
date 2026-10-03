@@ -80,6 +80,8 @@ export function resolveMusicPanelStyle(input: {
 export interface MusicPanelTraits {
   /** 面板头部左侧的标签（SIDE A / NOW PLAYING） */
   side: string;
+  /** 设置视图头部左侧的标签（进入设置后替换 side，避免沿用「正在播放」这类语义不符的标题） */
+  settingsLabel: string;
   /** 头部是否显示「当前曲序 / 总数」 */
   showCount: boolean;
   /** 是否渲染中央黑胶唱片 */
@@ -99,6 +101,7 @@ export interface MusicPanelTraits {
 export const MUSIC_PANEL_TRAITS: Record<MusicPanelStyle, MusicPanelTraits> = {
   vinyl: {
     side: "SIDE A",
+    settingsLabel: "设置",
     showCount: false,
     disc: true,
     progress: "line",
@@ -109,6 +112,7 @@ export const MUSIC_PANEL_TRAITS: Record<MusicPanelStyle, MusicPanelTraits> = {
   },
   editorial: {
     side: "NOW PLAYING",
+    settingsLabel: "设置",
     showCount: true,
     disc: false,
     progress: "line",
@@ -119,6 +123,7 @@ export const MUSIC_PANEL_TRAITS: Record<MusicPanelStyle, MusicPanelTraits> = {
   },
   mono: {
     side: "NOW PLAYING",
+    settingsLabel: "SETTINGS",
     showCount: true,
     disc: false,
     progress: "led",

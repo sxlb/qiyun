@@ -532,12 +532,9 @@
 /* 除歌单区外一律不参与收缩：面板变矮时只压缩歌单，其余区块保持原位 */
 .mp-dialog > * { flex-shrink: 0; }
 .mp-dialog > .mp-section-list { flex: 1 1 auto; min-height: 0; }
-/* 设置浮层展开时内容会超出面板高度：面板改回整体滚动，并给歌单一个固定高度 ——
-   否则它作为唯一的可收缩项会被压到零高（容器能滚并不阻止 flex 子项被收缩），
-   用户既看不到歌单也滚不动。收起设置后即恢复「面板不滚、只有歌单滚」。 */
+/* 设置视图：内容是「分组标签 + 固定高度的组内容 + 恢复默认」，正常不会超出面板高度；
+   短视口下仍允许面板整体滚动兜底（固定高度高于可用高度时 CSS 会取 min-height，由面板来滚）。 */
 .mp-dialog:has(.mp-settings) { overflow-y: auto; }
-.mp-dialog:has(.mp-settings) > .mp-section-list { flex: 0 0 auto; }
-.mp-dialog:has(.mp-settings) > .mp-section-list > .mp-list-wrap { height: 160px; }
 /* 面板收小后唱片也跟着收一号，免得它一个人占掉近四分之一高度 */
 .mp-dialog .mp-disc { width: 72px; height: 72px; }
 
@@ -582,13 +579,41 @@
 .mp-scroll::-webkit-scrollbar-thumb { background: var(--mp-scroll); border-radius: 3px; }
 .mp-scroll::-webkit-scrollbar-thumb:hover { background: var(--mp-scroll-hover); }
 
-/* ---------- 面板设置浮层 ---------- */
+/* ---------- 设置视图（分组标签 + 组内容） ----------
+   设置项从 3 组长到 11 项后，一列铺开接近 20 行：面板必须整体滚动，把播放器和歌单一起挤下去。
+   因此改成「独立视图 + 三组」，并且给组内容固定高度 —— 切组时面板不跳高度。 */
 .mp-settings {
-  margin-top: 14px;
+  display: flex; flex-direction: column;
   border: 1px solid var(--mp-line);
   border-radius: max(0px, calc(var(--mp-radius) - 2px));
   background: var(--mp-pick);
   padding: 12px 14px;
+}
+/* 分组标签：分段控件形态而不是下拉 —— 组名一眼可见、切换一步到位 */
+.mp-tabs {
+  display: flex; gap: 4px; flex: 0 0 auto;
+  padding: 3px;
+  border: 1px solid var(--mp-line);
+  border-radius: max(0px, calc(var(--mp-radius) - 2px));
+  background: var(--mp-line-soft);
+}
+.mp-tab {
+  flex: 1 1 0; min-width: 0;
+  padding: 6px 8px;
+  border: 0; border-radius: max(0px, calc(var(--mp-radius) - 4px));
+  background: none; cursor: pointer;
+  font-family: inherit; font-size: 12px; line-height: 1.2;
+  color: var(--mp-dim);
+  transition: color .15s, background-color .15s;
+}
+.mp-tab:hover { color: var(--mp-fg); }
+.mp-tab.is-on { color: var(--mp-title); background: var(--mp-pick); }
+.mp[data-style="mono"] .mp-tab { border-radius: 0; }
+/* 组内容固定高度：取最高一组（歌词组）的实测高度再留余量，组内超高时只滚这一块 */
+.mp-tabpanel {
+  height: 216px;
+  overflow-y: auto;
+  margin-top: 10px;
 }
 .mp-settings-row {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -738,6 +763,8 @@
 @media (max-width: 640px) {
   .mp-scrim { padding: 12px; }
   .mp-dialog { padding: 16px 16px 18px; }
+  /* 窄屏里芯片更容易换行，组内容给高一点，避免一进来就要滚 */
+  .mp-tabpanel { height: 248px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .mp-disc-sheen { animation: none; }

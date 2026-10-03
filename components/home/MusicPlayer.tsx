@@ -3,6 +3,7 @@
 import { memo, useCallback, createContext, useContext, useEffect, useRef, useState, type CSSProperties } from "react";
 import Image from "next/image";
 import {
+  ArrowLeft,
   Play,
   Pause,
   SkipBack,
@@ -288,153 +289,221 @@ function TransportBar() {
   );
 }
 
-/* ===== 面板设置浮层（风格 + 外观 + 播放行为开关） =====
+/* ===== 设置视图（分组：外观 / 歌词 / 播放） =====
  * 后台配置的是「站点默认风格」，这里切换的是「本机覆盖」；选「跟随站点」即清掉本机选择。
  * 其余设置项都只影响本机（localStorage），不改站点数据。
+ *
+ * 为什么要分组：设置项从 3 组长到 11 项后，一列铺开接近 20 行 —— 面板必须整体滚动，
+ * 会把播放器和歌单一起挤下去（打开设置就「拥挤」的直接原因），也很容易找不到想改的那一项。
+ * 现在改成「独立视图 + 三组」：进入设置时只渲染设置（不再叠在播放器上），
+ * 切组时高度不变（见 globals.css 的 .mp-tabpanel 固定高度）。
+ *
+ * 分组依据是「改的是什么」，不是控件类型：
+ *   外观 = 面板本身的观感；歌词 = 所有歌词相关；播放 = 播放行为与系统集成。
+ * 组内顺序统一为「先选择/拖动的项，后开关」——开关成组读起来才像一份清单。
  */
-const PREF_ROWS: { key: MusicPanelBoolPref; label: string }[] = [
-  { key: "topLyrics", label: "顶部常驻歌词" },
-  { key: "showLyrics", label: "面板内显示歌词" },
-  { key: "showPlaylist", label: "面板内显示曲目" },
-  { key: "lyricBlur", label: "歌词聚焦（非当前行模糊）" },
-  { key: "trackCover", label: "歌单显示封面" },
-  { key: "rememberPlayMode", label: "记住播放模式" },
-  { key: "resumeLastTrack", label: "续播上次曲目" },
-  { key: "keepPlaying", label: "关闭弹窗后继续播放" },
-  { key: "hotkeys", label: "键盘快捷键（空格 / PgUp / PgDn）" },
-  { key: "mediaSession", label: "系统媒体控制（锁屏 / 耳机）" },
-];
+const SETTINGS_TABS = [
+  { key: "look", label: "外观" },
+  { key: "lyric", label: "歌词" },
+  { key: "play", label: "播放" },
+] as const;
+
+type SettingsTab = (typeof SETTINGS_TABS)[number]["key"];
+
+/** 各组底部的开关行（键名 → 标签，顺序即展示顺序） */
+const SETTINGS_SWITCHES: Record<SettingsTab, { key: MusicPanelBoolPref; label: string }[]> = {
+  look: [
+    { key: "showPlaylist", label: "面板内显示曲目" },
+    { key: "trackCover", label: "歌单显示封面" },
+  ],
+  lyric: [
+    { key: "topLyrics", label: "顶部常驻歌词" },
+    { key: "showLyrics", label: "面板内显示歌词" },
+    { key: "lyricBlur", label: "歌词聚焦（非当前行模糊）" },
+  ],
+  play: [
+    { key: "rememberPlayMode", label: "记住播放模式" },
+    { key: "resumeLastTrack", label: "续播上次曲目" },
+    { key: "keepPlaying", label: "关闭弹窗后继续播放" },
+    { key: "hotkeys", label: "键盘快捷键（空格 / PgUp / PgDn）" },
+    { key: "mediaSession", label: "系统媒体控制（锁屏 / 耳机）" },
+  ],
+};
 
 function PanelSettings() {
   const m = useMusic();
+  const [tab, setTab] = useState<SettingsTab>("look");
   const activeHint = MUSIC_PANEL_STYLE_OPTIONS.find((o) => o.value === m.panelStyle)?.hint ?? "";
   const alignLabel =
     LYRIC_ALIGN_OPTIONS.find((o) => o.value === m.prefs.lyricAlign)?.label ?? "";
-  return (
-    <div className="mp-settings">
-      <div className="mp-settings-row">
-        <span>面板风格</span>
-      </div>
-      <div className="mp-styles" role="radiogroup" aria-label="面板风格">
+  const activeTabLabel = SETTINGS_TABS.find((t) => t.key === tab)?.label ?? "";
+
+  /** 一组的开关行：三处渲染逻辑完全相同，抽出来避免各写一遍 */
+  const switches = (group: SettingsTab) =>
+    SETTINGS_SWITCHES[group].map((row) => (
+      <div className="mp-settings-row" key={row.key}>
+        <span>{row.label}</span>
         <button
           type="button"
-          role="radio"
-          aria-checked={m.panelStyleFollowsSite}
-          className={`mp-chip${m.panelStyleFollowsSite ? " is-on" : ""}`}
-          onClick={() => m.setPanelStyle(FOLLOW_SITE)}
-        >
-          跟随站点
-        </button>
-        {MUSIC_PANEL_STYLE_OPTIONS.map((option) => {
-          const on = !m.panelStyleFollowsSite && m.panelStyle === option.value;
-          return (
-            <button
-              key={option.value}
-              type="button"
-              role="radio"
-              aria-checked={on}
-              className={`mp-chip${on ? " is-on" : ""}`}
-              onClick={() => m.setPanelStyle(option.value)}
-              title={option.hint}
-            >
-              {option.label}
-            </button>
-          );
-        })}
+          role="switch"
+          aria-checked={m.prefs[row.key]}
+          aria-label={row.label}
+          className={`mp-switch${m.prefs[row.key] ? " is-on" : ""}`}
+          onClick={() => m.setPref(row.key, !m.prefs[row.key])}
+        />
       </div>
-      <div className="mp-hint">{activeHint}</div>
+    ));
 
-      {/* 顶部悬浮歌词字号：7 档，每档在移动端与桌面端各取一套像素（见 globals.css 的 .top-lyric） */}
-      <div className="mp-settings-row">
-        <span>悬浮歌词字号</span>
-        <span className="mp-hint">{lyricSizeLabel(m.prefs.lyricSize)}</span>
-      </div>
-      <div className="mp-styles" role="radiogroup" aria-label="悬浮歌词字号">
-        {LYRIC_SIZE_OPTIONS.map((option) => {
-          const on = m.prefs.lyricSize === option.value;
-          return (
-            <button
-              key={option.value}
-              type="button"
-              role="radio"
-              aria-checked={on}
-              className={`mp-chip${on ? " is-on" : ""}`}
-              onClick={() => m.setLyricSize(option.value)}
-            >
-              {option.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* 歌词对齐：默认跟着面板风格（三套风格各有自己的对齐），这里可以强行覆盖 */}
-      <div className="mp-settings-row">
-        <span>歌词对齐</span>
-        <span className="mp-hint">{alignLabel}</span>
-      </div>
-      <div className="mp-styles" role="radiogroup" aria-label="歌词对齐">
-        {LYRIC_ALIGN_OPTIONS.map((option) => {
-          const on = m.prefs.lyricAlign === option.value;
-          return (
-            <button
-              key={option.value}
-              type="button"
-              role="radio"
-              aria-checked={on}
-              className={`mp-chip${on ? " is-on" : ""}`}
-              onClick={() => m.setLyricAlign(option.value)}
-            >
-              {option.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* 面板不透明度：只降面板底色 alpha，不透明度用的是 color-mix，文字不会跟着变淡 */}
-      <div className="mp-settings-row">
-        <span>面板不透明度</span>
-        <span className="mp-hint">{m.prefs.panelOpacity}%</span>
-      </div>
-      <input
-        type="range"
-        min={MIN_PANEL_OPACITY}
-        max={100}
-        step={1}
-        value={m.prefs.panelOpacity}
-        onChange={(event) => m.setPanelOpacity(Number(event.currentTarget.value))}
-        className="mp-pref-range"
-        aria-label="面板不透明度"
-      />
-
-      {/* 初始音量：只在还没记住过音量时生效（拖过播放器音量条后以实测值为准） */}
-      <div className="mp-settings-row">
-        <span>初始音量</span>
-        <span className="mp-hint">{m.prefs.volume}%</span>
-      </div>
-      <input
-        type="range"
-        min={0}
-        max={100}
-        step={1}
-        value={m.prefs.volume}
-        onChange={(event) => m.setVolumePref(Number(event.currentTarget.value))}
-        className="mp-pref-range"
-        aria-label="初始音量"
-      />
-
-      {PREF_ROWS.map((row) => (
-        <div className="mp-settings-row" key={row.key}>
-          <span>{row.label}</span>
+  return (
+    <div className="mp-settings">
+      <div className="mp-tabs" role="tablist" aria-label="设置分组">
+        {SETTINGS_TABS.map((item) => (
           <button
+            key={item.key}
             type="button"
-            role="switch"
-            aria-checked={m.prefs[row.key]}
-            aria-label={row.label}
-            className={`mp-switch${m.prefs[row.key] ? " is-on" : ""}`}
-            onClick={() => m.setPref(row.key, !m.prefs[row.key])}
-          />
-        </div>
-      ))}
+            role="tab"
+            aria-selected={tab === item.key}
+            className={`mp-tab${tab === item.key ? " is-on" : ""}`}
+            onClick={() => setTab(item.key)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      {/* 组内容：高度固定（.mp-tabpanel），切组时面板不会跳高度 */}
+      <div className="mp-tabpanel mp-scroll" role="tabpanel" aria-label={activeTabLabel}>
+        {/* ── 外观：面板本身的观感 ── */}
+        {tab === "look" && (
+          <>
+            <div className="mp-settings-row">
+              <span>面板风格</span>
+            </div>
+            <div className="mp-styles" role="radiogroup" aria-label="面板风格">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={m.panelStyleFollowsSite}
+                className={`mp-chip${m.panelStyleFollowsSite ? " is-on" : ""}`}
+                onClick={() => m.setPanelStyle(FOLLOW_SITE)}
+              >
+                跟随站点
+              </button>
+              {MUSIC_PANEL_STYLE_OPTIONS.map((option) => {
+                const on = !m.panelStyleFollowsSite && m.panelStyle === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    className={`mp-chip${on ? " is-on" : ""}`}
+                    onClick={() => m.setPanelStyle(option.value)}
+                    title={option.hint}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mp-hint">{activeHint}</div>
+
+            {/* 面板不透明度：只降面板底色 alpha（color-mix），文字不会跟着变淡 */}
+            <div className="mp-settings-row">
+              <span>面板不透明度</span>
+              <span className="mp-hint">{m.prefs.panelOpacity}%</span>
+            </div>
+            <input
+              type="range"
+              min={MIN_PANEL_OPACITY}
+              max={100}
+              step={1}
+              value={m.prefs.panelOpacity}
+              onChange={(event) => m.setPanelOpacity(Number(event.currentTarget.value))}
+              className="mp-pref-range"
+              aria-label="面板不透明度"
+            />
+
+            {switches("look")}
+          </>
+        )}
+
+        {/* ── 歌词：所有歌词相关（显示开关 + 排版） ── */}
+        {tab === "lyric" && (
+          <>
+            {/* 顶部悬浮歌词字号：7 档，每档在移动端与桌面端各取一套像素（见 globals.css 的 .top-lyric） */}
+            <div className="mp-settings-row">
+              <span>悬浮歌词字号</span>
+              <span className="mp-hint">{lyricSizeLabel(m.prefs.lyricSize)}</span>
+            </div>
+            <div className="mp-styles" role="radiogroup" aria-label="悬浮歌词字号">
+              {LYRIC_SIZE_OPTIONS.map((option) => {
+                const on = m.prefs.lyricSize === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    className={`mp-chip${on ? " is-on" : ""}`}
+                    onClick={() => m.setLyricSize(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 歌词对齐：默认跟着面板风格（三套风格各有自己的对齐），这里可以强行覆盖 */}
+            <div className="mp-settings-row">
+              <span>歌词对齐</span>
+              <span className="mp-hint">{alignLabel}</span>
+            </div>
+            <div className="mp-styles" role="radiogroup" aria-label="歌词对齐">
+              {LYRIC_ALIGN_OPTIONS.map((option) => {
+                const on = m.prefs.lyricAlign === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    className={`mp-chip${on ? " is-on" : ""}`}
+                    onClick={() => m.setLyricAlign(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {switches("lyric")}
+          </>
+        )}
+
+        {/* ── 播放：播放行为与系统集成 ── */}
+        {tab === "play" && (
+          <>
+            {/* 初始音量：只在还没记住过音量时生效（拖过播放器音量条后以实测值为准） */}
+            <div className="mp-settings-row">
+              <span>初始音量</span>
+              <span className="mp-hint">{m.prefs.volume}%</span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={m.prefs.volume}
+              onChange={(event) => m.setVolumePref(Number(event.currentTarget.value))}
+              className="mp-pref-range"
+              aria-label="初始音量"
+            />
+
+            {switches("play")}
+          </>
+        )}
+      </div>
 
       <button type="button" className="mp-reset" onClick={m.resetPrefs}>
         恢复默认设置
@@ -602,6 +671,8 @@ function MusicPanel() {
  *   分区一 · 当前播放：唱片 + 曲目信息 + 传输控制 + 进度 + 音量/播放模式
  *   分区二 · 歌词（无歌词数据时整块不出现）
  *   分区三 · 歌单（面板里唯一的滚动区）
+ * 点齿轮进入「设置视图」：它与上面三个分区互斥，占满面板主体（只渲染设置），
+ * 头部换成「设置 + 返回」，内部再按 外观 / 歌词 / 播放 分三组。
  * 分区的边框与浅底色见 globals.css 的 .mp-section；
  * 「有没有唱片 / 进度条形态 / 歌词对齐」由 traits 决定，其余观感交给 .mp 令牌。
  */
@@ -647,34 +718,50 @@ function MusicModal() {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mp-head">
-          <span className="mp-side">{traits.side}</span>
+          {/* 进入设置后头部换成「设置」，不再沿用 SIDE A / NOW PLAYING 这类与当前内容不符的标题 */}
+          <span className="mp-side">{m.settingsOpen ? traits.settingsLabel : traits.side}</span>
           <span className="mp-spacer" />
-          {traits.showCount && m.playlist.length > 0 && (
+          {!m.settingsOpen && traits.showCount && m.playlist.length > 0 && (
             <span className="mp-count">
               {String(Math.max(index, 0) + 1).padStart(2, "0")} / {String(m.playlist.length).padStart(2, "0")}
             </span>
           )}
-          <button
-            type="button"
-            className={`mp-icon-btn${m.settingsOpen ? " is-on" : ""}`}
-            onClick={() => m.setSettingsOpen(!m.settingsOpen)}
-            aria-expanded={m.settingsOpen}
-            title="面板设置"
-            aria-label="面板设置"
-          >
-            <Settings2 className="h-4 w-4" />
-          </button>
+          {m.settingsOpen ? (
+            // 设置是面板内的独立视图：返回用左箭头（与齿轮同一位置），收起即回到播放器
+            <button
+              type="button"
+              className="mp-icon-btn"
+              onClick={() => m.setSettingsOpen(false)}
+              title="返回播放器"
+              aria-label="返回播放器"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="mp-icon-btn"
+              onClick={() => m.setSettingsOpen(true)}
+              title="面板设置"
+              aria-label="面板设置"
+            >
+              <Settings2 className="h-4 w-4" />
+            </button>
+          )}
           <button type="button" className="mp-icon-btn" onClick={close} title="关闭" aria-label="关闭音乐列表">
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        {m.settingsOpen && <PanelSettings />}
-
-        {m.error && <div className="mp-note mp-error">{m.error}</div>}
-        {noData && (
-          <div className="mp-note mp-empty">尚未配置音乐歌单，请在后台音乐设置中填写接口地址和歌单 ID。</div>
-        )}
+        {/* 设置与播放器互斥：设置占满面板主体，不再叠在播放器上面把内容挤下去 */}
+        {m.settingsOpen ? (
+          <PanelSettings />
+        ) : (
+          <>
+            {m.error && <div className="mp-note mp-error">{m.error}</div>}
+            {noData && (
+              <div className="mp-note mp-empty">尚未配置音乐歌单，请在后台音乐设置中填写接口地址和歌单 ID。</div>
+            )}
 
         {/* 分区一：当前播放（唱片 + 曲目信息 + 传输控制 + 进度 + 音量/播放模式） */}
         <section className="mp-section mp-section-stage">
@@ -730,6 +817,8 @@ function MusicModal() {
               </div>
             </div>
           </section>
+        )}
+          </>
         )}
       </div>
     </div>
