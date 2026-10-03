@@ -126,9 +126,11 @@ export async function GET(request: NextRequest) {
   // 注：一言已改为内置本地语句库（不再请求外部接口），故原先的 hitokoto / vvhan 探测项已移除。
   const apis = pickExternalApis(profile);
   const probes: Promise<ServiceStatus>[] = [
-    probe("bing", "必应每日壁纸", "默认壁纸源", resolveExternalApi(apis, "bingWallpaperApi")),
-    probe("landscape", "随机风景壁纸", "壁纸种类=随机风景时使用", resolveExternalApi(apis, "wallpaperLandscapeApi")),
-    probe("anime", "随机动漫壁纸", "壁纸种类=随机动漫时使用", resolveExternalApi(apis, "wallpaperAnimeApi")),
+    probe("bing", "必应每日壁纸", "默认壁纸源（不区分横竖，手机与电脑共用）", resolveExternalApi(apis, "bingWallpaperApi")),
+    probe("landscape", "随机风景壁纸（电脑）", "壁纸种类=随机风景时使用：电脑端取横图", resolveExternalApi(apis, "wallpaperLandscapeApi")),
+    probe("landscape-mobile", "随机风景壁纸（手机）", "壁纸种类=随机风景时使用：手机端取竖图", resolveExternalApi(apis, "wallpaperLandscapeApiMobile")),
+    probe("anime", "随机动漫壁纸（电脑）", "壁纸种类=随机动漫时使用：电脑端取横图", resolveExternalApi(apis, "wallpaperAnimeApi")),
+    probe("anime-mobile", "随机动漫壁纸（手机）", "壁纸种类=随机动漫时使用：手机端取竖图", resolveExternalApi(apis, "wallpaperAnimeApiMobile")),
     probe("avatar", "随机头像服务", "开启随机头像时使用", resolveExternalApi(apis, "randomAvatarApi")),
     probe(
       "iconify",

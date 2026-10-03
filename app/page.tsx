@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/db";
+import { headers } from "next/headers";
+import { deviceFromUserAgent } from "@/lib/external-api";
 import { DEFAULT_SITE_TITLE, DEFAULT_SITE_DESCRIPTION, DEFAULT_SITE_KEYWORDS } from "@/lib/validation";
 import { cache } from "react";
 import { Quote } from "lucide-react";
@@ -113,7 +115,10 @@ import { themeInitScript } from "@/lib/theme";
 
 export default async function Home() {
   const profile = await getProfile();
-  const d = await getHomeData(profile);
+  // SSR 阶段拿不到视口，只能用 UA 猜设备——它只决定「预加载哪一张壁纸」与首次取图的分池；
+  // 客户端 hydrate 后会用真实视口重新请求（见 Background.detectWallpaperDevice）并纠正。
+  const device = deviceFromUserAgent((await headers()).get("user-agent"));
+  const d = await getHomeData(profile, device);
 
   return (
     <ThemeProvider theme={d.theme} accentColor={d.accentColor} glassOpacity={d.glassOpacity} glassBlur={d.glassBlur}>
@@ -176,7 +181,7 @@ export default async function Home() {
         {/* 阿里云矢量图标库：配置后注入 symbol 脚本，供社交/网站链接图标使用 */}
         <IconfontScript url={d.iconfontUrl} />
 
-        <Background bgApi={d.bgApi} coverType={d.coverType} autoSwitchInterval={d.autoBGSwitchInterval} bgOverlay={d.bgOverlay} wallpaperRefresh={d.wallpaperRefresh} initialUrl={d.wallpaperUrl} landscapeApi={d.landscapeApi} animeApi={d.animeApi} />
+        <Background bgApi={d.bgApi} coverType={d.coverType} autoSwitchInterval={d.autoBGSwitchInterval} bgOverlay={d.bgOverlay} wallpaperRefresh={d.wallpaperRefresh} initialUrl={d.wallpaperUrl} landscapeApi={d.landscapeApi} landscapeApiMobile={d.landscapeApiMobile} animeApi={d.animeApi} animeApiMobile={d.animeApiMobile} />
         <SeasonalEffect type={d.effectType} enabled={d.seasonalEffectEnabled} />
         {/* 自定义字体（范围=全站时注入 body 字体） */}
         <CustomFont enabled={d.customFontEnabled} family={d.customFontFamily} scope={d.customFontScope} />

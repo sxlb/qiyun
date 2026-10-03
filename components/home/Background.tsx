@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "./ThemeProvider";
-import { EXTERNAL_API_DEFAULTS } from "@/lib/external-api";
+import { resolveWallpaperApi, type WallpaperDevice } from "@/lib/external-api";
 import { pickRandomDefaultWallpaper } from "@/lib/default-assets";
 
 interface Props {
@@ -18,10 +18,14 @@ interface Props {
   wallpaperRefresh?: number;
   /** SSR 阶段已解析的壁纸直链：首次加载直接使用，省去客户端 /api/wallpaper 往返 */
   initialUrl?: string;
-  /** 随机风景壁纸直链（后台「外部服务」配置，留空用内置默认源） */
+  /** 随机风景壁纸直链——电脑端（后台「外部服务」配置，留空用内置默认源） */
   landscapeApi?: string;
-  /** 随机动漫壁纸直链（后台「外部服务」配置，留空用内置默认源） */
+  /** 随机风景壁纸直链——手机端（留空则沿用电脑端地址） */
+  landscapeApiMobile?: string;
+  /** 随机动漫壁纸直链——电脑端（后台「外部服务」配置，留空用内置默认源） */
   animeApi?: string;
+  /** 随机动漫壁纸直链——手机端（留空则沿用电脑端地址） */
+  animeApiMobile?: string;
 }
 
 interface BingData {
@@ -31,6 +35,20 @@ interface BingData {
 }
 
 const SWITCH_INTERVALS = [0, 15_000, 30_000, 45_000];
+
+/** 判定为「手机」的最大视口宽度（768px 起按电脑处理，与 Tailwind 的 md 断点一致） */
+const MOBILE_MAX_WIDTH = 767;
+
+/**
+ * 按视口宽度判定壁纸设备。
+ *
+ * 用视口而不是 UA：平板、桌面模式浏览器都会把 UA 伪装成桌面，但窄屏就是窄屏，
+ * 只有竖图好看。SSR 阶段拿不到视口，那一层用 UA 只是为了挑预加载图，客户端这里会纠正。
+ */
+function detectWallpaperDevice(): WallpaperDevice {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return "pc";
+  return window.matchMedia(`(max-width: ${MOBILE_MAX_WIDTH}px)`).matches ? "mobile" : "pc";
+}
 
 /**
  * 给壁纸直链附加时间戳，避免浏览器复用同一张缓存图。
@@ -114,13 +132,26 @@ export default function Background({
   wallpaperRefresh = 0,
   initialUrl = "",
   landscapeApi = "",
+  landscapeApiMobile = "",
   animeApi = "",
+  animeApiMobile = "",
 }: Props) {
   const { setBgTheme } = useTheme();
   const [url, setUrl] = useState<string>("");
   const [loaded, setLoaded] = useState(false);
   // 标记 SSR 直链是否已被首次加载使用（后续定时切换仍走 /api/wallpaper 取随机壁纸）
   const usedInitialRef = useRef(false);
+  /*
+    内置底图（lib/default-assets，随包发布、零外部请求）：
+    没有 SSR 直链的冷缓存场景下先用它铺满首帧，真实壁纸就绪后再淡出。
+    这样"背景能不能看见"不再受外部图床与下载速度影响。
+    useMemo 保证同一次挂载内取到同一张，避免底图与"最终兜底图"来回切换。
+  */
+  const bundledUnderlay = useMemo(() => pickRandomDefaultWallpaper(coverType), [coverType]);
+  const [placeholderUrl, setPlaceholderUrl] = useState("");
+  const [placeholderReady, setPlaceholderReady] = useState(false);
+  // 底图只铺一次：定时切换时重复铺会让背景闪回内置图
+  const placeholderPaintedRef = useRef(false);
 
   /** 背景就绪（成功或彻底失败）后广播，供全屏加载动画同步收起 */
   const announceReady = () => {
@@ -138,12 +169,17 @@ export default function Background({
     // 自定义地址优先级最高（兼容旧配置：填了 bgApi 就走自定义），用户直链直接使用，不走缓存
     if (custom) return custom;
 
+    // 设备只在这里判定一次：视口宽度是最终依据（UA 会被平板 / 桌面模式骗）。
+    // SSR 那层用 UA 猜的只决定预加载哪张图，真正取图以这里的结论为准。
+    const device = detectWallpaperDevice();
+
     // 优先走服务端壁纸缓存：下载到服务器本地，源 API 失效也能正常展示
     try {
       const qs = new URLSearchParams({
         coverType,
         bgApi: "",
         refresh: String(wallpaperRefresh),
+        device,
         t: String(Date.now()),
       });
       const res = await fetch(`/api/wallpaper?${qs}`, { cache: "no-store" });
@@ -155,18 +191,32 @@ export default function Background({
       /* 缓存服务异常时走直连兜底 */
     }
 
-    // 兜底：直连壁纸源（地址取自后台「外部服务」配置，未配置时用内置默认）
+    // 兜底：直连壁纸源（地址取自后台「外部服务」配置，未配置时用内置默认；手机端未单独配置则沿用电脑端）
+    const apis = {
+      wallpaperLandscapeApi: landscapeApi,
+      wallpaperLandscapeApiMobile: landscapeApiMobile,
+      wallpaperAnimeApi: animeApi,
+      wallpaperAnimeApiMobile: animeApiMobile,
+    };
     switch (coverType) {
       case "landscape":
-        return withTimestamp((landscapeApi || "").trim() || EXTERNAL_API_DEFAULTS.wallpaperLandscapeApi);
+        return withTimestamp(resolveWallpaperApi(apis, "landscape", device));
       case "anime":
-        return withTimestamp((animeApi || "").trim() || EXTERNAL_API_DEFAULTS.wallpaperAnimeApi);
+        return withTimestamp(resolveWallpaperApi(apis, "anime", device));
       case "custom":
         return "";
       default:
         return resolveBing();
     }
-  }, [bgApi, coverType, wallpaperRefresh, landscapeApi, animeApi]);
+  }, [
+    bgApi,
+    coverType,
+    wallpaperRefresh,
+    landscapeApi,
+    landscapeApiMobile,
+    animeApi,
+    animeApiMobile,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -174,16 +224,32 @@ export default function Background({
     // 非必应源失败时降级为必应壁纸（每轮最多一次，避免定时重试反复刷屏）
     let fallbackUsed = false;
 
+    /**
+     * 首帧占位：铺一张随包发布的内置背景（零外部请求）。
+     *
+     * 刻意**不**广播 background-ready —— 加载动画的展示时长仍由真实壁纸决定（保留仪式感），
+     * 底图只负责"第一帧就不是空白"。仅在缺少 SSR 直链的冷缓存路径上调用。
+     */
+    function paintPlaceholder() {
+      if (cancelled) return;
+      const img = new Image();
+      img.onload = () => {
+        if (cancelled) return;
+        setPlaceholderUrl(bundledUnderlay);
+        requestAnimationFrame(() => setPlaceholderReady(true));
+      };
+      img.src = bundledUnderlay;
+    }
+
     // 最终兜底：使用随项目打包的内置默认图（lib/default-assets，运行时零外部请求）。
     // 外部源全部失效、部署环境无外网、或 custom 类型未配置地址时，保证首屏仍有一张真实背景，
     // 而不是只剩纯色噪点占位。
     function applyBundledFallback() {
       if (cancelled) return;
-      const bundled = pickRandomDefaultWallpaper(coverType);
       const img = new Image();
       img.onload = () => {
         if (cancelled) return;
-        setUrl(bundled);
+        setUrl(bundledUnderlay);
         requestAnimationFrame(() => setLoaded(true));
         getColorFromImage(img)
           .then(setBgTheme)
@@ -194,7 +260,7 @@ export default function Background({
       };
       // 连内置图都读不到（静态资源缺失等极端情况）→ 结束尝试，避免加载动画一直等待
       img.onerror = () => announceReadyRef.current();
-      img.src = bundled;
+      img.src = bundledUnderlay;
     }
 
     // 加载并展示壁纸，失败时降级必应
@@ -267,6 +333,12 @@ export default function Background({
           usedInitialRef.current = true;
           bgUrl = initialUrl;
         } else {
+          // 没有可用的 SSR 直链（典型：壁纸缓存为空）→ 先铺内置底图，保证首帧不是空白。
+          // 真实壁纸仍会在下面异步加载并淡入覆盖；这一层不影响加载动画的收起时机。
+          if (!placeholderPaintedRef.current) {
+            placeholderPaintedRef.current = true;
+            paintPlaceholder();
+          }
           bgUrl = await resolveUrl();
         }
         if (cancelled) return;
@@ -296,11 +368,21 @@ export default function Background({
       cancelled = true;
       if (timer) window.clearInterval(timer);
     };
-  }, [resolveUrl, coverType, autoSwitchInterval, setBgTheme, initialUrl]);
+  }, [resolveUrl, coverType, autoSwitchInterval, setBgTheme, initialUrl, bundledUnderlay]);
 
   return (
     /* 背景层：加载期间显示半透明深色底色作为过渡，避免白屏；图片加载完成后淡入 */
     <div className="fixed inset-0 -z-10 overflow-hidden bg-[#0a0a0a]">
+      {/* 底图层：随包发布的内置壁纸，首帧即可见；真实壁纸淡入后淡出（cross-fade） */}
+      {placeholderUrl ? (
+        <div
+          className="absolute inset-0 bg-cover bg-center transition-opacity duration-700"
+          style={{
+            backgroundImage: `url("${placeholderUrl}")`,
+            opacity: loaded ? 0 : placeholderReady ? 1 : 0,
+          }}
+        />
+      ) : null}
       {url ? (
         <div
           className="absolute inset-0 scale-110 bg-cover bg-center transition-all duration-1000"
@@ -311,12 +393,12 @@ export default function Background({
             transform: loaded ? "scale(1)" : "scale(1.05)",
           }}
         />
-      ) : (
-        /* 占位底纹：CSS 噪点纹理，避免纯黑单调 */
+      ) : !placeholderUrl ? (
+        /* 占位底纹：CSS 噪点纹理，避免纯黑单调（内置底图铺上后不再需要） */
         <div className="absolute inset-0 opacity-30" style={{
           backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=\'0 0 256 256\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cfilter id=\'noise\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'0.9\' numOctaves=\'4\' stitchTiles=\'stitch\'/%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23noise)\' opacity=\'0.4\'/%3E%3C/svg%3E")',
         }} />
-      )}
+      ) : null}
       {/* 可配置暗化遮罩：壁纸过亮时按后台强度（bgOverlay%）叠加黑层提升可读性 */}
       {bgOverlay > 0 && (
         <div

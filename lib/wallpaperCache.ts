@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fetchFollowingSafeRedirects } from "@/lib/ssrf";
 import { contentTypeFromExt, isSafeFileName, newFileName } from "@/lib/uploads";
+import type { WallpaperDevice } from "@/lib/external-api";
 
 /**
  * ===== 壁纸服务端缓存 =====
@@ -34,11 +35,36 @@ function getWallpaperCacheDir(): string {
 
 const MANIFEST_FILE = () => path.join(getWallpaperCacheDir(), "manifest.json");
 
+/**
+ * 缓存分池标签。
+ *
+ * 必须同时带上「壁纸源」与「设备」两个维度：
+ * - 只按设备切池是不够的 —— 风景端的手机默认值仍是横图源（上游没有竖版风景），
+ *   若与动漫端共用一个池，手机选「动漫」时仍可能抽到那张横图，等于没做到"手机只加载手机壁纸"；
+ * - 与设备无关的源（必应每日壁纸）用 `shared`，手机与电脑共用一池，同一张图不必存两份。
+ */
+export type WallpaperCacheTag = "shared" | `landscape:${WallpaperDevice}` | `anime:${WallpaperDevice}`;
+
+/** 参与分池的壁纸源（其余种类一律走 shared） */
+const POOLED_SOURCES = ["landscape", "anime"] as const;
+
+/**
+ * 由壁纸种类与设备推导缓存分池标签。
+ * 风景 / 动漫按「源 + 设备」分池，互不串图；必应、自定义等与设备无关的源共用一个池。
+ */
+export function cacheTagFor(coverType: string, device: WallpaperDevice): WallpaperCacheTag {
+  const source = POOLED_SOURCES.find((s) => s === coverType);
+  // 这里的断言是安全的：POOLED_SOURCES 的取值恰好能拼出上方的联合类型
+  return source ? (`${source}:${device}` as WallpaperCacheTag) : "shared";
+}
+
 interface CacheEntry {
   fileName: string;
   sourceUrl: string;
   addedAt: number;
   size: number;
+  /** 分池标签；升级前的历史条目没有该字段（无从判断来源与横竖，只允许被 shared 复用） */
+  tag?: WallpaperCacheTag;
 }
 
 interface Manifest {
@@ -172,7 +198,12 @@ async function downloadImage(sourceUrl: string): Promise<{ buffer: Buffer; ext: 
  * 节流：相邻两次下载/尝试至少间隔 MIN_DOWNLOAD_GAP_MS，
  * 防止短时间连续请求壁纸源被屏蔽；失败也会记录尝试时刻，重试同样有间隔。
  */
-async function addWallpaperLocked(sourceUrl: string, manifest: Manifest, now: number): Promise<string | null> {
+async function addWallpaperLocked(
+  sourceUrl: string,
+  manifest: Manifest,
+  now: number,
+  tag: WallpaperCacheTag
+): Promise<string | null> {
   // 距上次尝试不足 5s：跳过本次（返回 null，前端走直连兜底）
   if (manifest.lastDownloadAt !== null && now - manifest.lastDownloadAt < MIN_DOWNLOAD_GAP_MS) {
     return null;
@@ -186,7 +217,7 @@ async function addWallpaperLocked(sourceUrl: string, manifest: Manifest, now: nu
     await ensureCacheDir();
     await fs.writeFile(path.join(getWallpaperCacheDir(), fileName), buffer);
 
-    manifest.entries.push({ fileName, sourceUrl, addedAt: now, size: buffer.byteLength });
+    manifest.entries.push({ fileName, sourceUrl, addedAt: now, size: buffer.byteLength, tag });
     manifest.lastRefreshAt = now;
 
     // 超出上限：按加入时间删除最旧的文件
@@ -218,15 +249,29 @@ async function addWallpaperLocked(sourceUrl: string, manifest: Manifest, now: nu
 }
 
 /**
- * 从缓存随机取一张壁纸；缓存为空返回 null。
+ * 从缓存随机取一张壁纸；该分池为空返回 null。
  * 读取不经过写队列（允许读到稍旧的 manifest，可接受）。
+ *
+ * 分流规则：
+ * - 优先取标签完全相同的条目；
+ * - 标签为 `shared`（必应这类与设备无关的源）时，允许复用升级前的无标签历史条目；
+ * - 标签为 `源:设备` 且本池为空时**不**回退 —— 历史条目到底是什么来源、横竖已无从判断，
+ *   宁可让前端重新下载一张，也不冒险把电脑横图塞给手机（这正是本次要修的问题）。
  */
-export async function getRandomCachedWallpaper(): Promise<string | null> {
+export async function getRandomCachedWallpaper(tag: WallpaperCacheTag): Promise<string | null> {
   try {
     const manifest = await loadManifest();
     if (manifest.entries.length === 0) return null;
-    const idx = Math.floor(Math.random() * manifest.entries.length);
-    return manifest.entries[idx].fileName;
+    const sameTag = manifest.entries.filter((e) => e.tag === tag);
+    const candidates =
+      sameTag.length > 0
+        ? sameTag
+        : tag === "shared"
+          ? manifest.entries.filter((e) => !e.tag)
+          : [];
+    if (candidates.length === 0) return null;
+    const idx = Math.floor(Math.random() * candidates.length);
+    return candidates[idx].fileName;
   } catch {
     return null;
   }
@@ -236,10 +281,13 @@ export async function getRandomCachedWallpaper(): Promise<string | null> {
  * 下载一张壁纸并加入缓存（缓存为空时的首次填充）。
  * 成功返回文件名，失败返回 null。
  */
-export function downloadAndCacheWallpaper(sourceUrl: string): Promise<string | null> {
+export function downloadAndCacheWallpaper(
+  sourceUrl: string,
+  tag: WallpaperCacheTag
+): Promise<string | null> {
   return enqueue(async () => {
     const manifest = await loadManifest();
-    return addWallpaperLocked(sourceUrl, manifest, Date.now());
+    return addWallpaperLocked(sourceUrl, manifest, Date.now(), tag);
   });
 }
 
@@ -247,15 +295,23 @@ export function downloadAndCacheWallpaper(sourceUrl: string): Promise<string | n
  * 按刷新间隔后台预取：到期时下载一张新壁纸入缓存（轮换），否则跳过。
  * intervalMin：0 表示不刷新；5 / 10 / 30 分钟。
  * 全程静默，失败不影响响应（下次请求自动重试）。
+ *
+ * 注意：节流窗口（`lastRefreshAt` / `lastDownloadAt`）是**全局共享**的，不按设备分开。
+ * 这是刻意的取舍：小机器上"每个间隔只新增一张图"比"每台设备各新增一张"更省上游配额，
+ * 代价是手机与电脑交替触发轮换、各自的刷新频率减半。
  */
-export function maybePrefetchWallpaper(sourceUrl: string, intervalMin: number): Promise<void> {
+export function maybePrefetchWallpaper(
+  sourceUrl: string,
+  intervalMin: number,
+  tag: WallpaperCacheTag
+): Promise<void> {
   if (intervalMin <= 0) return Promise.resolve();
   return enqueue(async () => {
     const manifest = await loadManifest();
     const now = Date.now();
     const due = manifest.lastRefreshAt === null || now - manifest.lastRefreshAt >= intervalMin * 60_000;
     if (!due) return;
-    await addWallpaperLocked(sourceUrl, manifest, now);
+    await addWallpaperLocked(sourceUrl, manifest, now, tag);
   });
 }
 
@@ -283,17 +339,21 @@ export async function readCachedWallpaper(
 /**
  * SSR 阶段解析壁纸直链（仅走快速路径，绝不阻塞首屏渲染）：
  * - 自定义直链：直接返回
- * - 已有缓存：随机返回一张本地缓存壁纸
+ * - 已有缓存：从对应分池随机返回一张本地缓存壁纸
  * - 无缓存：返回空串，由前端 /api/wallpaper 触发首次下载
  *
+ * tag 决定从哪个分池取（见 getRandomCachedWallpaper）：必应这类与设备无关的源传 "shared"。
  * 不做网络请求（不解析壁纸源、不下载），仅做一次本地文件清单读取，
  * 因此即使在 ISR/SSR 流程中执行也足够快。
  */
-export async function resolveWallpaperUrl(bgApi: string): Promise<string> {
+export async function resolveWallpaperUrl(
+  bgApi: string,
+  tag: WallpaperCacheTag
+): Promise<string> {
   const custom = bgApi.trim();
   if (custom) return custom;
   try {
-    const cached = await getRandomCachedWallpaper();
+    const cached = await getRandomCachedWallpaper(tag);
     return cached ? `/api/wallpaper/file/${cached}` : "";
   } catch {
     return "";

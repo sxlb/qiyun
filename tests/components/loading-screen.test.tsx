@@ -39,9 +39,12 @@ describe("LoadingScreen", () => {
     expect(wrapper).not.toBeNull();
     expect(screen.getByText("测试站")).toBeInTheDocument();
     expect(screen.getByText("Loading...")).toBeInTheDocument();
-    // 分屏遮罩与三环动画结构完整（配色由 CSS 令牌提供，不再内联写死颜色）
+    // 分屏遮罩 + 强调色渐变弧 + 极光光晕 + 细进度线，结构完整
+    // （配色由 CSS 令牌提供，不再内联写死颜色，也不再是纯白三环）
     expect(wrapper!.querySelectorAll(".loader-section")).toHaveLength(2);
-    expect(wrapper!.querySelectorAll(".loader-circle")).toHaveLength(1);
+    expect(wrapper!.querySelectorAll(".loader-arc")).toHaveLength(1);
+    expect(wrapper!.querySelectorAll(".loader-aurora")).toHaveLength(1);
+    expect(wrapper!.querySelectorAll(".loader-bar")).toHaveLength(1);
     expect(wrapper!.querySelector(".loader-section")!.getAttribute("style")).toBeNull();
   });
 
@@ -155,7 +158,7 @@ describe("LoadingScreen", () => {
     window.removeEventListener("loading-screen-removed", listener);
   });
 
-  it("安全兜底：壁纸始终不就绪时最长 7s 强制收起", () => {
+  it("安全兜底：壁纸始终不就绪时最长 3s 强制收起（原为 7s，冷缓存下用户要干等 7 秒）", () => {
     render(<LoadingScreen enabled />);
     const wrapper = document.getElementById("loader-wrapper")!;
 
@@ -164,8 +167,15 @@ describe("LoadingScreen", () => {
     });
     expect(wrapper.classList.contains("loader-loaded")).toBe(false);
 
+    // 距挂载 2.9s：还没到 3s 兜底，仍然不收
     act(() => {
-      vi.advanceTimersByTime(7000);
+      vi.advanceTimersByTime(2100);
+    });
+    expect(wrapper.classList.contains("loader-loaded")).toBe(false);
+
+    // 越过 3s 兜底 → 放行，不再受壁纸影响
+    act(() => {
+      vi.advanceTimersByTime(200);
     });
     expect(wrapper.classList.contains("loader-loaded")).toBe(true);
   });

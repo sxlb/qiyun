@@ -710,15 +710,17 @@
     /* ================= 全屏加载动画（LoadingScreen）配色令牌 =================
        加载动画是首屏第一帧，必须与主题同源：深色沿用原深蓝夜色，
        浅色给出等价的浅色版本，避免深色动画收起后突然翻成浅色页面。
+
+       浅色主题刻意使用**低饱和暖灰**而不是近白（原 #eef2f8）：近白底 + 深色转圈
+       会显得"一片白、没有质感"。主视觉颜色统一取站点强调色 --accent-color，
+       不再是写死的白/灰环。
     */
-    --loader-bg-from: #eef2f8;
-    --loader-bg-via: #e2e9f3;
-    --loader-bg-to: #eef2f8;
-    --loader-fg: #1f2937;
-    --loader-fg-dim: #6b7280;
-    --loader-ring-1: #1f2937;
-    --loader-ring-2: #98a2b3;
-    --loader-ring-3: #c3cad6;
+    --loader-bg-from: #efece6;
+    --loader-bg-via: #e3dfd7;
+    --loader-bg-to: #efece6;
+    --loader-fg: #2b2723;
+    --loader-fg-dim: rgba(43, 39, 35, 0.55);
+    --loader-track: rgba(43, 39, 35, 0.14);
   }
 
   /* 暗色主题：由 ThemeProvider 根据主题模式切换 .dark 类 */
@@ -761,9 +763,7 @@
     --loader-bg-to: #1a1a2e;
     --loader-fg: #ffffff;
     --loader-fg-dim: rgba(255, 255, 255, 0.6);
-    --loader-ring-1: #ffffff;
-    --loader-ring-2: #a4a4a4;
-    --loader-ring-3: #d3d3d3;
+    --loader-track: rgba(255, 255, 255, 0.14);
   }
 }
 
@@ -1132,19 +1132,25 @@
   position: fixed;
   inset: 0;
   overflow: hidden;
+  /*
+    强调色令牌就地解析：#loader-wrapper 位于带内联 --accent-color 的容器之内，
+    在这一层引用 var(--accent-color) 才能拿到站点实际配色；在后代上引用虽然也能继承，
+    但集中定义一处更便于阅读（后代统一用 var(--loader-accent)）。
+  */
+  --loader-accent: var(--accent-color, #7dd3fc);
   background: linear-gradient(135deg, var(--loader-bg-from), var(--loader-bg-via), var(--loader-bg-to));
   transition:
     transform 0.3s 1s ease-out,
     visibility 0.3s 1s ease-out;
   /*
-    兜底：加载遮罩的移除依赖客户端 JS（见 LoadingScreen：background-ready 事件 + 7s 安全兜底）。
+    兜底：加载遮罩的移除依赖客户端 JS（见 LoadingScreen：background-ready 事件 + 3s 安全兜底）。
     若首载时 JS chunk 被中断/失败导致 hydration 未完成，JS 移除逻辑永远不执行，
-    遮罩会永久盖住页面（内容实际已在 SSR HTML 中）。此处用纯 CSS 延迟 9s 强制淡出。
+    遮罩会永久盖住页面（内容实际已在 SSR HTML 中）。此处用纯 CSS 延迟 6s 强制淡出。
 
-    时序必须晚于 JS 的安全兜底（7s）：否则正常路径下 JS 还没走完分屏收起动画，
-    CSS 的 fill-forwards 就把 visibility 锁成 hidden，收起动画被截断、观感变成"闪一下消失"。
+    时序必须晚于 JS 的安全兜底（3s）：JS 兜底后还要跑约 1.4s 的分屏收起动画（合计 ≈4.4s），
+    CSS 的 fill-forwards 一旦提前把 visibility 锁成 hidden，收起动画会被截断成"闪一下消失"。
   */
-  animation: loader-auto-hide 0s linear 9s forwards;
+  animation: loader-auto-hide 0s linear 6s forwards;
 }
 @keyframes loader-auto-hide {
   to {
@@ -1162,32 +1168,60 @@
   justify-content: center;
   z-index: 2;
 }
-#loader-wrapper .loader-circle {
-  width: 150px;
-  height: 150px;
+/* 极光光晕：强调色低频呼吸，为"单道弧"补上氛围与层次。
+   inset:0 + margin:auto 做居中（不用 transform 居中，把 transform 留给 scale 动画）。 */
+#loader-wrapper .loader-aurora {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: min(76vw, 560px);
+  height: min(76vw, 560px);
   border-radius: 50%;
-  border: 3px solid transparent;
-  border-top-color: var(--loader-ring-1);
-  animation: loader-spin 1.8s linear infinite;
+  opacity: 0.75;
+  background: radial-gradient(
+    circle at 50% 50%,
+    color-mix(in srgb, var(--loader-accent) 34%, transparent) 0%,
+    color-mix(in srgb, var(--loader-accent) 12%, transparent) 45%,
+    transparent 72%
+  );
+  filter: blur(26px);
+  animation: loader-breathe 3.6s ease-in-out infinite;
+}
+/* 主视觉：一道强调色渐变弧。conic-gradient 做出"拖尾"，再用 mask 抠成一个环，
+   避免用 border 只能得到均匀单色圆环（原来白/灰三环的问题就在这里）。 */
+#loader-wrapper .loader-arc {
   position: relative;
-}
-#loader-wrapper .loader-circle::before {
-  content: "";
-  position: absolute;
-  inset: 5px;
+  width: 132px;
+  height: 132px;
   border-radius: 50%;
-  border: 3px solid transparent;
-  border-top-color: var(--loader-ring-2);
-  animation: loader-spin-reverse 0.6s linear infinite;
+  background: conic-gradient(
+    from 0turn,
+    transparent 0turn,
+    color-mix(in srgb, var(--loader-accent) 18%, transparent) 0.45turn,
+    var(--loader-accent) 0.92turn,
+    transparent 1turn
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+  animation: loader-arc-spin 1.6s linear infinite;
 }
-#loader-wrapper .loader-circle::after {
+/* 细进度线：没有确定进度，用一条往返的光带表达"进行中"，比第三个转圈更克制 */
+#loader-wrapper .loader-bar {
+  width: 168px;
+  height: 2px;
+  margin-top: 26px;
+  border-radius: 999px;
+  background: var(--loader-track);
+  overflow: hidden;
+}
+#loader-wrapper .loader-bar::after {
   content: "";
-  position: absolute;
-  inset: 15px;
-  border-radius: 50%;
-  border: 3px solid transparent;
-  border-top-color: var(--loader-ring-3);
-  animation: loader-spin 1s linear infinite;
+  display: block;
+  width: 44%;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--loader-accent), transparent);
+  animation: loader-bar-run 1.5s ease-in-out infinite;
 }
 #loader-wrapper .loader-text {
   display: flex;
@@ -1195,16 +1229,21 @@
   align-items: center;
   color: var(--loader-fg);
   z-index: 2;
-  margin-top: 40px;
+  margin-top: 34px;
 }
+/* 站点名用遮罩揭示（clip-path 从左到右展开），比静态文字更有仪式感 */
 #loader-wrapper .loader-name {
   font-size: 24px;
   font-weight: 600;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
+  clip-path: inset(0 100% 0 0);
+  animation: loader-reveal 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.15s forwards;
 }
 #loader-wrapper .loader-tip {
-  margin-top: 6px;
-  font-size: 18px;
+  margin-top: 8px;
+  font-size: 14px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
   color: var(--loader-fg-dim);
 }
 #loader-wrapper .loader-section {
@@ -1223,7 +1262,9 @@
   right: 0;
   background: linear-gradient(270deg, var(--loader-bg-from) 0%, var(--loader-bg-via) 100%);
 }
-#loader-wrapper.loader-loaded .loader-circle,
+#loader-wrapper.loader-loaded .loader-arc,
+#loader-wrapper.loader-loaded .loader-aurora,
+#loader-wrapper.loader-loaded .loader-bar,
 #loader-wrapper.loader-loaded .loader-text {
   opacity: 0;
   transition: opacity 0.3s ease-out;
@@ -1241,20 +1282,50 @@
   transform: translateY(-100%);
 }
 
-@keyframes loader-spin {
-  0% {
-    transform: rotate(0deg);
-  }
-  100% {
+@keyframes loader-arc-spin {
+  to {
     transform: rotate(360deg);
   }
 }
-@keyframes loader-spin-reverse {
+@keyframes loader-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.06);
+  }
+}
+@keyframes loader-bar-run {
   0% {
-    transform: rotate(0deg);
+    transform: translateX(-110%);
   }
   100% {
-    transform: rotate(-360deg);
+    transform: translateX(260%);
+  }
+}
+@keyframes loader-reveal {
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+/*
+  降低动效偏好：只保留静态呈现。
+  必须显式补上 clip-path / opacity，否则 animation: none 会让文字永久停在
+  clip-path: inset(0 100% 0 0)（完全不可见）、光晕停在默认状态而与设计不符。
+*/
+@media (prefers-reduced-motion: reduce) {
+  #loader-wrapper .loader-arc,
+  #loader-wrapper .loader-aurora,
+  #loader-wrapper .loader-bar::after {
+    animation: none;
+  }
+  #loader-wrapper .loader-name {
+    animation: none;
+    clip-path: none;
   }
 }
 

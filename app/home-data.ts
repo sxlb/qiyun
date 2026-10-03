@@ -5,9 +5,9 @@
 
 import { prisma } from "@/lib/db";
 import { DEFAULT_WELCOME_MESSAGES } from "@/lib/validation";
-import { resolveWallpaperUrl } from "@/lib/wallpaperCache";
+import { cacheTagFor, resolveWallpaperUrl } from "@/lib/wallpaperCache";
 import { avatarOrDefault } from "@/lib/default-assets";
-import { EXTERNAL_API_DEFAULTS } from "@/lib/external-api";
+import { EXTERNAL_API_DEFAULTS, type WallpaperDevice } from "@/lib/external-api";
 import type { Profile } from "@prisma/client";
 import { isThemeMode, type ThemeMode } from "@/lib/theme";
 
@@ -158,7 +158,15 @@ export function getSeasonalEffect(): SeasonEffect {
 // ── 核心导出：将 Profile 转换为 Home component props ────
 // 注意：这是服务端数据准备函数（非 React Hook），刻意不用 use 前缀，
 // 避免被 react-hooks/rules-of-hooks 误判为 Hook 并限制调用位置。
-export async function getHomeData(profile: Profile | null): Promise<{
+export async function getHomeData(
+  profile: Profile | null,
+  /**
+   * 访问设备：决定壁纸按哪个分池取图（手机竖图 / 电脑横图）。
+   * 由调用方从 User-Agent 猜测传入（见 deviceFromUserAgent）—— SSR 拿不到视口，
+   * 这里只影响首屏预加载的那张图，客户端 hydrate 后会用真实视口重新纠正。
+   */
+  device: WallpaperDevice = "pc"
+): Promise<{
   // ===== 基础信息 =====
   nickname: string;
   bio: string;
@@ -174,7 +182,11 @@ export async function getHomeData(profile: Profile | null): Promise<{
   wallpaperRefresh: number;
   /** 外部服务地址（透传给前台组件；空串表示使用内置默认源，见 lib/external-api.ts） */
   landscapeApi: string;
+  /** 手机端风景壁纸地址（空串表示沿用电脑端） */
+  landscapeApiMobile: string;
   animeApi: string;
+  /** 手机端动漫壁纸地址（空串表示沿用电脑端） */
+  animeApiMobile: string;
   /** Iconify 图标接口基地址（社交链接的在线图标用） */
   iconifyApi: string;
   theme: ThemeMode;
@@ -250,11 +262,14 @@ export async function getHomeData(profile: Profile | null): Promise<{
     randomAvatarApi: profile?.randomAvatarApi || "",
   };
 
+  // 壁纸种类：既决定取哪个源，也决定缓存分池标签（风景 / 动漫按设备分池）
+  const coverType = profile?.coverType || "bing";
+
   // 并行执行独立异步操作缩短 SSR；DB 查询失败时 throw 让 ISR 返回 500（不缓存残缺页），
   // 下次请求自动重试；壁纸等外网调用用 .catch 降级，宁可整页 500 也不缓存"半张空白页"。
   const [avatarResult, wallpaperUrl, siteLinksP, socialLinksP, friendLinksP, projectsP, skillsP] = await Promise.all([
     resolveAvatar(avatarPivot),
-    resolveWallpaperUrl(profile?.bgApi || "").catch(() => ""),
+    resolveWallpaperUrl(profile?.bgApi || "", cacheTagFor(coverType, device)).catch(() => ""),
     withRetry(() => prisma.siteLink.findMany({ orderBy: [{ sort: "asc" }, { id: "asc" }] })),
     withRetry(() => prisma.socialLink.findMany({ orderBy: [{ sort: "asc" }, { id: "asc" }] })),
     withRetry(() => prisma.friendLink.findMany({ orderBy: [{ sort: "asc" }, { id: "asc" }] })),
@@ -275,12 +290,14 @@ export async function getHomeData(profile: Profile | null): Promise<{
     wallpaperUrl,
 
     // 进阶
-    coverType: profile?.coverType || "bing",
+    coverType,
     autoBGSwitchInterval: profile?.autoBGSwitchInterval ?? 0,
     wallpaperRefresh: profile?.wallpaperRefresh ?? 0,
     // 外部服务地址：原样透传（空串由前台组件回退内置默认），用于壁纸源与在线图标换源
     landscapeApi: profile?.wallpaperLandscapeApi || "",
+    landscapeApiMobile: profile?.wallpaperLandscapeApiMobile || "",
     animeApi: profile?.wallpaperAnimeApi || "",
+    animeApiMobile: profile?.wallpaperAnimeApiMobile || "",
     iconifyApi: profile?.iconifyApi || "",
     // 主题模式：非法/缺失值一律回落 system（白名单校验，避免脏数据让首帧脚本走空分支）
     theme: isThemeMode(profile?.theme) ? profile.theme : "system",

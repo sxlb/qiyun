@@ -31,9 +31,11 @@ interface ApiFieldSpec {
 }
 
 const IMAGE_FIELDS: ApiFieldSpec[] = [
-  { key: "wallpaperLandscapeApi", label: "随机风景壁纸", usage: "壁纸种类选「随机风景」时使用" },
-  { key: "wallpaperAnimeApi", label: "随机动漫壁纸", usage: "壁纸种类选「随机动漫」时使用" },
-  { key: "bingWallpaperApi", label: "必应每日壁纸", usage: "壁纸种类选「必应每日壁纸」时使用" },
+  { key: "wallpaperLandscapeApi", label: "随机风景壁纸（电脑）", usage: "壁纸种类选「随机风景」时使用：电脑端取横图" },
+  { key: "wallpaperLandscapeApiMobile", label: "随机风景壁纸（手机）", usage: "壁纸种类选「随机风景」时使用：手机端取竖图（留空则沿用电脑端地址）" },
+  { key: "wallpaperAnimeApi", label: "随机动漫壁纸（电脑）", usage: "壁纸种类选「随机动漫」时使用：电脑端取横图（默认 /pc）" },
+  { key: "wallpaperAnimeApiMobile", label: "随机动漫壁纸（手机）", usage: "壁纸种类选「随机动漫」时使用：手机端取竖图（默认 /mp）" },
+  { key: "bingWallpaperApi", label: "必应每日壁纸", usage: "壁纸种类选「必应每日壁纸」时使用（每日一张，不区分横竖）" },
   { key: "randomAvatarApi", label: "随机头像接口", usage: "开启「随机头像」且未设置头像时使用" },
 ];
 

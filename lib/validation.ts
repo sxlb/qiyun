@@ -443,8 +443,10 @@ export const profileSchema = z.object({
     .default(""),
   // ===== 外部服务地址（后台「外部服务」面板可改，防止上游 API 失效后无法更换）=====
   // 留空回退内置默认值（见 lib/external-api.ts）；非空须为 http(s)：模板占位符以 https:// 开头可放行，同时拦下 javascript:/data: 等危险协议。
-  wallpaperLandscapeApi: externalApiUrl("随机风景壁纸地址"),
-  wallpaperAnimeApi: externalApiUrl("随机动漫壁纸地址"),
+  wallpaperLandscapeApi: externalApiUrl("随机风景壁纸地址（电脑端）"),
+  wallpaperAnimeApi: externalApiUrl("随机动漫壁纸地址（电脑端）"),
+  wallpaperLandscapeApiMobile: externalApiUrl("随机风景壁纸地址（手机端）"),
+  wallpaperAnimeApiMobile: externalApiUrl("随机动漫壁纸地址（手机端）"),
   randomAvatarApi: externalApiUrl("随机头像接口地址"),
   iconifyApi: externalApiUrl("Iconify 图标接口地址"),
   faviconApi: externalApiUrl("favicon 服务地址"),

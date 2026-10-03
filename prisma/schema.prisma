@@ -77,8 +77,10 @@ model Profile {
 
   // ===== 外部服务地址（后台「外部服务」面板可改，防止上游 API 失效后无法更换）=====
   // 全部留空时使用内置默认地址（见 lib/external-api.ts）；填写即覆盖，无需改代码重新部署。
-  wallpaperLandscapeApi  String @default("") // 随机风景壁纸直链（默认 t.mwm.moe/fj）
-  wallpaperAnimeApi      String @default("") // 随机动漫壁纸直链（默认 t.mwm.moe/mp）
+  wallpaperLandscapeApi  String @default("") // 随机风景壁纸直链——电脑端（默认 t.mwm.moe/fj）
+  wallpaperAnimeApi      String @default("") // 随机动漫壁纸直链——电脑端（默认 t.mwm.moe/pc）
+  wallpaperLandscapeApiMobile String @default("") // 随机风景壁纸直链——手机端（默认同电脑端）
+  wallpaperAnimeApiMobile     String @default("") // 随机动漫壁纸直链——手机端（默认 t.mwm.moe/mp）
   randomAvatarApi        String @default("") // 随机头像接口，JSON 返回 {data:"图片地址"}（默认 xxapi）
   iconifyApi             String @default("") // Iconify 图标 API 基地址（默认 api.iconify.design）
   faviconApi             String @default("") // favicon 服务模板，支持 {host} 占位符（空=内置多源回退）

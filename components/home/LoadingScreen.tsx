@@ -10,10 +10,16 @@ const MIN_SHOW_MS = 800;
 
 /**
  * 安全兜底：背景源或事件异常时强制收起。
- * 必须**早于** globals.css 里 #loader-wrapper 的纯 CSS 兜底（9s），否则 CSS 会先一步锁死
+ *
+ * 取 3s 而不是更长的值：早期版本这里是 7s，但壁纸链路（服务端首次下载 + 浏览器再下一遍
+ * 全尺寸原图）在冷缓存下很容易超过它，用户实际感知就是"进站要等 7 秒"。
+ * 现在壁纸只影响"更好看"，不该再决定"能不能进页面"；背景底图由 Background 首帧铺好，
+ * 因此 3s 之后无论壁纸是否到位都放行。
+ *
+ * 必须**早于** globals.css 里 #loader-wrapper 的纯 CSS 兜底（6s），否则 CSS 会先一步锁死
  * visibility，把分屏收起动画截断成"闪一下消失"。
  */
-const SAFETY_MS = 7000;
+const SAFETY_MS = 3000;
 
 /**
  * 收起动画兜底时长：分屏收起（延迟 0.3s + 0.5s）与整体上移（延迟 1s + 0.3s）的合计约 1.3s。
@@ -134,11 +140,16 @@ export function LoadingScreen({ enabled = true, siteName = "" }: LoadingScreenPr
     >
       {/* 中心加载内容 */}
       <div className="loader">
-        <div className="loader-circle" />
+        {/* 极光光晕：强调色低频呼吸，为单道弧补氛围 */}
+        <div className="loader-aurora" />
+        {/* 主视觉：强调色渐变弧（配色见 globals.css 的 --loader-accent） */}
+        <div className="loader-arc" />
         <div className="loader-text">
           <span className="loader-name">{siteName || "个人主页"}</span>
           <span className="loader-tip">Loading...</span>
         </div>
+        {/* 细进度线：无确定进度，用往返光带表达"进行中" */}
+        <div className="loader-bar" />
       </div>
       {/* 左右分屏遮罩（配色同样取自主题令牌） */}
       <div className="loader-section loader-section-left" />

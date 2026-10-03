@@ -19,7 +19,13 @@ const fsMock = vi.hoisted(() => ({
 
 vi.mock("node:fs", () => ({ promises: fsMock }));
 
-const { downloadAndCacheWallpaper } = await import("@/lib/wallpaperCache");
+const { downloadAndCacheWallpaper: downloadWithTag } = await import("@/lib/wallpaperCache");
+
+/**
+ * 本文件只验证 SSRF 逐跳校验，与「壁纸按设备分流」无关，
+ * 统一使用与设备无关的 shared 分池，避免每个用例都重复传标签。
+ */
+const downloadAndCacheWallpaper = (url: string) => downloadWithTag(url, "shared");
 
 const SRC = "https://cdn.example.com/a.jpg";
 const CDN = "https://img.example.com/real.jpg";

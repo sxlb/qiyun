@@ -75,7 +75,9 @@ export interface ProfileShape {
   weatherCity: string;
   // 外部服务地址（后台「外部服务」面板读写；空串表示使用内置默认值，见 lib/external-api.ts）
   wallpaperLandscapeApi: string;
+  wallpaperLandscapeApiMobile: string;
   wallpaperAnimeApi: string;
+  wallpaperAnimeApiMobile: string;
   randomAvatarApi: string;
   iconifyApi: string;
   faviconApi: string;
@@ -155,7 +157,9 @@ export const INITIAL_PROFILE: ProfileShape = {
   weatherCity: "",
   // 外部服务地址：留空即使用内置默认（表单以 placeholder 展示默认值），便于上游失效时快速换源
   wallpaperLandscapeApi: "",
+  wallpaperLandscapeApiMobile: "",
   wallpaperAnimeApi: "",
+  wallpaperAnimeApiMobile: "",
   randomAvatarApi: "",
   iconifyApi: "",
   faviconApi: "",

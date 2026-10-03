@@ -1604,8 +1604,10 @@ Cookie 头中会设置 `qiyun-uv=1`（httpOnly, sameSite=lax, maxAge=365 天）�
 | `avatarShape` | String | "circle" | 头像形状 circle/rounded/square |
 | `avatarBorderColor` | String | "" | 头像边框颜色 |
 | `siteFooterHtml` | String | "" | 页脚自定义 HTML |
-| `wallpaperLandscapeApi` | String | "" | 外部服务：随机风景壁纸直链 |
-| `wallpaperAnimeApi` | String | "" | 外部服务：随机动漫壁纸直链 |
+| `wallpaperLandscapeApi` | String | "" | 外部服务：随机风景壁纸直链（电脑端，横向） |
+| `wallpaperLandscapeApiMobile` | String | "" | 外部服务：随机风景壁纸直链（手机端，竖向；留空沿用电脑端） |
+| `wallpaperAnimeApi` | String | "" | 外部服务：随机动漫壁纸直链（电脑端，横向，内置默认 /pc） |
+| `wallpaperAnimeApiMobile` | String | "" | 外部服务：随机动漫壁纸直链（手机端，竖向，内置默认 /mp） |
 | `randomAvatarApi` | String | "" | 外部服务：随机头像接口地址 |
 | `iconifyApi` | String | "" | 外部服务：Iconify 图标接口基地址 |
 | `faviconApi` | String | "" | 外部服务：favicon 服务模板，占位符 {host} |

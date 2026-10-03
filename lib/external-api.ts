@@ -14,10 +14,17 @@
 
 /** 外部服务地址的内置默认值（与 prisma/schema.prisma 的 Profile 字段一一对应） */
 export const EXTERNAL_API_DEFAULTS = {
-  /** 随机风景壁纸直链（t.mwm.moe 免费图床） */
+  /** 随机风景壁纸直链（t.mwm.moe 免费图床）—— 电脑端（横向） */
   wallpaperLandscapeApi: "https://t.mwm.moe/fj",
-  /** 随机动漫壁纸直链 */
-  wallpaperAnimeApi: "https://t.mwm.moe/mp",
+  /**
+   * 随机风景壁纸直链 —— 手机端（竖向）。
+   * 上游风景接口未区分横竖图，默认与电脑端同源；若有竖版风景源，在后台「外部服务」里替换即可。
+   */
+  wallpaperLandscapeApiMobile: "https://t.mwm.moe/fj",
+  /** 随机动漫壁纸直链 —— 电脑端（横向）。上游 /pc 为 PC 横图 */
+  wallpaperAnimeApi: "https://t.mwm.moe/pc",
+  /** 随机动漫壁纸直链 —— 手机端（竖向）。上游 /mp 为移动竖图 */
+  wallpaperAnimeApiMobile: "https://t.mwm.moe/mp",
   /** 随机头像接口：约定返回 JSON `{ data: "图片地址" }` 或纯文本地址 */
   randomAvatarApi: "https://v2.xxapi.cn/api/head?return=json",
   /** Iconify 在线图标 API 基地址（取图标 SVG 与图标集清单） */
@@ -62,6 +69,70 @@ export function pickExternalApis(
     picked[key] = profile[key] ?? "";
   }
   return picked;
+}
+
+/* ---------------- 壁纸按设备分流（手机竖图 / 电脑横图） ---------------- */
+
+/** 壁纸设备：pc=电脑（横向）/ mobile=手机（竖向） */
+export type WallpaperDevice = "pc" | "mobile";
+
+/**
+ * 归一化设备参数：只有明确等于 "mobile" 才按手机处理，其余（缺失 / 非法 / 拼写错误）
+ * 一律回落到 "pc"，与分流前的旧行为保持一致。
+ */
+export function normalizeWallpaperDevice(value: string | null | undefined): WallpaperDevice {
+  return value === "mobile" ? "mobile" : "pc";
+}
+
+/**
+ * 从 User-Agent 猜测设备，**仅用于 SSR 阶段挑选预加载的那张图**。
+ *
+ * 为什么不用视口宽度：SSR 时拿不到视口。判断刻意宽松 —— 猜错只影响首帧预加载图的横竖，
+ * 客户端 hydrate 后会用真实视口重新请求并纠正。
+ */
+export function deviceFromUserAgent(ua: string | null | undefined): WallpaperDevice {
+  const u = (ua || "").toLowerCase();
+  if (!u) return "pc";
+  return /iphone|ipod|ipad|android|windows phone|mobile/.test(u) ? "mobile" : "pc";
+}
+
+/**
+ * 按设备取壁纸源的两个候选键：
+ * primary = 该设备专属地址；fallback = 另一设备的地址（用户可能只配了一条）。
+ */
+export function wallpaperApiKeys(
+  coverType: string,
+  device: WallpaperDevice
+): { primary: ExternalApiKey; fallback: ExternalApiKey } {
+  const anime = coverType === "anime";
+  if (device === "mobile") {
+    return anime
+      ? { primary: "wallpaperAnimeApiMobile", fallback: "wallpaperAnimeApi" }
+      : { primary: "wallpaperLandscapeApiMobile", fallback: "wallpaperLandscapeApi" };
+  }
+  return anime
+    ? { primary: "wallpaperAnimeApi", fallback: "wallpaperAnimeApiMobile" }
+    : { primary: "wallpaperLandscapeApi", fallback: "wallpaperLandscapeApiMobile" };
+}
+
+/**
+ * 按设备解析壁纸源地址。
+ *
+ * 优先级：本设备的已配置地址 → 另一设备的已配置地址 → 本设备的内置默认值。
+ * 中间这一层不可或缺：用户很可能只填了一条地址，手机端不该因此掉回内置默认值
+ * （那会让"换源"在手机上失效）。
+ */
+export function resolveWallpaperApi(
+  config: ExternalApiConfig | null | undefined,
+  coverType: string,
+  device: WallpaperDevice
+): string {
+  const { primary, fallback } = wallpaperApiKeys(coverType, device);
+  const own = (config?.[primary] ?? "").trim();
+  if (own) return own;
+  const other = (config?.[fallback] ?? "").trim();
+  if (other) return other;
+  return EXTERNAL_API_DEFAULTS[primary];
 }
 
 /** 模板占位符的取值 */
