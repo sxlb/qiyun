@@ -19,8 +19,16 @@
 ```bash
 # 1. 同步版本号：package.json、package-lock.json（根与 packages[""] 两处）、
 #    README 徽章、教程与本文档里的示例版本号，以及 CHANGELOG 新增条目
-# 2. 提交并推送：git add -u && git commit -m 'chore: 发版 0.0.5' && git push
-# 3. 确认工作区干净、与远端同步
+
+# 2. 提交前先看状态 —— 这一步不能省。git add -u 只涵盖「已跟踪文件」的改动，
+#    若有 ?? 开头的未跟踪文件（本版新增的源码 / 测试），必须手动 git add 补上；
+#    否则它们不会进这次提交，而标签是在推送之后才打的，等于发出去的 tag 少文件。
+git status --short
+git add -u
+git commit -m 'chore: 发版 0.0.5'
+git push
+
+# 3. 收尾确认：输出应为空。若仍有 ?? 条目，说明第 2 步漏了新增文件，补提交后再打标签
 git status --short
 
 # 4. 打标签并推送（版本号与 package.json 保持一致，工作流会再次同步）
