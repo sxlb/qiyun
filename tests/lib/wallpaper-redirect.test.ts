@@ -14,6 +14,7 @@ const fsMock = vi.hoisted(() => ({
   mkdir: vi.fn(),
   readFile: vi.fn(),
   writeFile: vi.fn(),
+  rename: vi.fn(),
   rm: vi.fn(),
 }));
 
@@ -43,10 +44,11 @@ function redirect(location: string): Response {
 /**
  * 是否落盘了**图片文件**。
  * manifest.json 是下载节流标记（lastDownloadAt），按设计在失败时也会写入，
- * 因此判断「内网内容有没有被缓存下来」必须排除它。
+ * 因此判断「内网内容有没有被缓存下来」必须排除它。用 includes 而不是 endsWith：
+ * 清单是「临时文件 + rename」原子写入的，写入路径是 manifest.json.tmp，也属于清单自身。
  */
 function wroteImageFile(): boolean {
-  return fsMock.writeFile.mock.calls.some((c) => !String(c[0]).endsWith("manifest.json"));
+  return fsMock.writeFile.mock.calls.some((c) => !String(c[0]).includes("manifest.json"));
 }
 
 describe("壁纸下载的 SSRF 逐跳校验", () => {
@@ -68,6 +70,9 @@ describe("壁纸下载的 SSRF 逐跳校验", () => {
     fsMock.readFile.mockRejectedValue(new Error("ENOENT"));
     fsMock.mkdir.mockResolvedValue(undefined);
     fsMock.writeFile.mockResolvedValue(undefined);
+    // rename 必须桩上：否则原子替换会退回到「直接覆盖写」的兜底分支，
+    // 这条分支不是本文件要验证的对象
+    fsMock.rename.mockResolvedValue(undefined);
     fsMock.rm.mockResolvedValue(undefined);
 
     // 默认：单次请求即返回合法 JPEG；各用例按需覆盖

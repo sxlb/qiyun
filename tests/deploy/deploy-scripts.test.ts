@@ -48,6 +48,20 @@ function sqliteEnvReady(): boolean {
 
 const SQLITE_READY = ENV_READY && sqliteEnvReady();
 
+/**
+ * 环境自身是否装了 crontab。
+ * 「机器上没有 crontab 命令」这一组用例要求 PATH 里确实找不到它 —— 如果宿主装了 cron，
+ * 夹具把桩摘掉后仍会命中系统的那一个，断言就没有意义了，所以这种情况下直接跳过。
+ */
+function systemHasCrontab(): boolean {
+  const probe = spawnSync("bash", ["-c", "command -v crontab >/dev/null 2>&1"], {
+    stdio: "ignore",
+  });
+  return probe.status === 0;
+}
+
+const NO_SYSTEM_CRONTAB = !systemHasCrontab();
+
 /** 运行夹具，把 KEY=VALUE 输出解析成对象 */
 function runHarness(...args: string[]): Record<string, string> {
   const res = spawnSync("bash", [HARNESS, ...args], { encoding: "utf8", timeout: 120_000 });
@@ -273,6 +287,53 @@ describe.skipIf(!ENV_READY)("setup-update.sh · 全新服务器（尚无 crontab
     expect(Number(r.FINISHED)).toBe(1);
   });
 });
+
+/**
+ * 幂等：安装器会被反复执行（升级、换仓库目录时都要求重跑）。
+ *
+ * 判断「已安装」用的记号是锁文件路径而不是脚本名 —— `qiyun-update` 同时出现在
+ * `qiyun-update-cli` 里，用脚本名匹配会把「只装了命令行工具、没装定时器」误判成已安装，
+ * 从此再也装不上定时器。
+ *
+ * 这里同时守住「重复执行不写第二行」：早期是 `crontab -l | grep -q` 直接成管道，
+ * grep 命中即退出会让 crontab -l 收到 SIGPIPE 以非 0 结束，在 set -o pipefail 下
+ * 整条管道被判为失败，于是已安装的机器又追加了一行重复的 cron。
+ */
+describe.skipIf(!ENV_READY)("setup-update.sh · 重复执行（已有 crontab）", () => {
+  it("识别为已安装：不重复写 cron，也不动用户原有的任务", () => {
+    const r = runHarness("setup", "existing");
+
+    expect(r.EXIT).toBe("0");
+    // 仍然只有一条本通道的 cron
+    expect(Number(r.CRON_COUNT)).toBe(1);
+    // 用户自己的两个任务原样保留
+    expect(Number(r.CRON_PREEXISTING)).toBe(1);
+    expect(Number(r.CRON_OTHER)).toBe(1);
+    // 仍然走到最后一步
+    expect(Number(r.FINISHED)).toBe(1);
+    expect(r.OUT).toContain("定时器已存在");
+  });
+});
+
+/**
+ * 机器上没有 crontab 命令时必须明确报错退出。
+ * 修好「容器没有 crontab 命令」这一态之前，脚本会以一行 `crontab: command not found`
+ * 在管道处中断：二进制装好了、基线版本没写、面板只显示「更新通道尚未就绪」，看不出原因。
+ */
+describe.skipIf(!ENV_READY || !NO_SYSTEM_CRONTAB)(
+  "setup-update.sh · 机器上没有 crontab 命令",
+  () => {
+    it("给出明确的中文提示并以非 0 退出，而不是静默中断", () => {
+      const r = runHarness("setup", "nocron");
+
+      expect(r.EXIT).not.toBe("0");
+      expect(r.OUT).toContain("未检测到 crontab");
+      // 二进制仍应装好（便于装完 cron 后直接重跑），但基线版本不会写
+      expect(r.INSTALLED).toContain("qiyun-update");
+      expect(r.FINISHED).toBe("0");
+    });
+  }
+);
 
 /**
  * 真实 SQLite 回归。上面那组是文件级断言，这组直接验证「数据还在不在」：

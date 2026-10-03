@@ -37,15 +37,37 @@ echo "==> 已安装 /usr/local/bin/qiyun-update 与 qiyun-update-cli"
 
 # ---------- 2. 安装 cron（每分钟 flock 轮询，幂等） ----------
 CRON_LINE="* * * * * flock -n /tmp/qiyun-update.lock env REPO_DIR=$REPO_DIR /usr/local/bin/qiyun-update >/dev/null 2>&1"
-if crontab -l 2>/dev/null | grep -qF "qiyun-update"; then
-  echo "==> 定时器已存在，跳过（如需更新请手工编辑 crontab -e）"
-else
-  # 用 { ... } 而非 ( ... )：本脚本是 set -euo pipefail，而「机器上还没有任何 crontab」时
-  # `crontab -l` 返回非 0。放进子 shell 会让子 shell 当场中止，后面那行 echo 永远执行不到，
-  # 结果是 cron 没装上、面板一直提示「更新通道尚未就绪」——全新服务器必然踩中。
-  { crontab -l 2>/dev/null || true; echo "$CRON_LINE"; } | crontab -
-  echo "==> 已写入 cron：$CRON_LINE"
+# 幂等判断的记号取锁文件路径，而不是脚本名：qiyun-update-cli 里也含 "qiyun-update"
+# 子串，用脚本名匹配会把「只装了命令行工具、没装定时器」误判成「已安装」，从此再也装不上定时器。
+CRON_MARK="/tmp/qiyun-update.lock"
+if ! command -v crontab >/dev/null 2>&1; then
+  # 没有 crontab 就没法启用定时更新。此处必须明确报错并退出：
+  # 否则会以一行 `crontab: command not found` 在管道处中断，后面的基线版本也不会写，
+  # 面板只显示「更新通道尚未就绪」，完全看不出真实原因。
+  echo "✗ 未检测到 crontab 命令，无法启用定时更新通道。" >&2
+  echo "  请先安装 cron（Debian/Ubuntu：apt-get install -y cron；Alpine：apk add busybox-initscripts），再重新执行本脚本。" >&2
+  exit 1
 fi
+# 先把现有 crontab 读进变量再判断，不要写成 `crontab -l | grep -q`：
+# grep -q 命中即退出会关闭管道，crontab -l 收到 SIGPIPE 以非 0 结束，
+# 在 set -o pipefail 下整条管道被判为失败 —— 已有定时器的机器会因此重复写入一行。
+existing_cron="$(crontab -l 2>/dev/null || true)"
+case "$existing_cron" in
+  *"$CRON_MARK"*)
+    echo "==> 定时器已存在，跳过（如需更新请手工编辑 crontab -e）"
+    ;;
+  *)
+    # 用 { ... } 而非 ( ... )：本脚本是 set -euo pipefail，而「机器上还没有任何 crontab」时
+    # `crontab -l` 返回非 0。放进子 shell 会让子 shell 当场中止，后面那行 echo 永远执行不到，
+    # 结果是 cron 没装上、面板一直提示「更新通道尚未就绪」——全新服务器必然踩中。
+    if [ -n "$existing_cron" ]; then
+      { printf '%s\n' "$existing_cron"; echo "$CRON_LINE"; } | crontab -
+    else
+      echo "$CRON_LINE" | crontab -
+    fi
+    echo "==> 已写入 cron：$CRON_LINE"
+    ;;
+esac
 
 # ---------- 3. 写基线版本 ----------
 mkdir -p "$DEPLOY_DIR"

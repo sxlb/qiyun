@@ -14,7 +14,7 @@ interface Props {
   autoSwitchInterval?: number;
   /** 背景遮罩暗化强度 0-80（%）：壁纸过亮时提升前景文字可读性 */
   bgOverlay?: number;
-  /** 壁纸服务端缓存刷新间隔（分钟）：0=不刷新 / 3 / 10 / 30 */
+  /** 壁纸服务端缓存刷新间隔（分钟）：0=不刷新 / 5 / 10 / 30 */
   wallpaperRefresh?: number;
   /** SSR 阶段已解析的壁纸直链：首次加载直接使用，省去客户端 /api/wallpaper 往返 */
   initialUrl?: string;

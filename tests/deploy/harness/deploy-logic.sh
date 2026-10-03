@@ -51,6 +51,15 @@ extract_snap() {
 # 造一个「文件头合法」的假数据库：snapshot_stopped 会校验前 16 字节是否为 SQLite 魔数
 write_fake_db() { printf 'SQLite format 3+padding\n' > "$1"; }
 
+# 统计文件里匹配某模式的行数，文件不存在或读不到时回落 0。
+# 不用裸的 `grep -c ... || echo 0`：grep 无匹配时自己也会打一个 0 并以非 0 退出，
+# `||` 分支再补一个 0，字段值就成了两行，KEY=VALUE 解析会被带偏。
+count_lines() {
+  local file="$1" pattern="$2" n
+  n="$(grep -c -- "$pattern" "$file" 2>/dev/null | head -n1)"
+  printf '%s' "${n:-0}"
+}
+
 # 探测阶段的假 docker：行为由 FAKE_DOCKER_MODE 决定
 write_fake_docker_probe() {
   cat > "$STUB_DIR/docker" <<'FAKE'
@@ -275,6 +284,7 @@ PY
 # ---------- 更新通道安装器：在「没有 crontab 的全新机器」上的行为 ----------
 # setup-update.sh 是一次性脚本（无函数可抽），所以整体跑真实文件，把会碰系统的东西桩掉。
 cmd_setup() {
+  local scenario="${1:-fresh}"
   local work="$STUB_DIR/setup"
   rm -rf "$work"
   mkdir -p "$work/repo/data" "$work/bin" "$work/state"
@@ -321,18 +331,44 @@ esac
 FAKE
   chmod +x "$work/bin/crontab" "$work/bin/docker" "$work/bin/install" "$work/bin/id"
 
+  # 幂等场景：预置一份已有 crontab —— 含用户自己的两个任务，以及本通道的定时器。
+  # 期望：脚本识别出「已安装」，一条都不重复写，也不动用户原有的行。
+  if [ "$scenario" = "existing" ]; then
+    {
+      echo "*/5 * * * * /usr/bin/pre-existing-job"
+      echo "* * * * * flock -n /tmp/qiyun-update.lock env REPO_DIR=/srv/old/qiyun /usr/local/bin/qiyun-update >/dev/null 2>&1"
+      echo "17 3 * * * /usr/bin/other-job"
+    } > "$work/state/crontab.txt"
+  fi
+
+  # 缺 cron 场景：造一个「PATH 里没有 crontab」的环境（其余桩照旧），
+  # 用来验证脚本会明确报错退出，而不是以一行 command not found 中途神秘中断。
+  local bin_dir="$work/bin"
+  if [ "$scenario" = "nocron" ]; then
+    bin_dir="$work/bin-nocron"
+    mkdir -p "$bin_dir"
+    for f in "$work/bin"/*; do
+      [ "$(basename "$f")" = "crontab" ] && continue
+      cp -f "$f" "$bin_dir/"
+    done
+  fi
+
   # 必须切到临时仓库目录再跑：find_repo 优先看 $PWD，否则会命中真实仓库、
   # 把 versions.json 写进真实 data/deploy
   local rc=0
-  ( cd "$work/repo" && SETUP_STATE="$work/state" PATH="$work/bin:$PATH" \
+  ( cd "$work/repo" && SETUP_STATE="$work/state" PATH="$bin_dir:$PATH" \
       bash scripts/setup-update.sh ) > "$work/out.txt" 2>&1 || rc=$?
 
   printf 'EXIT=%s\n' "$rc"
   printf 'INSTALLED=%s\n' "$(tr '\n' ',' < "$work/state/installed.txt" 2>/dev/null)"
-  printf 'CRON_COUNT=%s\n' "$(grep -c 'qiyun-update' "$work/state/crontab.txt" 2>/dev/null || echo 0)"
-  printf 'CRON_HAS_REPO=%s\n' "$(grep -c 'REPO_DIR=' "$work/state/crontab.txt" 2>/dev/null || echo 0)"
+  # 只数「本通道的 cron 行」（以锁文件路径为记号）：脚本名 qiyun-update 同时出现在
+  # qiyun-update-cli 里，用脚本名计数会把命令行工具的安装也统计进来
+  printf 'CRON_COUNT=%s\n' "$(count_lines "$work/state/crontab.txt" 'qiyun-update\.lock')"
+  printf 'CRON_HAS_REPO=%s\n' "$(count_lines "$work/state/crontab.txt" 'REPO_DIR=')"
+  printf 'CRON_PREEXISTING=%s\n' "$(count_lines "$work/state/crontab.txt" 'pre-existing-job')"
+  printf 'CRON_OTHER=%s\n' "$(count_lines "$work/state/crontab.txt" 'other-job')"
   printf 'VERSIONS=%s\n' "$(tr -d ' \n' < "$work/repo/data/deploy/versions.json" 2>/dev/null || echo MISSING)"
-  printf 'FINISHED=%s\n' "$(grep -c '更新通道安装完成' "$work/out.txt" 2>/dev/null || echo 0)"
+  printf 'FINISHED=%s\n' "$(count_lines "$work/out.txt" '更新通道安装完成')"
   printf 'OUT=%s\n' "$(tr '\n' '|' < "$work/out.txt" | cut -c1-400)"
 }
 

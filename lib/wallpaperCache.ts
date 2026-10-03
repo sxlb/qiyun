@@ -14,7 +14,7 @@ import type { WallpaperDevice } from "@/lib/external-api";
  * - 缓存目录：<cwd>/data/wallpapers（.gitignore 已排除 data/，Docker 卷映射目录）
  * - 上限：MAX_CACHE_SIZE = 100 张，超出时按 addedAt 删除最旧的
  * - manifest.json 记录缓存清单（文件名/来源/时间/大小）与上次刷新时间
- * - 刷新间隔（后台可配 0/3/10/30 分钟）：请求到来时若到期则后台静默预取一张新壁纸，
+ * - 刷新间隔（后台可配 0/5/10/30 分钟）：请求到来时若到期则后台静默预取一张新壁纸，
  *   无访问则不刷新（不占用服务器资源）
  * - 所有写操作串行化（内存队列），避免并发请求竞争写坏 manifest / 目录
  */
@@ -33,7 +33,10 @@ function getWallpaperCacheDir(): string {
   return path.join(process.cwd(), "data", "wallpapers");
 }
 
-const MANIFEST_FILE = () => path.join(getWallpaperCacheDir(), "manifest.json");
+/** manifest 文件名：既是指引清单，也是「扫描目录清空」时必须显式跳过的那个文件 */
+const MANIFEST_NAME = "manifest.json";
+
+const MANIFEST_FILE = () => path.join(getWallpaperCacheDir(), MANIFEST_NAME);
 
 /**
  * 缓存分池标签。
@@ -94,6 +97,30 @@ async function ensureCacheDir(): Promise<void> {
   await fs.mkdir(getWallpaperCacheDir(), { recursive: true });
 }
 
+/**
+ * 校验 manifest 里的单个条目。
+ *
+ * manifest 是磁盘上的普通 JSON 文件，可能被人工编辑、被外部清理工具改写过。
+ * 结构上无法使用的条目（null / 字符串 / 缺 fileName）必须在这里丢掉：
+ * 否则它会带着 undefined 一路传到接口层，在读取 entry.size / entry.fileName 时抛
+ * TypeError，让「查看缓存列表」「删除一张」这类操作整个变成 500。
+ *
+ * 注意只丢弃**结构非法**的条目；文件名不安全的条目保留下来（列表会标记 exists:false），
+ * 让后台能看到并把它删掉，而不是让它变成一个看不见又删不掉的幽灵记录。
+ */
+function sanitizeEntry(value: unknown): CacheEntry | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Partial<CacheEntry>;
+  if (typeof raw.fileName !== "string" || raw.fileName === "") return null;
+  return {
+    fileName: raw.fileName,
+    sourceUrl: typeof raw.sourceUrl === "string" ? raw.sourceUrl : "",
+    addedAt: typeof raw.addedAt === "number" && Number.isFinite(raw.addedAt) ? raw.addedAt : 0,
+    size: typeof raw.size === "number" && Number.isFinite(raw.size) && raw.size >= 0 ? raw.size : 0,
+    tag: typeof raw.tag === "string" ? (raw.tag as WallpaperCacheTag) : undefined,
+  };
+}
+
 /** 读取 manifest；不存在/损坏时返回空清单 */
 async function loadManifest(): Promise<Manifest> {
   try {
@@ -101,7 +128,9 @@ async function loadManifest(): Promise<Manifest> {
     const parsed = JSON.parse(raw) as Partial<Manifest>;
     if (!Array.isArray(parsed.entries)) return emptyManifest();
     return {
-      entries: parsed.entries as CacheEntry[],
+      entries: parsed.entries
+        .map(sanitizeEntry)
+        .filter((entry): entry is CacheEntry => entry !== null),
       lastRefreshAt: typeof parsed.lastRefreshAt === "number" ? parsed.lastRefreshAt : null,
       lastDownloadAt: typeof parsed.lastDownloadAt === "number" ? parsed.lastDownloadAt : null,
     };
@@ -110,10 +139,28 @@ async function loadManifest(): Promise<Manifest> {
   }
 }
 
-/** 保存 manifest */
+/**
+ * 保存 manifest。
+ *
+ * 用「临时文件 + rename」原子替换，而不是直接覆盖写：writeFile 会先截断再写，
+ * 恰好在那一瞬间读到该文件的请求会拿到空内容或半截 JSON，被 loadManifest 当成
+ * 「清单为空」—— 前台表现为重复下载一张壁纸，后台表现为「已缓存 0 张」。
+ * 同目录 rename 在 POSIX 上是原子的，读方要么看到旧内容、要么看到新内容。
+ */
 async function saveManifest(manifest: Manifest): Promise<void> {
   await ensureCacheDir();
-  await fs.writeFile(MANIFEST_FILE(), JSON.stringify(manifest), "utf8");
+  const target = MANIFEST_FILE();
+  const tmp = `${target}.tmp`;
+  const json = JSON.stringify(manifest);
+  await fs.writeFile(tmp, json, "utf8");
+  try {
+    await fs.rename(tmp, target);
+  } catch {
+    // 少数平台（如 Windows 上目标被外部句柄短暂占用）rename 会失败：
+    // 退回直接覆盖写 —— 宁可短暂失去原子性，也不能把这次索引更新整个丢掉
+    await fs.writeFile(target, json, "utf8");
+    await fs.rm(tmp, { force: true }).catch(() => {});
+  }
 }
 
 /** Content-Type → 文件扩展名；非图片返回空 */
@@ -465,16 +512,25 @@ export async function deleteCachedWallpaper(fileName: string): Promise<boolean> 
  */
 export async function clearWallpaperCache(): Promise<number> {
   return enqueue(async () => {
-    const manifest = await loadManifest();
-    const removed = manifest.entries.length;
-    await saveManifest(emptyManifest());
+    const dir = getWallpaperCacheDir();
+    // 以**目录**为准，而不是以清单为准：清单一旦损坏或被手工改成空清单，
+    // 磁盘上的图片就成了无人认领的孤儿 —— 只看 entries 会出现
+    // 「点了清空、空间却没释放」，而且这些孤儿也不会被上限裁剪统计到。
+    let names: string[] = [];
+    try {
+      names = (await fs.readdir(dir)).filter(
+        (name) => name !== MANIFEST_NAME && isSafeFileName(name)
+      );
+    } catch {
+      // 目录还不存在：视为没有缓存
+      names = [];
+    }
+    // 先删文件、再写空清单：反过来的话，删除中途抛错会把索引先丢掉，
+    // 而文件还在 —— 那才是真的全成了孤儿，比留下一条记录更糟
     await Promise.all(
-      manifest.entries.map((e) =>
-        isSafeFileName(e.fileName)
-          ? fs.rm(path.join(getWallpaperCacheDir(), e.fileName), { force: true }).catch(() => {})
-          : Promise.resolve()
-      )
+      names.map((name) => fs.rm(path.join(dir, name), { force: true }).catch(() => {}))
     );
-    return removed;
+    await saveManifest(emptyManifest());
+    return names.length;
   });
 }

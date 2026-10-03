@@ -214,14 +214,20 @@ export function DynamicTitle({ enabled = true, siteName = "" }: DynamicTitleProp
     };
 
     let track: TrackDetail | null = null;
+    /** 本组件最后一次写入的标题：卸载复位前用它判断「当前标题还是不是我们写的那一份」 */
+    let lastApplied = initialTitle;
+    const writeTitle = (next: string) => {
+      lastApplied = next;
+      document.title = next;
+    };
     const applyTitle = () => {
       if (!document.hidden) {
-        document.title = name;
+        writeTitle(name);
         return;
       }
-      document.title = track
-        ? `${track.name} - ${track.artist} - ${name}`
-        : `${greeting()}，欢迎访问 ${name}`;
+      writeTitle(
+        track ? `${track.name} - ${track.artist} - ${name}` : `${greeting()}，欢迎访问 ${name}`
+      );
     };
 
     const onTrack = (e: Event) => {
@@ -246,7 +252,10 @@ export function DynamicTitle({ enabled = true, siteName = "" }: DynamicTitleProp
       window.removeEventListener("music-player-close", onReset);
       document.removeEventListener("visibilitychange", applyTitle);
       window.clearInterval(tick);
-      document.title = initialTitle || name;
+      // 只在「标题仍是我们最后一次写入的那一份」时才还原。
+      // 无条件还原会踩到客户端路由跳转：新页面的 <title> 先落地，紧接着本组件的卸载
+      // 清理又把标题改回首页那份，于是后台标签页顶着首页标题。
+      if (document.title === lastApplied) document.title = initialTitle || name;
     };
   }, [enabled, siteName]);
 

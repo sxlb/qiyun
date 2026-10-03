@@ -25,7 +25,7 @@ model Profile {
   txWeatherSk          String   @default("") // 腾讯位置服务密钥（数字签名用，key 开启签名时必填）
   coverType            String   @default("bing")
   autoBGSwitchInterval Int      @default(0)
-  wallpaperRefresh     Int      @default(0) // 壁纸缓存刷新间隔（分钟）：0=不刷新 / 3 / 10 / 30
+  wallpaperRefresh     Int      @default(0) // 壁纸缓存刷新间隔（分钟）：0=不刷新 / 5 / 10 / 30
   theme                String   @default("system")
   songApi              String   @default("")
   songServer           String   @default("netease")

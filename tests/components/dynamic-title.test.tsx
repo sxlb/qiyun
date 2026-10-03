@@ -122,4 +122,26 @@ describe("DynamicTitle", () => {
     expect(docSpy).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
     expect(document.title).toBe(PAGE_TITLE);
   });
+
+  it("卸载时标题已被别人改写（如客户端路由跳转）则不去覆盖它", () => {
+    const { unmount } = render(<DynamicTitle enabled siteName={SITE} />);
+    expect(document.title).toBe(SITE);
+
+    // 模拟新路由的 <title> 已经落地
+    document.title = "后台管理";
+    unmount();
+
+    // 无条件还原会把标题改回首页那份，后台标签页就顶着首页标题了
+    expect(document.title).toBe("后台管理");
+  });
+
+  it("卸载时标题仍是自己写的那一份（无路由跳转）才还原", () => {
+    const { unmount } = render(<DynamicTitle enabled siteName={SITE} />);
+    switchTab(true);
+    expect(document.title).toMatch(GREETING);
+
+    unmount();
+
+    expect(document.title).toBe(PAGE_TITLE);
+  });
 });

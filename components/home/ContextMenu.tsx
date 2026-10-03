@@ -159,13 +159,36 @@ export default function ContextMenu({
     [menu]
   );
 
+  /**
+   * 事件是否发生在菜单自身内部（点菜单项、在菜单上右键都不该被当成「关掉重开」）。
+   * 只读 ref，身份恒定，可以安全地进 effect 依赖。
+   */
+  const isInsideMenu = useCallback(
+    (target: EventTarget | null) =>
+      !!menuElRef.current && target instanceof Node && menuElRef.current.contains(target),
+    []
+  );
+
   // ===== 拦截右键 =====
+  // 只挂这一个 contextmenu 监听：曾经另有一个「在别处右键就先关掉旧菜单」的监听，
+  // 两个监听同时命中时 React 会合并两次 setState，后写的 null 把新菜单覆盖掉 ——
+  // 表现为菜单已打开时再右键，菜单直接消失而不是挪到新位置。
   useEffect(() => {
     if (mode === "default") return;
     const onContextMenu = (event: MouseEvent) => {
+      // 菜单自己身上再右键：维持现状（既不重建也不关闭），不做任何状态变更
+      if (isInsideMenu(event.target)) {
+        event.preventDefault();
+        return;
+      }
       const coarsePointer =
         typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
-      if (!shouldInterceptContextMenu({ target: event.target, mode, coarsePointer })) return;
+      if (!shouldInterceptContextMenu({ target: event.target, mode, coarsePointer })) {
+        // 放行原生菜单（输入框 / 可编辑区 / 触屏长按）：顺手收起自己的菜单，
+        // 否则会出现「原生菜单 + 站内菜单」两层同时挂着
+        close();
+        return;
+      }
       event.preventDefault();
       if (mode === "disabled") {
         close();
@@ -190,11 +213,7 @@ export default function ContextMenu({
     };
     document.addEventListener("contextmenu", onContextMenu);
     return () => document.removeEventListener("contextmenu", onContextMenu);
-  }, [mode, music.playlist.length, canSwitchWallpaper, commandPaletteEnabled, close]);
-
-  /** 事件是否发生在菜单自身内部（点菜单项、在菜单上右键都不该被当成「关掉重开」） */
-  const isInsideMenu = (target: EventTarget | null) =>
-    !!menuElRef.current && target instanceof Node && menuElRef.current.contains(target);
+  }, [mode, music.playlist.length, canSwitchWallpaper, commandPaletteEnabled, close, isInsideMenu]);
 
   // ===== 失焦即关：左键、滚动、缩放、切标签页都不该留着菜单 =====
   useEffect(() => {
@@ -205,24 +224,19 @@ export default function ContextMenu({
       if (isInsideMenu(event.target)) return;
       close();
     };
-    const onContextMenu = (event: Event) => {
-      if (isInsideMenu(event.target)) return;
-      close();
-    };
     document.addEventListener("mousedown", onDown);
-    // 在别处右键：先关掉旧的，随后主 handler 会按新位置重开
-    document.addEventListener("contextmenu", onContextMenu);
+    // 注意：右键不在这里处理 —— 换位置/关闭都由上面的拦截监听统一负责，
+    // 两边同时处理会互相覆盖（见该监听的注释）
     window.addEventListener("resize", onDown);
     window.addEventListener("scroll", onDown, true);
     window.addEventListener("blur", onDown);
     return () => {
       document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("contextmenu", onContextMenu);
       window.removeEventListener("resize", onDown);
       window.removeEventListener("scroll", onDown, true);
       window.removeEventListener("blur", onDown);
     };
-  }, [menu, close]);
+  }, [menu, close, isInsideMenu]);
 
   // 打开即聚焦菜单容器，键盘用户可以直接方向键选择
   useEffect(() => {

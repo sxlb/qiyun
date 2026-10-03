@@ -14,6 +14,8 @@ const fsMock = vi.hoisted(() => ({
   mkdir: vi.fn(),
   readFile: vi.fn(),
   writeFile: vi.fn(),
+  rename: vi.fn(),
+  readdir: vi.fn(),
   stat: vi.fn(),
   rm: vi.fn(),
   access: vi.fn(),
@@ -43,6 +45,11 @@ function manifestWith(
   );
 }
 
+/** manifest 文件内容原样写坏（用于模拟外部工具改坏 / 合法 JSON 但条目非法） */
+function manifestRaw(raw: string): void {
+  fsMock.readFile.mockResolvedValue(raw);
+}
+
 /** stat 桩：按文件名决定存在性与大小 */
 function stubDisk(map: Record<string, number>): void {
   fsMock.stat.mockImplementation((p: unknown) => {
@@ -68,6 +75,7 @@ describe("listCachedWallpapers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fsMock.mkdir.mockResolvedValue(undefined as never);
+    fsMock.rename.mockResolvedValue(undefined as never);
     manifestWith([]);
   });
 
@@ -115,6 +123,7 @@ describe("deleteCachedWallpaper", () => {
     vi.clearAllMocks();
     fsMock.mkdir.mockResolvedValue(undefined as never);
     fsMock.writeFile.mockResolvedValue(undefined as never);
+    fsMock.rename.mockResolvedValue(undefined as never);
     fsMock.rm.mockResolvedValue(undefined as never);
   });
 
@@ -163,11 +172,14 @@ describe("clearWallpaperCache", () => {
     vi.clearAllMocks();
     fsMock.mkdir.mockResolvedValue(undefined as never);
     fsMock.writeFile.mockResolvedValue(undefined as never);
+    fsMock.rename.mockResolvedValue(undefined as never);
     fsMock.rm.mockResolvedValue(undefined as never);
+    fsMock.readdir.mockResolvedValue([]);
   });
 
   it("删除全部文件、清单清空，并把刷新时间戳归零", async () => {
     manifestWith([{ fileName: "a.jpg" }, { fileName: "b.jpg" }]);
+    fsMock.readdir.mockResolvedValue(["a.jpg", "b.jpg", "manifest.json"] as never);
 
     expect(await clearWallpaperCache()).toBe(2);
 
@@ -183,5 +195,111 @@ describe("clearWallpaperCache", () => {
     manifestWith([]);
     expect(await clearWallpaperCache()).toBe(0);
     expect(fsMock.rm).not.toHaveBeenCalled();
+  });
+
+  it("以目录为准：清单被写坏成空时，磁盘上的孤儿文件仍会被清掉", async () => {
+    // 清单里一条记录都没有，但目录里确实躺着两张图
+    manifestWith([]);
+    fsMock.readdir.mockResolvedValue(["orphan1.jpg", "orphan2.png", "manifest.json"] as never);
+
+    expect(await clearWallpaperCache()).toBe(2);
+    expect(fsMock.rm).toHaveBeenCalledTimes(2);
+  });
+
+  it("绝不删除 manifest.json 自身（清空后清单仍可正常写入）", async () => {
+    manifestWith([]);
+    fsMock.readdir.mockResolvedValue(["a.jpg", "manifest.json"] as never);
+
+    await clearWallpaperCache();
+
+    const removedPaths = fsMock.rm.mock.calls.map((c) => String(c[0]));
+    expect(removedPaths.some((p) => p.includes("manifest.json"))).toBe(false);
+  });
+
+  it("跳过文件名不安全的目录项，不做越界删除", async () => {
+    manifestWith([]);
+    fsMock.readdir.mockResolvedValue(["ok.jpg", "../evil.jpg"] as never);
+
+    expect(await clearWallpaperCache()).toBe(1);
+    expect(String(fsMock.rm.mock.calls[0][0])).toContain("ok.jpg");
+  });
+
+  it("先删文件、后写空清单（中途失败也不会先把索引丢掉）", async () => {
+    manifestWith([{ fileName: "a.jpg" }]);
+    fsMock.readdir.mockResolvedValue(["a.jpg"] as never);
+    fsMock.rm.mockRejectedValue(new Error("EBUSY"));
+
+    // rm 失败被 catch 吞掉，仍然走到写清单
+    await expect(clearWallpaperCache()).resolves.toBe(1);
+    expect(lastWrittenManifest().entries).toEqual([]);
+  });
+});
+
+/**
+ * manifest 是磁盘上的普通 JSON 文件，可能被人工编辑或被外部清理工具改坏。
+ * 这里锁住两件事：非法条目不能让管理接口崩成 500；写清单要原子替换。
+ */
+describe("manifest 健壮性", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fsMock.mkdir.mockResolvedValue(undefined as never);
+    fsMock.writeFile.mockResolvedValue(undefined as never);
+    fsMock.rename.mockResolvedValue(undefined as never);
+    fsMock.rm.mockResolvedValue(undefined as never);
+    fsMock.readdir.mockResolvedValue([]);
+  });
+
+  it("合法 JSON 但含非法条目时不抛错，非法条目被丢弃", async () => {
+    manifestRaw(JSON.stringify({ entries: [null, "x", 42, { size: 1 }, { fileName: "ok.jpg" }] }));
+    stubDisk({ "ok.jpg": 512 });
+
+    const r = await listCachedWallpapers();
+
+    expect(r.items.map((i) => i.fileName)).toEqual(["ok.jpg"]);
+    expect(r.items[0].size).toBe(512);
+  });
+
+  it("条目字段缺失/类型不对时补默认值，而不是带着 undefined 往下传", async () => {
+    manifestRaw(JSON.stringify({ entries: [{ fileName: "ok.jpg" }] }));
+    stubDisk({ "ok.jpg": 10 });
+
+    const r = await listCachedWallpapers();
+
+    expect(r.items[0]).toMatchObject({ sourceUrl: "", addedAt: 0, tag: null, exists: true });
+  });
+
+  it("删除操作在 manifest 含非法条目时不会 500", async () => {
+    manifestRaw(JSON.stringify({ entries: [null, { fileName: "a.jpg" }] }));
+
+    expect(await deleteCachedWallpaper("a.jpg")).toBe(true);
+    expect(lastWrittenManifest().entries.map((e) => e.fileName)).toEqual([]);
+  });
+
+  it("非法 JSON 时按空清单处理，静默不抛错", async () => {
+    manifestRaw("{ 这不是 JSON");
+    expect((await listCachedWallpapers()).total).toBe(0);
+  });
+
+  it("写清单走「临时文件 + rename」原子替换，避免被读到半截 JSON", async () => {
+    manifestWith([{ fileName: "a.jpg" }]);
+
+    await deleteCachedWallpaper("a.jpg");
+
+    expect(String(fsMock.writeFile.mock.calls[0][0])).toContain("manifest.json.tmp");
+    expect(fsMock.rename).toHaveBeenCalledTimes(1);
+    const [from, to] = fsMock.rename.mock.calls[0];
+    expect(String(from)).toContain("manifest.json.tmp");
+    expect(String(to)).toContain("manifest.json");
+  });
+
+  it("rename 失败（如 Windows 上目标被短暂占用）时退回直接覆盖写，不丢这次更新", async () => {
+    manifestWith([{ fileName: "a.jpg" }]);
+    fsMock.rename.mockRejectedValue(new Error("EPERM"));
+
+    expect(await deleteCachedWallpaper("a.jpg")).toBe(true);
+
+    const last = fsMock.writeFile.mock.calls.at(-1);
+    expect(String(last?.[0])).toContain("manifest.json");
+    expect(JSON.parse(String(last?.[1])).entries).toEqual([]);
   });
 });

@@ -166,6 +166,39 @@ describe("menu 模式", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
+  it("菜单已打开时在别处再右键：菜单移动到新位置，而不是被关掉", () => {
+    setup({ mode: "menu" });
+    rightClick(screen.getByTestId("page"), { clientX: 100, clientY: 100 });
+    expect(screen.getByRole("menu").style.left).toBe("100px");
+
+    rightClick(screen.getByTestId("page"), { clientX: 300, clientY: 260 });
+    const menu = screen.getByRole("menu");
+    expect(menu.style.left).toBe("300px");
+    expect(menu.style.top).toBe("260px");
+  });
+
+  it("菜单自身上的右键不会重建菜单，也不会把它关掉", () => {
+    setup({ mode: "menu" });
+    rightClick(screen.getByTestId("page"), { clientX: 100, clientY: 100 });
+    const menu = screen.getByRole("menu");
+
+    rightClick(menu, { clientX: 120, clientY: 110 });
+    // 同一个节点仍是当前菜单（位置不变）
+    expect(screen.getByRole("menu")).toBe(menu);
+    expect(menu.style.left).toBe("100px");
+  });
+
+  it("菜单打开时在输入框上右键：收起站内菜单并放行原生菜单", () => {
+    setup({ mode: "menu" });
+    rightClick(screen.getByTestId("page"));
+    expect(screen.getByRole("menu")).toBeTruthy();
+
+    const event = rightClick(screen.getByTestId("field"));
+    expect(event.defaultPrevented).toBe(false);
+    // 否则原生菜单与站内菜单会同时挂在页面上
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
   it("命令面板被后台关闭后不再展示入口", () => {
     setup({ mode: "menu", commandPaletteEnabled: false });
     rightClick(screen.getByTestId("page"));
