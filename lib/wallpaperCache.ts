@@ -359,3 +359,122 @@ export async function resolveWallpaperUrl(
     return "";
   }
 }
+
+/* ==================== 缓存管理（后台「壁纸缓存」分区） ==================== */
+
+/**
+ * 供后台展示的缓存条目。
+ *
+ * 之所以不把缓存登记进 `ImageAsset`（媒体库那张表）：缓存会被自动裁剪（见 MAX_CACHE_SIZE），
+ * 与媒体库里用户内容的生命周期不同 —— 登记进库迟早留下「记录还在、文件已被删」的死链接。
+ * 因此这里只做「读清单 + 删文件」，数据库完全不参与。
+ */
+export interface CachedWallpaper {
+  fileName: string;
+  /** 前台可直接使用的地址 */
+  url: string;
+  /** 上游来源地址，便于判断这张图是从哪个源抓到的 */
+  sourceUrl: string;
+  addedAt: number;
+  /** 实际磁盘占用（以文件为准，manifest 里的值可能过期） */
+  size: number;
+  /** 分池标签；升级前的历史条目为 null */
+  tag: WallpaperCacheTag | null;
+  /** 文件是否真的还在磁盘上（manifest 与目录可能因外部操作不同步） */
+  exists: boolean;
+}
+
+export interface WallpaperCacheOverview {
+  items: CachedWallpaper[];
+  total: number;
+  /** 实际占用字节数（只统计文件确实存在的条目） */
+  bytes: number;
+  /** 自动裁剪上限，便于界面说明「超出会删最旧」 */
+  max: number;
+}
+
+/**
+ * 列出缓存内容（新到旧）。
+ * 以 manifest 为准，但大小与存在性一律以磁盘实际状态为准：manifest 只是索引，
+ * 目录才是事实源，两者可能因为外部操作（手工删文件、磁盘清理）不同步。
+ */
+export async function listCachedWallpapers(): Promise<WallpaperCacheOverview> {
+  const manifest = await loadManifest();
+  const dir = getWallpaperCacheDir();
+
+  const items = await Promise.all(
+    manifest.entries.map(async (entry): Promise<CachedWallpaper> => {
+      let size = entry.size;
+      let exists = false;
+      // 文件名来自 manifest，理论上可信，但仍按白名单校验一次，避免被篡改后穿越目录
+      if (isSafeFileName(entry.fileName)) {
+        try {
+          const st = await fs.stat(path.join(dir, entry.fileName));
+          size = st.size;
+          exists = true;
+        } catch {
+          exists = false;
+        }
+      }
+      return {
+        fileName: entry.fileName,
+        url: `/api/wallpaper/file/${entry.fileName}`,
+        sourceUrl: entry.sourceUrl,
+        addedAt: entry.addedAt,
+        size,
+        tag: entry.tag ?? null,
+        exists,
+      };
+    })
+  );
+
+  items.sort((a, b) => b.addedAt - a.addedAt);
+  return {
+    items,
+    total: items.length,
+    bytes: items.reduce((sum, i) => sum + (i.exists ? i.size : 0), 0),
+    max: MAX_CACHE_SIZE,
+  };
+}
+
+/**
+ * 删除一张缓存（清单 + 文件）。走写队列，避免与下载/裁剪并发写坏 manifest。
+ * 返回是否命中了一条记录。
+ */
+export async function deleteCachedWallpaper(fileName: string): Promise<boolean> {
+  if (!isSafeFileName(fileName)) return false;
+  return enqueue(async () => {
+    const manifest = await loadManifest();
+    const idx = manifest.entries.findIndex((e) => e.fileName === fileName);
+    if (idx === -1) return false;
+    // 先改清单再删文件，与媒体库删除同一个顺序：清单是索引，先让它不再指向该文件，
+    // 中途失败最多留个无人引用的孤儿文件，而不会留下「有记录没文件」的死链接
+    manifest.entries.splice(idx, 1);
+    await saveManifest(manifest);
+    await fs.rm(path.join(getWallpaperCacheDir(), fileName), { force: true }).catch(() => {});
+    return true;
+  });
+}
+
+/**
+ * 清空整个缓存并重置刷新时间戳。
+ *
+ * 时间戳一并清掉是有意义的：`lastRefreshAt` 归零后，下一次访问就会重新预取一张新壁纸，
+ * 用户点完「清空」不会看到首页长时间没有背景。
+ * 返回实际删除的条目数。
+ */
+export async function clearWallpaperCache(): Promise<number> {
+  return enqueue(async () => {
+    const manifest = await loadManifest();
+    const removed = manifest.entries.length;
+    await saveManifest(emptyManifest());
+    await Promise.all(
+      manifest.entries.map((e) =>
+        isSafeFileName(e.fileName)
+          ? fs.rm(path.join(getWallpaperCacheDir(), e.fileName), { force: true }).catch(() => {})
+          : Promise.resolve()
+      )
+    );
+    return removed;
+  });
+}

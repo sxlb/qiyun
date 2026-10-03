@@ -1204,6 +1204,51 @@ Cookie 头中会设置 `qiyun-uv=1`（httpOnly, sameSite=lax, maxAge=365 天）�
 
 **描述**：返回本地缓存的壁纸文件。带目录穿越防护。
 
+##### `GET /api/wallpaper/cache`
+
+| 属性       | 说明                          |
+| ---------- | ----------------------------- |
+| 认证要求   | 管理员                        |
+| URL 参数   | 无                            |
+
+**描述**：列出壁纸缓存（后台「媒体库 → 壁纸缓存」分区）。这些缓存**不登记** `ImageAsset`：它会被自动裁剪（上限 100 张），生命周期与媒体库里的用户内容不同。大小与存在性以磁盘为准，`exists: false` 表示 manifest 里还留着记录但文件已不在磁盘上。
+
+**成功响应 (200)**：
+
+```json
+{
+  "items": [
+    {
+      "fileName": "w_abc123.webp",
+      "url": "/api/wallpaper/file/w_abc123.webp",
+      "sourceUrl": "https://t.mwm.moe/pc",
+      "addedAt": 1791000000000,
+      "size": 204800,
+      "tag": "anime:pc",
+      "exists": true
+    }
+  ],
+  "total": 1,
+  "bytes": 204800,
+  "max": 100
+}
+```
+
+##### `DELETE /api/wallpaper/cache?fileName=&all=`
+
+| 属性       | 说明                                                         |
+| ---------- | ------------------------------------------------------------ |
+| 认证要求   | 管理员                                                       |
+| URL 参数   | `fileName`(string, 可选)：删除单张<br>`all=1`(string, 可选)：清空全部 |
+
+**描述**：删除缓存文件并同步 manifest（先改清单再删文件，不会留下「有记录没文件」的死链接）。**清空必须显式传 `all=1`**：缺少 `fileName` 又没有 `all=1` 时返回 400，不会退化成清空。清空会同时把刷新时间戳归零，下次访问会重新预取一张。
+
+**成功响应 (200)**：
+
+```json
+{ "ok": true, "removed": 1 }
+```
+
 ---
 
 #### 15g. 音乐播放代理

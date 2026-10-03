@@ -14,6 +14,9 @@ import {
   Image as ImageIcon,
   Eye,
   X,
+  ChevronDown,
+  ChevronRight,
+  HardDrive,
 } from "lucide-react";
 import { PanelHeader, EmptyState } from "./panel";
 import { useDataFetcher } from "./useDataFetcher";
@@ -48,6 +51,28 @@ interface MediaPage {
 
 const PAGE_SIZE = 24;
 
+/**
+ * 壁纸缓存条目（GET /api/wallpaper/cache）。
+ * 与 ImageAsset 是两套东西：这些是自动从壁纸源下载的本地缓存，不登记数据库，
+ * 会被自动裁剪，因此单独一个只读分区展示。
+ */
+interface CachedWallpaper {
+  fileName: string;
+  url: string;
+  sourceUrl: string;
+  addedAt: number;
+  size: number;
+  tag: string | null;
+  exists: boolean;
+}
+
+interface CacheOverview {
+  items: CachedWallpaper[];
+  total: number;
+  bytes: number;
+  max: number;
+}
+
 function formatBytes(n: number): string {
   if (!n) return "0 B";
   if (n < 1024) return `${n} B`;
@@ -60,6 +85,11 @@ export default function MediaPanel() {
   const [uploading, setUploading] = useState(false);
   const [confirmingId, setConfirmingId] = useState<number | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  // 壁纸缓存分区：默认折叠。缓存最多上百张，全量渲染没必要，折叠状态只显示汇总
+  const [cacheOpen, setCacheOpen] = useState(false);
+  const [cacheConfirming, setCacheConfirming] = useState<string | null>(null);
+  const [cacheClearing, setCacheClearing] = useState(false);
+  const [cacheBusy, setCacheBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // 预览弹层：用于把焦点移入关闭按钮，保证键盘可达
   const previewCloseRef = useRef<HTMLButtonElement>(null);
@@ -73,6 +103,12 @@ export default function MediaPanel() {
       return fetch(`/api/media?${params.toString()}`);
     },
     { initialArgs: [1, ""], notOkMessage: "加载媒体失败", networkMessage: "网络错误" }
+  );
+
+  // 壁纸缓存与媒体库分属两套数据源，各自独立请求（缓存量小、不分页）
+  const { data: cache, loading: cacheLoading, run: loadCache } = useDataFetcher<CacheOverview, []>(
+    () => fetch("/api/wallpaper/cache"),
+    { initialArgs: [], notOkMessage: "加载壁纸缓存失败", networkMessage: "网络错误" }
   );
 
   // 列表 / 总数 / 当前页均以服务端返回为准
@@ -154,6 +190,40 @@ export default function MediaPanel() {
       toast.error("删除失败");
     } finally {
       run(page, usage);
+    }
+  }
+
+  async function deleteCacheItem(fileName: string) {
+    setCacheBusy(true);
+    try {
+      const res = await fetch(`/api/wallpaper/cache?fileName=${encodeURIComponent(fileName)}`, {
+        method: "DELETE",
+      });
+      const d = await res.json().catch(() => null);
+      if (res.ok) toast.success("已删除该缓存");
+      else toast.error(d?.error || "删除失败");
+    } catch {
+      toast.error("删除失败");
+    } finally {
+      setCacheConfirming(null);
+      setCacheBusy(false);
+      void loadCache();
+    }
+  }
+
+  async function clearCache() {
+    setCacheBusy(true);
+    try {
+      const res = await fetch("/api/wallpaper/cache?all=1", { method: "DELETE" });
+      const d = await res.json().catch(() => null);
+      if (res.ok) toast.success(`已清空 ${d?.removed ?? 0} 张缓存`);
+      else toast.error(d?.error || "清空失败");
+    } catch {
+      toast.error("清空失败");
+    } finally {
+      setCacheClearing(false);
+      setCacheBusy(false);
+      void loadCache();
     }
   }
 
@@ -320,6 +390,123 @@ export default function MediaPanel() {
             </div>
           </div>
         )}
+
+        {/* 壁纸缓存分区：数据源是 data/wallpapers 的 manifest，不是 ImageAsset —— 缓存会被
+            自动裁剪，登记进媒体库会留下「记录还在、文件已被删」的死链接，故独立展示 */}
+        <div className="mt-6 border-t border-border pt-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <HardDrive className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-medium">壁纸缓存</span>
+              <span className="text-xs text-muted-foreground">
+                {cacheLoading && !cache
+                  ? "读取中..."
+                  : `已缓存 ${cache?.total ?? 0} 张 · 占用 ${formatBytes(cache?.bytes ?? 0)}`}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => setCacheOpen((v) => !v)}
+                disabled={!cache || cache.total === 0}
+              >
+                {cacheOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                {cacheOpen ? "收起" : "展开查看"}
+              </Button>
+              {cacheClearing ? (
+                <>
+                  <Button size="sm" variant="destructive" className="gap-1.5" onClick={clearCache} disabled={cacheBusy}>
+                    <Trash2 className="h-3.5 w-3.5" />
+                    确认清空
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setCacheClearing(false)} disabled={cacheBusy}>
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 text-destructive hover:bg-destructive/10"
+                  onClick={() => setCacheClearing(true)}
+                  disabled={!cache || cache.total === 0 || cacheBusy}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  清空
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <p className="mt-2 text-xs text-muted-foreground">
+            从壁纸源自动下载的本地背景图，前台优先取这里（源失效也能正常展示）。上限 {cache?.max ?? 100} 张，
+            超出按时间自动删最旧；在这里删掉后，下次访问会重新抓一张。
+          </p>
+
+          {cacheOpen && cache && cache.items.length > 0 && (
+            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              {cache.items.map((item) => (
+                <div key={item.fileName} className="overflow-hidden rounded-xl border border-border bg-background">
+                  <button
+                    onClick={() => setPreviewUrl(item.url)}
+                    disabled={!item.exists}
+                    className="relative block w-full cursor-zoom-in bg-muted disabled:cursor-not-allowed"
+                    aria-label={`预览 ${item.fileName}`}
+                  >
+                    {/* 缓存图片经 /api/wallpaper/file 动态路由提供，与媒体库同理不走 next/image */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={item.url} alt={item.fileName} loading="lazy" className="aspect-square w-full object-cover" />
+                    {!item.exists && (
+                      <span className="absolute inset-0 flex items-center justify-center bg-black/60 p-2 text-center text-[11px] text-white">
+                        文件已不在磁盘上
+                      </span>
+                    )}
+                  </button>
+
+                  <div className="space-y-2 p-3">
+                    <p className="truncate text-xs font-medium text-foreground" title={item.fileName}>
+                      {item.fileName}
+                    </p>
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                      <span>{formatBytes(item.size)}</span>
+                      <span title="分池标签（来源:设备）">{item.tag ?? "未分组"}</span>
+                    </div>
+
+                    {cacheConfirming === item.fileName ? (
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          className="h-7 flex-1 text-xs"
+                          onClick={() => deleteCacheItem(item.fileName)}
+                          disabled={cacheBusy}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          确认删除
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setCacheConfirming(null)}>
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-full text-xs text-destructive hover:bg-destructive/10"
+                        onClick={() => setCacheConfirming(item.fileName)}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        删除
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* 预览大图：对话框语义 + Esc 关闭 + 打开时焦点移入关闭按钮 */}
         {previewUrl && (
