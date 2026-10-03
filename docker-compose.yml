@@ -16,6 +16,12 @@ services:
       - ./data:/app/data
     env_file:
       - .env.deploy
+    environment:
+      # 容器内报告的「当前版本」直接取自镜像标签：lib/version.ts 优先读 APP_VERSION，
+      # 缺失时回退到镜像里烘焙的 package.json 版本。
+      # 放在这里（而不是各脚本里分别注入）是为了让 deploy.sh 与 scripts/update-watch.sh
+      # 由构造保证一致 —— 两条路径各写一遍，很容易只更新一边而长期无人发现。
+      APP_VERSION: ${IMAGE_TAG}
     # 限制日志体积
     logging:
       driver: json-file
