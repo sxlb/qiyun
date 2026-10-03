@@ -166,6 +166,29 @@ check(/-t .*docker\.io/.test(mergeRun) === /DOCKERHUB_TOKEN/.test(mergeRun),
 check(!!releaseStep && /artifacts\/packages\//.test(JSON.stringify(releaseStep.with || {})),
   "Release 使用构件里的 Notes 与两个 tar 包");
 
+// ---------- Release Notes ----------
+// release-notes.py 靠 `git tag -l` 找上一版本、再取 `<上一版本>..HEAD` 的提交区间。
+// 因此承载它的 job 必须全量 checkout：默认的 fetch-depth: 1 是浅克隆，既列不出任何 tag
+// （prev 退化为空），历史里也只剩 1 个提交 —— 不报错，但每条发布说明都退化成「最后一条提交」，
+// 对比链接也从 compare 变成 commits/<版本>。0.0.4 与 0.0.5 的发布说明就是这么废掉的。
+(() => {
+  const notesJobs = Object.entries(jobs).filter(([, job]) => jsonOf(job).includes("release-notes.py"));
+  check(
+    notesJobs.length === 1,
+    "Release Notes 只在单个 job 内生成（避免两处各生成一份）",
+    `出现在：${notesJobs.map(([n]) => n).join(", ") || "无"}`
+  );
+  const shallow = notesJobs.filter(([, job]) => {
+    const co = stepsOf(job).find((s) => /actions\/checkout/.test(String(s.uses || "")));
+    return !(co && co.with && co.with["fetch-depth"] === 0);
+  });
+  check(
+    notesJobs.length > 0 && shallow.length === 0,
+    "生成 Release Notes 的 job 取全量历史与 tags（浅克隆会让变更列表退化成最后一条提交）",
+    `未取全量历史：${shallow.map(([n]) => n).join(", ")}`
+  );
+})();
+
 // ---------- 输出 ----------
 const failed = results.filter((r) => !r.ok);
 console.log(`发布链路结构校验：${results.length} 项`);

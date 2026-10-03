@@ -88,7 +88,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          # 完整历史 + tags：供版本递增与 Release Notes 的 CHANGELOG 链接使用
+          # 完整历史 + tags：供版本递增时解析「上一版本 tag」使用。
+          # 注意：Release Notes 在本 job 之后的 package job 里生成，那边的 checkout 同样需要完整历史。
           fetch-depth: 0
 
       - name: Compute version
@@ -124,6 +125,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          # 必须取全量历史与 tags：Release Notes 由本 job 的 release-notes.py 生成，
+          # 它要用 `git tag -l` 找出上一版本、再取 `<上一版本>..HEAD` 的提交区间。
+          # 默认的 fetch-depth: 1 是浅克隆——既列不出任何 tag（prev 退化为空），
+          # 历史里也只有 1 个提交，结果是每条发布说明都只剩最后一条提交、对比链接退化成
+          # `commits/<版本>`，与「本版改了什么」完全无关（0.0.4 与 0.0.5 实测均如此）。
+          fetch-depth: 0
 
       # 把 job 级输出落回 step 输出：下方步骤沿用既有的 steps.version.outputs.* 引用，
       # 避免为改名而大范围改动那些带详细注释的打包与校验步骤。
