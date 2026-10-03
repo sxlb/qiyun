@@ -280,7 +280,8 @@ export default function ContextMenu({
           music.setBoxOpen(true);
           break;
         case "next-wallpaper":
-          // 由 Background 组件监听并重新取图，这里不持有它的内部状态
+          // 由 Background 组件监听并**强制**去上游取一张新图（普通取图是缓存优先，
+          // 不会为了换图请求上游），这里不持有它的内部状态
           window.dispatchEvent(new Event("wallpaper-next"));
           break;
         case "scroll-top":

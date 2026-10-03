@@ -1187,14 +1187,18 @@ Cookie 头中会设置 `qiyun-uv=1`（httpOnly, sameSite=lax, maxAge=365 天）�
 
 #### 15f. 壁纸缓存服务
 
-##### `GET /api/wallpaper?coverType=&bgApi=&refresh=&t=`
+##### `GET /api/wallpaper?coverType=&bgApi=&refresh=&device=&force=&t=`
 
 | 属性       | 说明                                                   |
 | ---------- | ------------------------------------------------------ |
 | 认证要求   | 无                                                     |
-| URL 参数   | `coverType`(string, 默认 "bing")：可选 bing/landscape/anime/custom<br>`bgApi`(string, 可选)：自定义壁纸直链<br>`refresh`(number, 可选)：刷新间隔 0/5/10/30 分钟 |
+| URL 参数   | `coverType`(string, 默认 "bing")：可选 bing/landscape/anime/custom<br>`bgApi`(string, 可选)：自定义壁纸直链<br>`refresh`(number, 可选)：刷新间隔 0/5/10/30 分钟<br>`device`(string, 可选)：`pc`(默认)/`mobile`，决定取横图还是竖图<br>`force`(string, 可选)：`1` 表示手动换一张 |
 
-**描述**：返回本地缓存的随机壁纸。自定义地址直连返回不经过缓存。支持预取轮换。
+**描述**：**缓存优先**。返回该分池本地缓存中的随机壁纸；分池为空时才即时下载一张。缓存充足时不会为了取图请求上游 —— 只有后台按 `refresh` 间隔静默补图。自定义地址直连返回，不经过缓存。
+
+缓存上限按**预算组**计（电脑 100 / 手机 100 / 必应共享 100，各自独立），填满即停止自动新增，不会自动删旧图。本地不足 5 张时会不受间隔约束尽快补齐。
+
+`force=1` 为「手动换一张」：明确去上游取一张新的并写入缓存；该组已满 100 张时替换掉最旧的一张。**只对随机源（风景 / 动漫）生效** —— 必应当天只有一张图，换了也是同一张；该端点按 IP 限流（6 次/分钟），超限返回 429。换图失败时返回空 `url`，前端应保留当前壁纸。
 
 **成功响应 (200)**：
 
@@ -1204,6 +1208,8 @@ Cookie 头中会设置 `qiyun-uv=1`（httpOnly, sameSite=lax, maxAge=365 天）�
   "cached": true
 }
 ```
+
+手动换图成功时额外带 `switched: true`；失败时为 `{ "url": "", "cached": false, "error": "..." }`。
 
 ##### `GET /api/wallpaper/file/[name]`
 
@@ -1221,7 +1227,7 @@ Cookie 头中会设置 `qiyun-uv=1`（httpOnly, sameSite=lax, maxAge=365 天）�
 | 认证要求   | 管理员                        |
 | URL 参数   | 无                            |
 
-**描述**：列出壁纸缓存（后台「媒体库 → 壁纸缓存」分区）。这些缓存**不登记** `ImageAsset`：它会被自动裁剪（上限 100 张），生命周期与媒体库里的用户内容不同。大小与存在性以磁盘为准，`exists: false` 表示 manifest 里还留着记录但文件已不在磁盘上。
+**描述**：列出壁纸缓存（后台「媒体库 → 壁纸缓存」分区）。这些缓存**不登记** `ImageAsset`：它的条数受预算上限约束（电脑 / 手机 / 必应共享 各 100 张），生命周期与媒体库里的用户内容不同。大小与存在性以磁盘为准，`exists: false` 表示 manifest 里还留着记录但文件已不在磁盘上。`budgets` 给出各预算组的张数与占用，`readyThreshold` 是「本地缓存够用」的阈值（张）。
 
 **成功响应 (200)**：
 

@@ -164,7 +164,7 @@ export default function Background({
   const announceReadyRef = useRef(announceReady);
   announceReadyRef.current = announceReady;
 
-  const resolveUrl = useCallback(async (): Promise<string> => {
+  const resolveUrl = useCallback(async (force = false): Promise<string> => {
     const custom = bgApi.trim();
     // 自定义地址优先级最高（兼容旧配置：填了 bgApi 就走自定义），用户直链直接使用，不走缓存
     if (custom) return custom;
@@ -182,6 +182,8 @@ export default function Background({
         device,
         t: String(Date.now()),
       });
+      // 手动换图：让服务端明确去上游取一张新的（默认是缓存优先，不会为了取图请求上游）
+      if (force) qs.set("force", "1");
       const res = await fetch(`/api/wallpaper?${qs}`, { cache: "no-store" });
       if (res.ok) {
         const json = (await res.json()) as { url?: string };
@@ -190,6 +192,10 @@ export default function Background({
     } catch {
       /* 缓存服务异常时走直连兜底 */
     }
+
+    // 手动换图失败到此为止：既不要退化成内置底图（看起来像壁纸坏了），
+    // 也不要在被限流 / 上游抖动时绕过服务端直连上游
+    if (force) return "";
 
     // 兜底：直连壁纸源（地址取自后台「外部服务」配置，未配置时用内置默认；手机端未单独配置则沿用电脑端）
     const apis = {
@@ -325,24 +331,33 @@ export default function Background({
       img.src = bgUrl;
     }
 
-    async function load() {
+    /**
+     * 取一张壁纸地址。
+     * @param force 手动换图：让服务端明确去上游取一张新的（默认是缓存优先，
+     *              不会为了取图去请求上游）。取不到时返回空串，由调用方保留当前壁纸。
+     */
+    async function load(force = false) {
       try {
-        // 首次加载：直接使用 SSR 阶段解析好的直链（浏览器已通过 preload 开始下载）
+        // 首次加载：直接使用 SSR 阶段解析好的直链（浏览器已通过 preload 开始下载）。
+        // 手动换图不走这条捷径，否则点「换一张」会原样返回页面上那张。
         let bgUrl = "";
-        if (!usedInitialRef.current && initialUrl) {
+        if (!force && !usedInitialRef.current && initialUrl) {
           usedInitialRef.current = true;
           bgUrl = initialUrl;
         } else {
           // 没有可用的 SSR 直链（典型：壁纸缓存为空）→ 先铺内置底图，保证首帧不是空白。
           // 真实壁纸仍会在下面异步加载并淡入覆盖；这一层不影响加载动画的收起时机。
-          if (!placeholderPaintedRef.current) {
+          if (!force && !placeholderPaintedRef.current) {
             placeholderPaintedRef.current = true;
             paintPlaceholder();
           }
-          bgUrl = await resolveUrl();
+          bgUrl = await resolveUrl(force);
         }
         if (cancelled) return;
         if (!bgUrl) {
+          // 手动换图没取到新图：保留页面上现有的壁纸，不替换（也不要退化成内置底图，
+          // 那看起来像「壁纸坏了」）。失败原因由接口层决定，这里静默即可。
+          if (force) return;
           // 无可用壁纸（如 custom 类型未配置地址）：落到内置默认图，而不是直接放弃——
           // 否则全屏加载动画只能等 5s 兜底超时，页面上还没有任何背景
           applyBundledFallback();
@@ -352,7 +367,8 @@ export default function Background({
         applyImage(bgUrl);
       } catch (e) {
         if (process.env.NODE_ENV === "development") console.warn("壁纸加载异常:", e);
-        applyBundledFallback(); // 解析异常：落到内置默认图
+        // 手动换图异常同样保留现有壁纸
+        if (!force) applyBundledFallback();
       }
     }
 
@@ -361,14 +377,15 @@ export default function Background({
     // 右键菜单的「换一张壁纸」：复用同一条取图链路（缓存分池、预加载、主色提取都在里面），
     // 不另开一条取图路径，避免两条路径的缓存标签/设备判定漂移
     const onNextWallpaper = () => {
-      void load();
+      void load(true);
     };
     window.addEventListener("wallpaper-next", onNextWallpaper);
 
-    // 定时切换
+    // 定时切换（注意必须包一层：setInterval 会把定时器 id 当作第一个实参传进去，
+    // 直接写 setInterval(load, ...) 等于每次自动切换都变成「手动换图」）
     const interval = SWITCH_INTERVALS[autoSwitchInterval] ?? 0;
     if (interval > 0) {
-      timer = window.setInterval(load, interval);
+      timer = window.setInterval(() => void load(), interval);
     }
 
     return () => {

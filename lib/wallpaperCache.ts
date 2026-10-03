@@ -12,15 +12,24 @@ import type { WallpaperDevice } from "@/lib/external-api";
  *
  * 机制：
  * - 缓存目录：<cwd>/data/wallpapers（.gitignore 已排除 data/，Docker 卷映射目录）
- * - 上限：MAX_CACHE_SIZE = 100 张，超出时按 addedAt 删除最旧的
+ * - 上限：按「预算组」各 100 张 —— 电脑一组、手机一组、必应共享一组，合计最多 300 张。
+ *   达到上限即**停止自动新增**，不再删旧图：旧图被自动删掉会让访客刚看惯的壁纸凭空消失。
+ *   唯一会替换旧图的是后台/右键菜单里明确发起的「换一张壁纸」。
+ * - 读取：一律优先本地缓存，只要本组有图就不为取图去请求上游。
+ * - 填充：不足 READY_CACHE_SIZE（5 张）时尽快热身到 5 张；达到后按「刷新间隔」
+ *   每次访问静默补 1 张，直到该组满 100 张为止。
  * - manifest.json 记录缓存清单（文件名/来源/时间/大小）与上次刷新时间
- * - 刷新间隔（后台可配 0/5/10/30 分钟）：请求到来时若到期则后台静默预取一张新壁纸，
- *   无访问则不刷新（不占用服务器资源）
  * - 所有写操作串行化（内存队列），避免并发请求竞争写坏 manifest / 目录
  */
 
-/** 缓存文件上限（张） */
-const MAX_CACHE_SIZE = 100;
+/** 单个缓存预算组的上限（张）：电脑 / 手机 / 必应共享 各 100 */
+export const MAX_BUDGET_SIZE = 100;
+/**
+ * 本地缓存「够用」的张数阈值。
+ * 低于它时不等刷新间隔、尽快热身（否则后台刷新间隔默认为 0 时永远只有 1 张图，
+ * 而 1 张图谈不上「优先从缓存读取」）；达到它之后就只读本地，交给刷新间隔慢慢攒。
+ */
+export const READY_CACHE_SIZE = 5;
 /** 单张图片大小上限（字节）：20MB */
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 /** 下载超时（ms） */
@@ -75,6 +84,42 @@ interface Manifest {
   lastRefreshAt: number | null;
   /** 上次下载/尝试时刻（用于节流，持久化避免重启后突发请求） */
   lastDownloadAt: number | null;
+}
+
+/**
+ * 缓存预算组：上限既不看分池总数、也不看全局总数，而是按「谁在用」分组。
+ *
+ * - `pc`     电脑：风景:pc + 动漫:pc
+ * - `mobile` 手机：风景:mobile + 动漫:mobile
+ * - `shared` 必应这类与设备无关的源（含升级前没有标签的历史条目）
+ *
+ * 这样「手机别占电脑的额度」才成立：手机池攒满了也不会挤掉电脑的图。
+ */
+export type WallpaperCacheBudget = "pc" | "mobile" | "shared";
+
+/** 预算组的中文名（后台用量展示用） */
+export const CACHE_BUDGET_LABELS: Record<WallpaperCacheBudget, string> = {
+  pc: "电脑",
+  mobile: "手机",
+  shared: "必应共享",
+};
+
+/** 后台展示用的预算组顺序 */
+export const CACHE_BUDGETS: WallpaperCacheBudget[] = ["pc", "mobile", "shared"];
+
+/**
+ * 分池标签 → 预算组。
+ * 升级前的历史条目没有标签，只有 `shared` 允许复用它们，因此一律计入 `shared`。
+ */
+export function cacheBudgetFor(tag: WallpaperCacheTag | null | undefined): WallpaperCacheBudget {
+  if (tag === "landscape:pc" || tag === "anime:pc") return "pc";
+  if (tag === "landscape:mobile" || tag === "anime:mobile") return "mobile";
+  return "shared";
+}
+
+/** 统计某个预算组已有的条目数 */
+function countInBudget(entries: CacheEntry[], budget: WallpaperCacheBudget): number {
+  return entries.filter((entry) => cacheBudgetFor(entry.tag) === budget).length;
 }
 
 /** 空清单工厂：每次返回新对象，避免共享引用被并发操作污染 */
@@ -238,21 +283,41 @@ async function downloadImage(sourceUrl: string): Promise<{ buffer: Buffer; ext: 
   }
 }
 
+/** 加入缓存的方式 */
+type AddMode =
+  /** 自动填充：该组满了直接跳过，不删任何旧图 */
+  | "fill"
+  /** 手动换图：满了就替换本组最旧的一张（否则满仓之后就没有「不满意换一张」的出口），且不受下载间隔限制 */
+  | "manual";
+
 /**
  * 下载并加入缓存（必须在 enqueue 内调用，保证写操作串行）。
- * 返回文件名；下载失败返回 null。
+ * 返回文件名；跳过或失败返回 null。
  *
- * 节流：相邻两次下载/尝试至少间隔 MIN_DOWNLOAD_GAP_MS，
+ * 节流：自动填充时相邻两次下载/尝试至少间隔 MIN_DOWNLOAD_GAP_MS，
  * 防止短时间连续请求壁纸源被屏蔽；失败也会记录尝试时刻，重试同样有间隔。
+ * 手动换图跳过这个间隔 —— 那是用户明确点的动作，上游保护交给接口层按 IP 限流
+ * （见 app/api/wallpaper/route.ts 的 force 分支）。
  */
 async function addWallpaperLocked(
   sourceUrl: string,
   manifest: Manifest,
   now: number,
-  tag: WallpaperCacheTag
+  tag: WallpaperCacheTag,
+  mode: AddMode = "fill"
 ): Promise<string | null> {
-  // 距上次尝试不足 5s：跳过本次（返回 null，前端走直连兜底）
-  if (manifest.lastDownloadAt !== null && now - manifest.lastDownloadAt < MIN_DOWNLOAD_GAP_MS) {
+  const manual = mode === "manual";
+  const budget = cacheBudgetFor(tag);
+  const full = countInBudget(manifest.entries, budget) >= MAX_BUDGET_SIZE;
+  // 满仓：自动填充到此为止（「到一百就停止」）；只有手动换图才继续，走替换最旧的逻辑
+  if (full && !manual) return null;
+
+  // 距离上次下载/尝试不足 5s：自动填充跳过本次（返回 null，前端继续用现有缓存）
+  if (
+    !manual &&
+    manifest.lastDownloadAt !== null &&
+    now - manifest.lastDownloadAt < MIN_DOWNLOAD_GAP_MS
+  ) {
     return null;
   }
   // 记录尝试时刻（成功/失败都持久化）
@@ -264,15 +329,15 @@ async function addWallpaperLocked(
     await ensureCacheDir();
     await fs.writeFile(path.join(getWallpaperCacheDir(), fileName), buffer);
 
-    manifest.entries.push({ fileName, sourceUrl, addedAt: now, size: buffer.byteLength, tag });
-    manifest.lastRefreshAt = now;
-
-    // 超出上限：按加入时间删除最旧的文件
-    if (manifest.entries.length > MAX_CACHE_SIZE) {
-      const sorted = [...manifest.entries].sort((a, b) => a.addedAt - b.addedAt);
-      const overflow = manifest.entries.length - MAX_CACHE_SIZE;
-      for (let i = 0; i < overflow; i++) {
-        const oldest = sorted[i];
+    // 满仓下的手动换图：先挤掉本组最旧的一张，保证总数不越过上限
+    if (full) {
+      const oldest = manifest.entries
+        .filter((entry) => cacheBudgetFor(entry.tag) === budget)
+        .reduce<CacheEntry | null>(
+          (min, entry) => (min === null || entry.addedAt < min.addedAt ? entry : min),
+          null
+        );
+      if (oldest) {
         const idx = manifest.entries.indexOf(oldest);
         if (idx >= 0) manifest.entries.splice(idx, 1);
         await fs
@@ -282,6 +347,9 @@ async function addWallpaperLocked(
           });
       }
     }
+
+    manifest.entries.push({ fileName, sourceUrl, addedAt: now, size: buffer.byteLength, tag });
+    manifest.lastRefreshAt = now;
 
     await saveManifest(manifest);
     return fileName;
@@ -326,7 +394,7 @@ export async function getRandomCachedWallpaper(tag: WallpaperCacheTag): Promise<
 
 /**
  * 下载一张壁纸并加入缓存（缓存为空时的首次填充）。
- * 成功返回文件名，失败返回 null。
+ * 成功返回文件名；该组已满或下载失败返回 null。
  */
 export function downloadAndCacheWallpaper(
   sourceUrl: string,
@@ -339,9 +407,32 @@ export function downloadAndCacheWallpaper(
 }
 
 /**
- * 按刷新间隔后台预取：到期时下载一张新壁纸入缓存（轮换），否则跳过。
- * intervalMin：0 表示不刷新；5 / 10 / 30 分钟。
+ * 手动「换一张壁纸」：明确去上游取一张新的。
+ *
+ * 与自动填充的关键区别：该组已满 100 张时也照做 —— 替换掉本组最旧的那张，总数保持不变。
+ * 否则「缓存满了就停止新增」会把「不满意就换一张」这条出口一起堵死。
+ * 同时不受 MIN_DOWNLOAD_GAP_MS 限制（用户明确点的动作），上游保护由接口层按 IP 限流负责。
+ */
+export function replaceWallpaper(
+  sourceUrl: string,
+  tag: WallpaperCacheTag
+): Promise<string | null> {
+  return enqueue(async () => {
+    const manifest = await loadManifest();
+    return addWallpaperLocked(sourceUrl, manifest, Date.now(), tag, "manual");
+  });
+}
+
+/**
+ * 按刷新间隔后台预取：到期时下载一张新壁纸入缓存，否则跳过。
+ * intervalMin：0 表示不按间隔刷新；5 / 10 / 30 分钟。
  * 全程静默，失败不影响响应（下次请求自动重试）。
+ *
+ * 两条补充规则：
+ * - 本组已满 MAX_BUDGET_SIZE 张：直接返回，不再新增（「到一百就停止」）。
+ * - 本组不足 READY_CACHE_SIZE 张：**不受刷新间隔约束**，尽快热身到 5 张。
+ *   否则后台间隔默认为 0（不刷新）时永远只有 1 张图，「优先从缓存读取」就名存实亡。
+ *   热身同样受 MIN_DOWNLOAD_GAP_MS 约束，不会瞬间连打上游。
  *
  * 注意：节流窗口（`lastRefreshAt` / `lastDownloadAt`）是**全局共享**的，不按设备分开。
  * 这是刻意的取舍：小机器上"每个间隔只新增一张图"比"每台设备各新增一张"更省上游配额，
@@ -352,12 +443,21 @@ export function maybePrefetchWallpaper(
   intervalMin: number,
   tag: WallpaperCacheTag
 ): Promise<void> {
-  if (intervalMin <= 0) return Promise.resolve();
   return enqueue(async () => {
     const manifest = await loadManifest();
     const now = Date.now();
-    const due = manifest.lastRefreshAt === null || now - manifest.lastRefreshAt >= intervalMin * 60_000;
-    if (!due) return;
+    const used = countInBudget(manifest.entries, cacheBudgetFor(tag));
+    // 该组已满：停止自动新增（到一百就停止）
+    if (used >= MAX_BUDGET_SIZE) return;
+
+    // 「够用」阈值以内先热身：不等间隔，尽快让本地缓存具备可读性
+    const warming = used < READY_CACHE_SIZE;
+    // intervalMin = 0 表示「不按间隔刷新」：此时只有热身会补图，稳态不再增长
+    const due =
+      intervalMin > 0 &&
+      (manifest.lastRefreshAt === null || now - manifest.lastRefreshAt >= intervalMin * 60_000);
+    if (!due && !warming) return;
+
     await addWallpaperLocked(sourceUrl, manifest, now, tag);
   });
 }
@@ -412,7 +512,7 @@ export async function resolveWallpaperUrl(
 /**
  * 供后台展示的缓存条目。
  *
- * 之所以不把缓存登记进 `ImageAsset`（媒体库那张表）：缓存会被自动裁剪（见 MAX_CACHE_SIZE），
+ * 之所以不把缓存登记进 `ImageAsset`（媒体库那张表）：缓存条数受预算上限约束（见 MAX_BUDGET_SIZE），
  * 与媒体库里用户内容的生命周期不同 —— 登记进库迟早留下「记录还在、文件已被删」的死链接。
  * 因此这里只做「读清单 + 删文件」，数据库完全不参与。
  */
@@ -431,13 +531,29 @@ export interface CachedWallpaper {
   exists: boolean;
 }
 
+/** 单个预算组的用量（后台按「电脑 / 手机 / 必应共享」分别展示） */
+export interface WallpaperCacheBudgetUsage {
+  key: WallpaperCacheBudget;
+  label: string;
+  /** 该组已缓存的张数 */
+  count: number;
+  /** 该组的上限（张） */
+  max: number;
+  /** 该组实际占用字节（只算文件确实存在的条目） */
+  bytes: number;
+}
+
 export interface WallpaperCacheOverview {
   items: CachedWallpaper[];
   total: number;
   /** 实际占用字节数（只统计文件确实存在的条目） */
   bytes: number;
-  /** 自动裁剪上限，便于界面说明「超出会删最旧」 */
+  /** 单个预算组的上限（张）：电脑 / 手机 / 必应共享 各一份额度 */
   max: number;
+  /** 本地缓存「够用」阈值（张）：达到后只读本地，不再为取图请求上游 */
+  readyThreshold: number;
+  /** 按预算组拆分的用量 */
+  budgets: WallpaperCacheBudgetUsage[];
 }
 
 /**
@@ -476,11 +592,24 @@ export async function listCachedWallpapers(): Promise<WallpaperCacheOverview> {
   );
 
   items.sort((a, b) => b.addedAt - a.addedAt);
+  // 按预算组分别统计：后台要能一眼看出「手机池有没有占掉电脑的额度」
+  const budgets = CACHE_BUDGETS.map((key) => {
+    const group = items.filter((item) => cacheBudgetFor(item.tag) === key);
+    return {
+      key,
+      label: CACHE_BUDGET_LABELS[key],
+      count: group.length,
+      max: MAX_BUDGET_SIZE,
+      bytes: group.reduce((sum, item) => sum + (item.exists ? item.size : 0), 0),
+    };
+  });
   return {
     items,
     total: items.length,
     bytes: items.reduce((sum, i) => sum + (i.exists ? i.size : 0), 0),
-    max: MAX_CACHE_SIZE,
+    max: MAX_BUDGET_SIZE,
+    readyThreshold: READY_CACHE_SIZE,
+    budgets,
   };
 }
 

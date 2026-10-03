@@ -66,11 +66,23 @@ interface CachedWallpaper {
   exists: boolean;
 }
 
+interface CacheBudgetUsage {
+  key: string;
+  label: string;
+  count: number;
+  max: number;
+  bytes: number;
+}
+
 interface CacheOverview {
   items: CachedWallpaper[];
   total: number;
   bytes: number;
   max: number;
+  /** 本地缓存「够用」阈值（张）：达到后前台只读本地 */
+  readyThreshold: number;
+  /** 按预算组拆分的用量（电脑 / 手机 / 必应共享） */
+  budgets: CacheBudgetUsage[];
 }
 
 function formatBytes(n: number): string {
@@ -403,6 +415,11 @@ export default function MediaPanel() {
                   ? "读取中..."
                   : `已缓存 ${cache?.total ?? 0} 张 · 占用 ${formatBytes(cache?.bytes ?? 0)}`}
               </span>
+              {cache && (cache.budgets?.length ?? 0) > 0 && (
+                <span className="text-[11px] text-muted-foreground">
+                  {(cache.budgets ?? []).map((b) => `${b.label} ${b.count}/${b.max}`).join(" · ")}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <Button
@@ -441,8 +458,12 @@ export default function MediaPanel() {
           </div>
 
           <p className="mt-2 text-xs text-muted-foreground">
-            从壁纸源自动下载的本地背景图，前台优先取这里（源失效也能正常展示）。上限 {cache?.max ?? 100} 张，
-            超出按时间自动删最旧；在这里删掉后，下次访问会重新抓一张。
+            从壁纸源自动下载的本地背景图，前台优先取这里（源失效也能正常展示）。额度分三份：
+            电脑 {cache?.max ?? 100} 张、手机 {cache?.max ?? 100} 张、必应共享 {cache?.max ?? 100} 张，
+            <strong>各自填满即停止新增</strong>，不会自动删旧图。本地攒到 {cache?.readyThreshold ?? 5} 张后，
+            前台只读本地、不再为了取图去请求上游；不够 {cache?.readyThreshold ?? 5} 张时会尽快补齐。
+            随机壁纸源（风景 / 动漫）下，前台右键菜单可用「换一张壁纸」主动去上游取新图 ——
+            额度满时替换最旧的那一张。在这里删掉后，下次访问会重新抓一张。
           </p>
 
           {cacheOpen && cache && cache.items.length > 0 && (

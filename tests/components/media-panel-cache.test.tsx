@@ -31,6 +31,12 @@ const CACHE = {
   total: 1,
   bytes: 2048,
   max: 100,
+  readyThreshold: 5,
+  budgets: [
+    { key: "pc", label: "电脑", count: 1, max: 100, bytes: 2048 },
+    { key: "mobile", label: "手机", count: 0, max: 100, bytes: 0 },
+    { key: "shared", label: "必应共享", count: 0, max: 100, bytes: 0 },
+  ],
 };
 
 /** 记录请求，便于断言删除时用的是哪个地址 */
@@ -64,7 +70,12 @@ describe("媒体库 · 壁纸缓存分区", () => {
 
     expect(await screen.findByText(/已缓存 1 张/)).toBeTruthy();
     expect(screen.getByText(/占用 2\.0 KB/)).toBeTruthy();
-    expect(screen.getByText(/上限 100 张/)).toBeTruthy();
+    // 额度分三份（电脑 / 手机 / 必应共享），说明文案要讲清楚「各自填满即停止新增」
+    expect(screen.getByText(/电脑 100 张/)).toBeTruthy();
+    expect(screen.getByText(/各自填满即停止新增/)).toBeTruthy();
+    // 用量必须按预算组渲染出来：最容易出现「接口有数据但界面没展示」
+    expect(screen.getByText(/电脑 1\/100/)).toBeTruthy();
+    expect(screen.getByText(/手机 0\/100/)).toBeTruthy();
 
     // 默认折叠：折叠时不该渲染缓存图片
     expect(screen.queryByAltText("abc.webp")).toBeNull();
