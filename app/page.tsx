@@ -109,6 +109,7 @@ export async function generateMetadata(): Promise<import("next").Metadata> {
 // ── 数据准备：默认值、头像解析、字体映射等逻辑已抽取到 home-data.ts ──
 import { getHomeData } from "./home-data";
 import { CURRENT_VERSION } from "@/lib/version";
+import { themeInitScript } from "@/lib/theme";
 
 export default async function Home() {
   const profile = await getProfile();
@@ -116,6 +117,13 @@ export default async function Home() {
 
   return (
     <ThemeProvider theme={d.theme} accentColor={d.accentColor} glassOpacity={d.glassOpacity} glassBlur={d.glassBlur}>
+      {/*
+        首帧主题脚本（权威）：用后台配置的模式覆盖 layout.tsx 的 system 基线。
+        放在 body 流的最前位置 —— 浏览器解析到它时同步执行，之后才会解析并绘制本页内容，
+        因此「固定深/浅色」「定时切换」「跟随系统」在首帧就是正确的，不存在主题闪烁。
+        （bg 模式需等壁纸取色完成，首帧先按系统偏好落定，取色完成后由 ThemeProvider 收敛。）
+      */}
+      <script dangerouslySetInnerHTML={{ __html: themeInitScript(d.theme) }} />
       {/* 音乐播放器 Provider：包住全站内容，提供播放状态与列表弹窗；控制面板内嵌于功能卡组（MusicCard） */}
       <MusicProviderLazy
         songApi={d.songApi}

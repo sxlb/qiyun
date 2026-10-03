@@ -1,6 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+
+/**
+ * 最短展示时长：壁纸命中缓存时若立即收起会有"闪一下"的观感，同时给分屏动画留出起势时间。
+ * 期间壁纸已在后台通过 SSR preload + new Image() 预加载，动画结束时壁纸必然已渲染在底层。
+ */
+const MIN_SHOW_MS = 800;
+
+/**
+ * 安全兜底：背景源或事件异常时强制收起。
+ * 必须**早于** globals.css 里 #loader-wrapper 的纯 CSS 兜底（9s），否则 CSS 会先一步锁死
+ * visibility，把分屏收起动画截断成"闪一下消失"。
+ */
+const SAFETY_MS = 7000;
+
+/**
+ * 收起动画兜底时长：分屏收起（延迟 0.3s + 0.5s）与整体上移（延迟 1s + 0.3s）的合计约 1.3s。
+ * 正常情况下由包裹层的 transitionend 事件驱动移除节点，本计时器只兜住
+ * 「过渡被 prefers-reduced-motion 或样式覆盖吞掉、事件永不到达」的边角情况。
+ */
+const EXIT_FALLBACK_MS = 1400;
 
 interface LoadingScreenProps {
   /** 是否启用加载动画（后台可配置） */
@@ -10,62 +30,95 @@ interface LoadingScreenProps {
 }
 
 /**
- * 全屏加载动画
- * - 三环旋转动画 + 站点名 + Loading 文字
- * - 收起时机：最短展示 800ms 后，若壁纸已就绪（或壁纸源失败）即收起。
- *   期间壁纸已在后台通过 SSR preload + new Image() 预加载，保证动画结束壁纸必然已在底层，
- *   不再因宽松超时"提前收口"导致动画结束后出现黑屏待壁纸。
- * - 安全兜底：最长 7s 强制收起，防止背景源异常导致加载动画卡死
+ * 全屏加载动画（事件驱动）
+ *
+ * 收起条件（两个信号都到齐才收，先到者等待后到者）：
+ *   1. 已过最短展示时长 MIN_SHOW_MS；
+ *   2. 壁纸已就绪 —— Background 组件在「加载成功」与「彻底失败」两种结局下都会广播
+ *      background-ready，因此不会出现"壁纸加载失败导致动画卡死"。
+ *
+ * 移除节点（而不是靠估算动画时长写死一个 setTimeout）：
+ *   监听包裹层自身 transform 过渡的 transitionend，动画一结束立刻移除；
+ *   另留 EXIT_FALLBACK_MS 计时器兜底。这样即使将来调整 CSS 动画时长，
+ *   组件也不需要跟着改魔法数字。
+ *
+ * 所有监听器都挂在本 effect 的 AbortController 上，卸载时一次 abort 全部回收，
+ * 不会残留"卸载后仍触发 setState"的监听。
  */
 export function LoadingScreen({ enabled = true, siteName = "" }: LoadingScreenProps) {
   const [loaded, setLoaded] = useState(false);
   const [removed, setRemoved] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!enabled || removed) return;
 
-    let mounted = true;
-    let hideTimer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    const { signal } = controller;
+    const wrapper = wrapperRef.current;
 
-    const hide = () => {
-      if (!mounted || hideTimer) return;
-      // 先加 loaded 状态触发分屏收起动画
+    // 状态机：minElapsed（最短展示已过）→ startedExit（收起动画已启动）→ finished（节点已移除）
+    let minElapsed = false;
+    let startedExit = false;
+    let finished = false;
+    let exitTimer: ReturnType<typeof setTimeout> | undefined;
+
+    /**
+     * 移除遮罩节点，并广播"加载动画已完全移除"供欢迎通知等组件接续展示。
+     *
+     * finished 守卫是必要的：transitionend 与 EXIT_FALLBACK_MS 计时器可能几乎同时到达
+     * （事件先到触发 setRemoved，但 React 尚未提交、effect 清理还没执行，计时器就已到期），
+     * 缺了它会重复广播 —— 而"移除完成"这个信号在语义上必须恰好一次。
+     */
+    const finish = () => {
+      if (finished || signal.aborted) return;
+      finished = true;
+      setRemoved(true);
+      window.dispatchEvent(new Event("loading-screen-removed"));
+    };
+
+    /** 启动收起动画（幂等）：加 loaded 类触发分屏收起 + 整体上移 */
+    const beginExit = () => {
+      if (startedExit || signal.aborted) return;
+      startedExit = true;
       setLoaded(true);
-      // 等动画全部完成再移除节点：分屏收起 0.3s 延迟 + 0.5s，整体上移 1s 延迟 + 0.3s，共 1.3s
-      hideTimer = setTimeout(() => {
-        if (mounted) setRemoved(true);
-        // 广播"加载动画已完全移除"，供欢迎通知等组件在动画结束后再展示
-        window.dispatchEvent(new Event("loading-screen-removed"));
-      }, 1400);
+      exitTimer = setTimeout(finish, EXIT_FALLBACK_MS);
     };
 
-    // 壁纸就绪后立即收起（Background 成功或失败都会广播 background-ready）
-    const onBgReady = () => {
-      if (mounted && !hideTimer) hide();
+    /**
+     * 唯一的收起入口：必须同时满足「最短展示已过」与「壁纸就绪」。
+     * 两个信号谁后到，谁负责触发（先到的只记录状态），因此不存在时序倒置导致永不收起。
+     */
+    const onBackgroundReady = () => {
+      if (minElapsed) beginExit();
     };
 
-    // 最短展示 800ms（避免闪屏），期间壁纸已通过 SSR preload 后台下载、
-    // Background 组件 new Image() 预加载——动画结束时壁纸必然已渲染在底层，不会出现"壁纸还没出来"。
+    window.addEventListener("background-ready", onBackgroundReady, { signal });
+
+    // 只认包裹层自身"整体上移"的那次过渡结束：分屏子元素的 transform 同样会冒泡，
+    // 不校验 target / propertyName 就会在动画刚起势时提前移除节点。
+    const onTransitionEnd = (event: TransitionEvent) => {
+      if (event.target !== wrapper) return;
+      if (event.propertyName !== "transform") return;
+      finish();
+    };
+    wrapper?.addEventListener("transitionend", onTransitionEnd, { signal });
+
+    // 信号 1：最短展示时长
     const minTimer = setTimeout(() => {
-      if (mounted && !hideTimer) {
-        if ((window as unknown as { __bgReady?: boolean }).__bgReady) {
-          hide();
-        } else {
-          window.addEventListener("background-ready", onBgReady, { once: true });
-        }
-      }
-    }, 800);
+      minElapsed = true;
+      // 壁纸可能在本组件挂载前就已就绪（SSR preload 命中缓存时不会再收到事件），此处直接复查
+      if ((window as unknown as { __bgReady?: boolean }).__bgReady) beginExit();
+    }, MIN_SHOW_MS);
 
-    // 安全兜底：仅供背景源/事件异常时兜底，正常判定完全由 background-ready 决定，
-    // 从而保证"动画结束前壁纸已就绪"。不再提供 2.8s 的宽松提前收起（那是黑屏的根源）。
-    const safety = setTimeout(hide, 7000);
+    // 信号 2：安全兜底
+    const safetyTimer = setTimeout(beginExit, SAFETY_MS);
 
     return () => {
-      mounted = false;
-      if (minTimer) clearTimeout(minTimer);
-      if (safety) clearTimeout(safety);
-      if (hideTimer) clearTimeout(hideTimer);
-      window.removeEventListener("background-ready", onBgReady);
+      controller.abort(); // 一次性注销 background-ready / transitionend 监听
+      clearTimeout(minTimer);
+      clearTimeout(safetyTimer);
+      if (exitTimer) clearTimeout(exitTimer);
     };
   }, [enabled, removed]);
 
@@ -74,9 +127,9 @@ export function LoadingScreen({ enabled = true, siteName = "" }: LoadingScreenPr
   return (
     <div
       id="loader-wrapper"
-      className={`fixed inset-0 z-[999] overflow-hidden bg-gradient-to-br from-[#1a1a2e] via-[#16213e] to-[#1a1a2e] ${
-        loaded ? "loader-loaded" : ""
-      }`}
+      ref={wrapperRef}
+      // 配色由 globals.css 的 --loader-* 令牌给出（浅/深主题各一套），此处不再写死颜色
+      className={`fixed inset-0 z-[999] overflow-hidden ${loaded ? "loader-loaded" : ""}`}
       aria-hidden
     >
       {/* 中心加载内容 */}
@@ -87,9 +140,9 @@ export function LoadingScreen({ enabled = true, siteName = "" }: LoadingScreenPr
           <span className="loader-tip">Loading...</span>
         </div>
       </div>
-      {/* 左右分屏遮罩（使用与背景一致的渐变色） */}
-      <div className="loader-section loader-section-left" style={{ background: "linear-gradient(90deg, #1a1a2e 0%, #16213e 100%)" }} />
-      <div className="loader-section loader-section-right" style={{ background: "linear-gradient(270deg, #1a1a2e 0%, #16213e 100%)" }} />
+      {/* 左右分屏遮罩（配色同样取自主题令牌） */}
+      <div className="loader-section loader-section-left" />
+      <div className="loader-section loader-section-right" />
     </div>
   );
 }

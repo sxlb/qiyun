@@ -1,12 +1,16 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { resolveDark, type BgTheme, type ThemeMode } from "@/lib/theme";
 
-export type ThemeMode = "system" | "time" | "bg" | "light" | "dark";
+// 主题模式类型与「模式 → 深色」的判定规则统一收敛在 lib/theme.ts：
+// 服务端下发的 mode、首帧内联脚本、本组件的运行时重算三方共用同一份规则，不会漂移。
+// 这里再导出一份，让组件的 props 类型仍可从本模块按习惯引用。
+export type { ThemeMode };
 
 interface ThemeContextValue {
   /** 背景主色（由 Background 组件在壁纸加载后上报） */
-  bgTheme: "light" | "dark" | null;
+  bgTheme: BgTheme;
   setBgTheme: (t: "light" | "dark") => void;
 }
 
@@ -53,30 +57,22 @@ export default function ThemeProvider({
   const glassBlurPx = `${Math.max(0, Math.min(40, glassBlur))}px`;
 
   const applyTheme = useCallback(
-    (mode: ThemeMode, bg: "light" | "dark" | null) => {
+    (mode: ThemeMode, bg: BgTheme) => {
       const html = document.documentElement;
-      let dark = false;
-      switch (mode) {
-        case "dark":
-          dark = true;
-          break;
-        case "light":
-          dark = false;
-          break;
-        case "time": {
-          const hour = new Date().getHours();
-          dark = hour < 6 || hour >= 18;
-          break;
-        }
-        case "bg":
-          dark = bg === "dark";
-          break;
-        default:
-          dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      }
+      // 判定规则与首帧内联脚本共用 resolveDark：两边任何一侧改动都会被单元测试拦下
+      const dark = resolveDark(mode, {
+        prefersDark:
+          typeof window !== "undefined" && typeof window.matchMedia === "function"
+            ? window.matchMedia("(prefers-color-scheme: dark)").matches
+            : false,
+        hour: new Date().getHours(),
+        bgTheme: bg,
+      });
       // 主题切换时短暂开启颜色过渡
       html.classList.add("theme-transition");
       html.classList.toggle("dark", dark);
+      // 同步 color-scheme：原生滚动条 / 表单控件 / 日期选择器跟随主题（与首帧脚本行为一致）
+      html.style.colorScheme = dark ? "dark" : "light";
       window.setTimeout(() => html.classList.remove("theme-transition"), 350);
     },
     []

@@ -5,6 +5,10 @@ import type { Config } from "tailwindcss";
 import tailwindAnimate from "tailwindcss-animate";
 
 const config: Config = {
+  // 深浅色由 <html class="dark"> 驱动（见 lib/theme.ts 首帧脚本 + ThemeProvider 运行时），
+  // 不使用默认的 "media"：默认值会让 dark: 变体只跟随系统偏好，
+  // 与后台「主题设置」冲突——后台选深色、系统是浅色时，dark: 组件不生效。
+  darkMode: "class",
   content: [
     "./app/**/*.{ts,tsx}",
     "./components/**/*.{ts,tsx}",
@@ -79,6 +83,21 @@ const config: Config = {
         // 大卡片/弹层：取代 tailwind 默认 12px(xl)/16px(2xl)，收口到令牌刻度(lg/xl)
         xl: "var(--radius-lg)",
         "2xl": "var(--radius-xl)",
+      },
+      /* ===== 动效令牌（按钮与可点元素的统一微交互）=====
+         spring —— 轻微回弹，用于 hover 上浮 / 按压回落。
+         投影复用 globals.css 的 --shadow-* 令牌，避免同一数值散落两处。
+         注：按压态一律用**过渡**表达（见 components/ui/button.tsx），不用 keyframes 动画 ——
+         animation 会整体接管 transform，丢掉悬停位移，还会因默认 fill-mode: none
+         在动画结束时弹回，实测会在按下与松开瞬间各产生一次 1px 跳变。 */
+      transitionTimingFunction: {
+        spring: "cubic-bezier(0.34, 1.56, 0.64, 1)",
+      },
+      boxShadow: {
+        // 悬停抬升：与 .card-glass:hover 同源
+        lift: "var(--shadow-4)",
+        // 主按钮悬停：主色辉光，在颜色变化之外再给一层"可点击"暗示
+        "lift-accent": "0 6px 18px -6px hsl(var(--primary) / 0.45)",
       },
     },
   },

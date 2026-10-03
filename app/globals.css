@@ -689,6 +689,36 @@
     --accent-color: #7dd3fc;
     --card-alpha: 0.35;
     --glass-blur: 16px;
+
+    /*
+      原生外观（全链路的一部分）：让滚动条、表单控件、日期选择器等 UA 绘制物
+      与站点主题保持一致。由首帧内联脚本 (lib/theme.ts) 同步写入 html.style.colorScheme，
+      此处再给一份声明式兜底，保证 JS 未就绪时也是正确的一侧。
+    */
+    color-scheme: light;
+
+    /*
+      滚动条滑块：可能叠在任意壁纸（首页，壁纸不随明暗主题变化）或纯色底（后台）之上，
+      因此固定用一个中间灰 + 内侧描边，明底 / 暗底 / 壁纸亮暗区域都能辨认。
+      刻意**不**随明暗主题切换：壁纸与主题无关，跟着主题变色反而会与真实底色脱节
+      （之前浅色主题用白滑块 = 白底白条不可见，就是这个思路的产物）。
+    */
+    --scrollbar-thumb: rgba(128, 128, 136, 0.5);
+    --scrollbar-thumb-hover: rgba(128, 128, 136, 0.78);
+    --scrollbar-thumb-ring: rgba(0, 0, 0, 0.18);
+
+    /* ================= 全屏加载动画（LoadingScreen）配色令牌 =================
+       加载动画是首屏第一帧，必须与主题同源：深色沿用原深蓝夜色，
+       浅色给出等价的浅色版本，避免深色动画收起后突然翻成浅色页面。
+    */
+    --loader-bg-from: #eef2f8;
+    --loader-bg-via: #e2e9f3;
+    --loader-bg-to: #eef2f8;
+    --loader-fg: #1f2937;
+    --loader-fg-dim: #6b7280;
+    --loader-ring-1: #1f2937;
+    --loader-ring-2: #98a2b3;
+    --loader-ring-3: #c3cad6;
   }
 
   /* 暗色主题：由 ThemeProvider 根据主题模式切换 .dark 类 */
@@ -719,6 +749,21 @@
     --error-soft: 0 72% 20%;
     --info: 217 91% 62%;
     --info-soft: 216 85% 22%;
+
+    /* 原生外观：深色主题交给 UA 按深色绘制 */
+    color-scheme: dark;
+    /* 注：滚动条滑块令牌不在 .dark 里覆盖 —— 它要同时适配壁纸与纯色底，
+       随主题翻转会与真实底色脱节，详见 :root 处的说明。 */
+
+    /* 加载动画深色配色（沿用原深蓝夜色） */
+    --loader-bg-from: #1a1a2e;
+    --loader-bg-via: #16213e;
+    --loader-bg-to: #1a1a2e;
+    --loader-fg: #ffffff;
+    --loader-fg-dim: rgba(255, 255, 255, 0.6);
+    --loader-ring-1: #ffffff;
+    --loader-ring-2: #a4a4a4;
+    --loader-ring-3: #d3d3d3;
   }
 }
 
@@ -743,7 +788,9 @@
   }
 }
 
-/* ===== 自定义滚动条（优化版：更精致的圆角和透明度）===== */
+/* ===== 自定义滚动条（优化版：更精致的圆角和透明度）=====
+   滑块走 --scrollbar-thumb 令牌：中间灰 + 内侧 1px 描边，明底暗底都可辨认
+   （详见 @layer base :root 中的说明）。不用 scrollbar-color/width 的原因见下方注记。 */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -751,15 +798,24 @@
 }
 ::-webkit-scrollbar-thumb {
   border-radius: 10px;
-  background-color: rgba(255, 255, 255, 0.35);
+  background-color: var(--scrollbar-thumb, rgba(128, 128, 136, 0.5));
+  /* 内侧描边而非 border：不占用 6px 的可见宽度，浅色底上仍能勾勒出滑块轮廓 */
+  box-shadow: inset 0 0 0 1px var(--scrollbar-thumb-ring, rgba(0, 0, 0, 0.18));
   transition: background-color 0.2s ease;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(255, 255, 255, 0.5);
+  background-color: var(--scrollbar-thumb-hover, rgba(128, 128, 136, 0.78));
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+/*
+  这里刻意**不**设置全局 scrollbar-color / scrollbar-width。
+  Chrome 121+ 起，只要这两个标准属性被设成非 auto 值，就会切换成"标准滚动条"绘制路径，
+  并**忽略整条 ::-webkit-scrollbar 规则**（上面精心调过的 6px 细滚动条会直接失效）。
+  Firefox 侧不需要额外声明：color-scheme(dark/light) 已让 UA 自动画出匹配主题的滚动条。
+  音乐面板的 .mp-scroll 出于自身配色需要单独使用标准属性，作用域仅限该容器，不受此影响。
+*/
 
 /* ========== 通用阴影系统 ==========
    .shadow-card-sm..md 由 base 层 --shadow-2 / --shadow-4 令牌统一供给，避免硬编码值散落 */
@@ -1069,23 +1125,26 @@
   background-size: 16px 16px;
 }
 
-/* ===== 全屏加载动画（LoadingScreen） ===== */
+/* ===== 全屏加载动画（LoadingScreen） =====
+   配色全部走 --loader-* 令牌（浅色/深色各一套，定义在 @layer base 的 :root / .dark），
+   使加载动画与站点主题同源，不会出现「深色动画收起 → 浅色页面」的跳变。 */
 #loader-wrapper {
   position: fixed;
   inset: 0;
   overflow: hidden;
-  background: #1a1a2e;
+  background: linear-gradient(135deg, var(--loader-bg-from), var(--loader-bg-via), var(--loader-bg-to));
   transition:
     transform 0.3s 1s ease-out,
     visibility 0.3s 1s ease-out;
   /*
-    兜底：加载遮罩的移除依赖客户端 JS（useEffect 监听 background-ready + 7s 安全兜底）。
+    兜底：加载遮罩的移除依赖客户端 JS（见 LoadingScreen：background-ready 事件 + 7s 安全兜底）。
     若首载时 JS chunk 被中断/失败导致 hydration 未完成，JS 移除逻辑永远不执行，
-    遮罩会永久盖住页面（内容实际已在 SSR HTML 中）。此处用纯 CSS 延迟 5s 强制淡出，
-    保证无论 JS 是否就绪，遮罩都绝不会阻塞内容。正常路径下 React 约 2s 即移除节点，
-    二者不冲突。
+    遮罩会永久盖住页面（内容实际已在 SSR HTML 中）。此处用纯 CSS 延迟 9s 强制淡出。
+
+    时序必须晚于 JS 的安全兜底（7s）：否则正常路径下 JS 还没走完分屏收起动画，
+    CSS 的 fill-forwards 就把 visibility 锁成 hidden，收起动画被截断、观感变成"闪一下消失"。
   */
-  animation: loader-auto-hide 0s linear 5s forwards;
+  animation: loader-auto-hide 0s linear 9s forwards;
 }
 @keyframes loader-auto-hide {
   to {
@@ -1108,7 +1167,7 @@
   height: 150px;
   border-radius: 50%;
   border: 3px solid transparent;
-  border-top-color: #fff;
+  border-top-color: var(--loader-ring-1);
   animation: loader-spin 1.8s linear infinite;
   position: relative;
 }
@@ -1118,7 +1177,7 @@
   inset: 5px;
   border-radius: 50%;
   border: 3px solid transparent;
-  border-top-color: #a4a4a4;
+  border-top-color: var(--loader-ring-2);
   animation: loader-spin-reverse 0.6s linear infinite;
 }
 #loader-wrapper .loader-circle::after {
@@ -1127,14 +1186,14 @@
   inset: 15px;
   border-radius: 50%;
   border: 3px solid transparent;
-  border-top-color: #d3d3d3;
+  border-top-color: var(--loader-ring-3);
   animation: loader-spin 1s linear infinite;
 }
 #loader-wrapper .loader-text {
   display: flex;
   flex-direction: column;
   align-items: center;
-  color: #fff;
+  color: var(--loader-fg);
   z-index: 2;
   margin-top: 40px;
 }
@@ -1146,21 +1205,23 @@
 #loader-wrapper .loader-tip {
   margin-top: 6px;
   font-size: 18px;
-  opacity: 0.6;
+  color: var(--loader-fg-dim);
 }
 #loader-wrapper .loader-section {
   position: fixed;
   top: 0;
   width: 51%;
   height: 100%;
-  background: #1a1a2e;
+  background: var(--loader-bg-from);
   z-index: 1;
 }
 #loader-wrapper .loader-section-left {
   left: 0;
+  background: linear-gradient(90deg, var(--loader-bg-from) 0%, var(--loader-bg-via) 100%);
 }
 #loader-wrapper .loader-section-right {
   right: 0;
+  background: linear-gradient(270deg, var(--loader-bg-from) 0%, var(--loader-bg-via) 100%);
 }
 #loader-wrapper.loader-loaded .loader-circle,
 #loader-wrapper.loader-loaded .loader-text {

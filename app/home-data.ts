@@ -9,7 +9,7 @@ import { resolveWallpaperUrl } from "@/lib/wallpaperCache";
 import { avatarOrDefault } from "@/lib/default-assets";
 import { EXTERNAL_API_DEFAULTS } from "@/lib/external-api";
 import type { Profile } from "@prisma/client";
-import type { ThemeMode } from "@/components/home/ThemeProvider";
+import { isThemeMode, type ThemeMode } from "@/lib/theme";
 
 // ── 静态常量：昵称艺术字体 ──
 // 内置仅一款「有爱圆体」（中英双语，随镜像打包），由 logoArtFont 开关控制启停；
@@ -282,7 +282,8 @@ export async function getHomeData(profile: Profile | null): Promise<{
     landscapeApi: profile?.wallpaperLandscapeApi || "",
     animeApi: profile?.wallpaperAnimeApi || "",
     iconifyApi: profile?.iconifyApi || "",
-    theme: (profile?.theme || "system") as ThemeMode,
+    // 主题模式：非法/缺失值一律回落 system（白名单校验，避免脏数据让首帧脚本走空分支）
+    theme: isThemeMode(profile?.theme) ? profile.theme : "system",
     songApi: profile?.songApi || DEFAULT_SONG_API,
     songServer: profile?.songServer || "netease",
     songId: profile?.songId || DEFAULT_SONG_ID,

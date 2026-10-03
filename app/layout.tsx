@@ -3,6 +3,7 @@ import "./globals.css";
 import localFont from "next/font/local";
 
 import { Toaster } from "@/components/ui/sonner";
+import { themeInitScript } from "@/lib/theme";
 
 // 全站字体：中文思源黑体 + 西文 Inter 兜底
 const notoSc = localFont({ src: [{ path: "../public/fonts/google-local/font-noto-sc.woff2", weight: "400", style: "normal" }], variable: "--font-noto-sc", display: "swap" });
@@ -49,6 +50,16 @@ export default function RootLayout({
     <html lang="zh-CN" suppressHydrationWarning>
       <head>
         {/* 内置字体：思源黑体（正文）+ Inter（西文）+ Tech Mono（时钟）+ 有爱圆体/Baloo2（昵称艺术字体，中英双语） */}
+        {/*
+          首帧主题脚本（基线）：在解析 body 内容之前同步给 <html> 落定 .dark 与 color-scheme，
+          消除「先按浅色绘制、hydration 后才翻深色」的闪烁。
+          - 这里是 "system" 基线，覆盖 /admin 等不经过 ThemeProvider 的路由；
+            同时让 dark: 变体（darkMode: "class"）在首帧即有正确的宿主类。
+          - 首页会用后台配置的模式再执行一次覆盖（见 app/page.tsx），两处脚本同源生成，
+            判定规则由 lib/theme.ts 统一定义并有单元测试比对，不会漂移。
+          - CSP 已放行 'unsafe-inline'（见 next.config.ts），此内联脚本可正常执行。
+        */}
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript("system") }} />
       </head>
       <body
         className={`${notoSc.variable} ${inter.variable} ${techMono.variable} ${baloo2.variable} ${nowarRounded.variable}`}
