@@ -116,6 +116,30 @@ chmod +x deploy.sh
 > IMAGE_TAG=0.0.3 docker compose --env-file .env.deploy up -d
 > ```
 
+#### 镜像源与加速
+
+发布链路把同一份构建同时推到 GHCR 与 Docker Hub，两边内容一致（digest 相同），可以互相替代。境内服务器直连两个官方源经常超时，脚本对此的处理是：
+
+1. 交互式终端下先问一次：自动 / 优先加速器 / 仅官方源 / 手动输入加速器
+2. 非交互场景（cron、管道、`ssh host './deploy.sh'`）不提问，直接按候选链尝试，避免卡在等待输入
+3. 拉取时按「官方主源 → 备用官方源 → 公共加速器」依次尝试，谁通用谁，全部失败才终止并列出试过的来源
+
+不想被问到时用环境变量指定：
+
+```bash
+IMAGE_SOURCE=ghcr ./deploy.sh 0.0.3                   # 换主源：hub（默认）/ ghcr / 完整仓库地址
+IMAGE_MIRROR_PREFIX=docker.1panel.live ./deploy.sh    # 指定加速器，会被优先使用
+DEPLOY_NO_PROMPT=1 ./deploy.sh 0.0.3                  # 不提问，直接走自动链路
+```
+
+> 公共加速器存活期很短，有的还只镜像白名单内的公共镜像、会直接拒绝本项目这类用户镜像（`docker.m.daocloud.io` 就是这样）。因此内置候选是「依次尝试」而不是让你单选。另外加速器处在链路上，理论上能看到并替换镜像内容，能直连时优先直连。
+
+#### 多架构支持
+
+镜像自 `0.0.4` 起同时提供 `linux/amd64` 与 `linux/arm64`，`docker pull` 会按服务器架构自动选择，脚本和 compose 都**不需要**（也不应该）指定 `--platform`。
+
+> 更早的版本（0.0.1 ～ 0.0.3）只有 amd64。ARM 服务器部署这些版本时，脚本会在拉取后检测出架构不符并明确报错，而不是让你对着容器的 `exec format error` 猜原因。
+
 验证：浏览器打开 `http://服务器IP:3000`。
 
 ### 方式 B：面板 GUI（可选）
@@ -268,7 +292,7 @@ docker logs qiyun --tail=100
 |------|----------|
 | `NEXTAUTH_SECRET` 为空 | 确认 `.env.deploy` 中有该变量 |
 | 日志出现 `SQLITE_CANTOPEN` 或 `attempt to write a readonly database` | 宿主机 `data/` 目录属主不对（Docker 首次创建时归属 root，而容器内以 UID 1001 运行）。用一键脚本部署时脚本已自动校正；GUI 部署需手工执行 `sudo chown -R 1001:1001 /opt/qiyun/data`，再 `docker restart qiyun` |
-| 国内无法访问 `ghcr.io` | 配置 Docker 镜像加速器，或改从 Docker Hub 拉取：`GHCR_IMAGE=docker.io/sxlb/qiyun ./deploy.sh 0.0.3` |
+| 国内无法访问 `ghcr.io` | 不用手动处理：脚本会按候选链自动改走 Docker Hub 与公共加速器。也可显式指定：`IMAGE_SOURCE=hub ./deploy.sh 0.0.4` 或 `IMAGE_MIRROR_PREFIX=加速器域名 ./deploy.sh 0.0.4` |
 
 ### Q2：页面打不开
 

@@ -38,22 +38,96 @@ REPO_DIR="$(cd "$REPO_DIR" && pwd)"
 DATA_DIR="${DATA_DIR:-$REPO_DIR/data}"
 ENV_FILE="${ENV_FILE:-$REPO_DIR/.env.deploy}"
 CONTAINER="qiyun"
-# 镜像更新模式使用的镜像仓库（发布时同时推送 GHCR 与 Docker Hub）。
-# 默认 GHCR；境内直连受限时可改为 "docker.io/sxlb/qiyun"（Docker Hub），
-# 或经 IMAGE_MIRROR_PREFIX 走镜像加速地址。
-GHCR_IMAGE="${GHCR_IMAGE:-ghcr.io/sxlb/qiyun}"
-# 镜像仓库前缀替换：GHCR 不通时，可设 IMAGE_MIRROR_PREFIX 指向镜像加速地址，
-# 如 "docker.m.daocloud.io"（推荐不带协议）或 "https://docker.mirror.example.com/"；为空则原样拉取 GHCR。
+# ---------- 镜像来源 ----------
+# 与 deploy.sh 采用同一套语义：IMAGE_SOURCE 选主源（hub / ghcr / 完整地址），
+# IMAGE_MIRROR_PREFIX 指定加速器，拉取时按候选链依次尝试，谁通用谁。
+# 两份脚本各留一份实现而不是抽公共库：deploy.sh 常被单独复制到服务器上使用，
+# 依赖同目录的库文件会让它变脆。
+IMAGE_SOURCE="${IMAGE_SOURCE:-hub}"
 IMAGE_MIRROR_PREFIX="${IMAGE_MIRROR_PREFIX:-}"
-# 推导最终拉取仓库：设置镜像前缀时，剥掉可能出现协议与末尾斜杠，仅保留镜像域名，
-# 再拼上 GHCR_IMAGE 中的仓库路径，生成 "<域名>/<owner>/<repo>"（docker image 名不允许带协议）。
-PULL_IMAGE="$GHCR_IMAGE"
+# 公共加速器候选链。公共加速器存活期很短，且有的只镜像白名单内的公共镜像、
+# 会直接拒绝本项目这类用户镜像（docker.m.daocloud.io 就是这样），故做成依次尝试。
+MIRROR_CANDIDATES="${MIRROR_CANDIDATES:-ghcr.nju.edu.cn docker.1panel.live}"
+# 单一来源的连通性探测超时（秒）。只用于拉取前快速排除连不上的来源；
+# 真正的拉取刻意不设超时——慢速链路上拉几百 MB 要几分钟，加超时会误杀本可成功的更新。
+PROBE_TIMEOUT="${PROBE_TIMEOUT:-15}"
+
+# 主源仓库地址（不含标签）。GHCR_IMAGE 是等价写法，旧配置里用的就是它，必须继续认。
+resolve_primary_repo() {
+  if [ -n "${GHCR_IMAGE:-}" ]; then printf '%s' "$GHCR_IMAGE"; return 0; fi
+  case "$IMAGE_SOURCE" in
+    hub|dockerhub|docker.io|hub.docker.com) printf '%s' "docker.io/sxlb/qiyun" ;;
+    ghcr|ghcr.io)                           printf '%s' "ghcr.io/sxlb/qiyun" ;;
+    */*)                                    printf '%s' "$IMAGE_SOURCE" ;;
+    *)                                      printf '%s' "docker.io/sxlb/qiyun" ;;
+  esac
+}
+
+# 仓库地址去掉 registry 主机后的路径部分（owner/repo）
+repo_path() { printf '%s' "$1" | sed -E 's#^[^/]+/##'; }
+
+# 加速器前缀 → 镜像仓库地址。域名允许带协议与结尾斜杠，统一剥掉：
+# docker 的镜像名不允许带协议，直接拼会得到非法引用，而报错完全指不到根因。
+mirror_repo() {
+  local host
+  host="$(printf '%s' "${1:-}" | sed -E 's#^https?://##; s#/+$##')"
+  [ -n "$host" ] || return 0
+  printf '%s/%s' "$host" "$(repo_path "$PRIMARY_REPO")"
+}
+
+# 另一个官方源：主源不通时优先切它，比第三方加速器可信。只对两个已知官方源成立，
+# 自定义仓库没有对应的「另一个」，此时返回空，避免拼出一个不存在的地址白试一轮。
+secondary_repo() {
+  case "$PRIMARY_REPO" in
+    docker.io/*) printf '%s' "ghcr.io/$(repo_path "$PRIMARY_REPO")" ;;
+    ghcr.io/*)   printf '%s' "docker.io/$(repo_path "$PRIMARY_REPO")" ;;
+  esac
+}
+
+# 拉取前快速判断来源是否可达。docker manifest inspect 只取清单、不下载层，
+# 能把连不上的来源在十几秒内排除，而不是让 docker 自己重试好几分钟。
+# 关键：探测要与守护进程走同一条网络路径——manifest 是客户端命令、会读 shell 代理，
+# 而真正的 pull 由守护进程发起，两者不一致就会误判。故照搬 docker info 里
+# 守护进程自己的代理配置，而不是想当然地清空或保留。
+probe_image() { # repo:tag
+  PROBE_ERR=""
+  command -v timeout >/dev/null 2>&1 || return 0
+  local out=""
+  if [ -n "${DAEMON_HTTP_PROXY:-}" ] || [ -n "${DAEMON_HTTPS_PROXY:-}" ]; then
+    if out="$(timeout "$PROBE_TIMEOUT" \
+        env http_proxy="$DAEMON_HTTP_PROXY" https_proxy="$DAEMON_HTTPS_PROXY" \
+            HTTP_PROXY="$DAEMON_HTTP_PROXY" HTTPS_PROXY="$DAEMON_HTTPS_PROXY" \
+        docker manifest inspect "$1" 2>&1)"; then
+      return 0
+    fi
+  else
+    if out="$(timeout "$PROBE_TIMEOUT" \
+        env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+        docker manifest inspect "$1" 2>&1)"; then
+      return 0
+    fi
+  fi
+  PROBE_ERR="$out"
+  return 1
+}
+
+PRIMARY_REPO="$(resolve_primary_repo)"
+DAEMON_HTTP_PROXY="$(docker info --format '{{.HTTPProxy}}' 2>/dev/null || true)"
+DAEMON_HTTPS_PROXY="$(docker info --format '{{.HTTPSProxy}}' 2>/dev/null || true)"
+
+# 候选链：显式配置的加速器优先（用户设它通常正因为官方源不通），
+# 否则官方主源 → 备用官方源 → 内置加速器候选。
+_chain="$PRIMARY_REPO $(secondary_repo)"
 if [ -n "$IMAGE_MIRROR_PREFIX" ]; then
-  _mirror_domain="$(printf '%s' "$IMAGE_MIRROR_PREFIX" | sed -E 's#^https?://##; s#/+$##')"
-  # 仓库路径（owner/repo）从 GHCR_IMAGE 提取而非硬编码，兼容自定义仓库名
-  _repo_path="$(printf '%s' "$GHCR_IMAGE" | sed -E 's#^https?://##; s#^[^/]*/##')"
-  PULL_IMAGE="${_mirror_domain}/${_repo_path}"
+  _chain="$(mirror_repo "$IMAGE_MIRROR_PREFIX") $_chain"
+else
+  for _m in $MIRROR_CANDIDATES; do
+    _r="$(mirror_repo "$_m")"; [ -n "$_r" ] && _chain="$_chain $_r"
+  done
 fi
+PULL_CHAIN="$(printf '%s\n' $_chain | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
+PULL_CHAIN="${PULL_CHAIN% }"
+PULL_IMAGE="${PULL_CHAIN%% *}"
 DEPLOY_DIR="$DATA_DIR/deploy"
 BACKUP_DIR="$DEPLOY_DIR/backups"
 
@@ -310,14 +384,39 @@ cur="${cur#v}"
 
 log "当前基线版本：$cur，目标版本：$version"
 
-# 1) 先拉取目标版本镜像：此时旧容器仍在运行，版本不存在或网络不通都不会造成停机
-log "拉取 ${PULL_IMAGE}:${version} ..."
-if ! IMAGE_TAG="$version" GHCR_IMAGE="$PULL_IMAGE" APP_VERSION="$version" \
-     docker compose --env-file "$ENV_FILE" pull; then
+# 1) 先拉取目标版本镜像：此时旧容器仍在运行，版本不存在或网络不通都不会造成停机。
+#    官方源在境内经常不通，按候选链依次尝试（官方主源 → 备用官方源 → 加速器），
+#    与 deploy.sh 保持一致，避免命令行部署与后台一键更新走到不同的源。
+log "拉取 ${version} 镜像，依次尝试：${PULL_CHAIN// /、}"
+PULLED_IMAGE=""
+PULL_FAILED=""
+LAST_PROBE_ERR=""
+for _cand in $PULL_CHAIN; do
+  if ! probe_image "${_cand}:${version}"; then
+    LAST_PROBE_ERR="$PROBE_ERR"
+    log "  来源 ${_cand} 探测不通，跳过"
+    PULL_FAILED="${PULL_FAILED} ${_cand}"
+    continue
+  fi
+  if IMAGE_TAG="$version" GHCR_IMAGE="$_cand" APP_VERSION="$version" \
+       docker compose --env-file "$ENV_FILE" pull; then
+    PULLED_IMAGE="$_cand"
+    break
+  fi
+  PULL_FAILED="${PULL_FAILED} ${_cand}"
+  log "  从 ${_cand} 拉取失败，换下一个来源"
+done
+
+if [ -z "$PULLED_IMAGE" ]; then
+  # 原始报错能区分两种截然不同的原因，原样带回给后台面板：
+  # no such manifest / not found 是版本号不存在，超时或连接被拒才是网络不通。
+  [ -z "$LAST_PROBE_ERR" ] || log "  最近一次探测的原始报错：${LAST_PROBE_ERR}"
   write_result "$req_id" "$action" "$version" "$req_method" failed \
-    "拉取镜像失败：请确认版本 ${version} 已发布，且服务器能访问 ${PULL_IMAGE}（容器未受影响，仍运行 ${cur}）"
+    "拉取镜像失败：已尝试${PULL_FAILED}。若报错为 no such manifest / not found 则是版本 ${version} 不存在；超时或连接被拒则是网络不通，可设置 IMAGE_MIRROR_PREFIX 指定可用加速器。容器未受影响，仍运行 ${cur}"
   exit 0
 fi
+PULL_IMAGE="$PULLED_IMAGE"
+log "镜像来源：${PULL_IMAGE}"
 
 # 标记：切换是否已开始。镜像已就位，之后的任何失败都要把原版本重新拉起，
 # 否则会留下「镜像换好了、容器却起不来」的空档。
