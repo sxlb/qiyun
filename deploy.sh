@@ -24,6 +24,8 @@
 # 关于镜像源：发布链路同时推 GHCR 与 Docker Hub，两边是同一份构建（digest 一致），
 # 因此可以互相替代。境内服务器直连两个官方源经常不通，脚本在拉取失败时会自动改用
 # 公共加速器；交互式终端下先询问，非交互环境（cron / 管道）直接走自动链路，不会挂住。
+# 成功用过一次的来源会被记住（data/deploy/last-source），下次部署优先尝试它：
+# 官方源在境内常常「可达但极慢」，记住之后后续升级不必每次先在慢源上耗掉一个拉取预算。
 # ============================================================
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -143,6 +145,56 @@ build_pull_chain() { # mode(auto|mirror|official)
   esac
   chain="$(printf '%s\n' $chain | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
   PULL_CHAIN="${chain% }"
+}
+
+# ---------- 记住上次成功的来源 ----------
+# 存纯文本单行而不是 JSON：shell 里读它不需要 jq，精简系统上 jq 常常没有。
+# 放在数据目录下（与数据库同卷），容器重建与版本升级都不会丢。
+preferred_source_file() { printf '%s' "$DATA_DIR/deploy/last-source"; }
+
+# 读取上次成功的来源；文件不存在或为空时返回空串
+read_preferred_source() {
+  local f
+  f="$(preferred_source_file)"
+  [ -f "$f" ] || return 0
+  head -1 "$f" 2>/dev/null | tr -d ' \r\n'
+}
+
+# 成功拉到镜像后记录来源。尽力而为：写不进去也不能影响部署本身。
+remember_source() { # repo
+  local f
+  f="$(preferred_source_file)"
+  mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
+  printf '%s\n' "$1" > "$f" 2>/dev/null || return 0
+  # 属主与数据目录保持一致：这个文件落在 1001 属主的目录树里，
+  # 以 root 身份留下一个 root:root 的文件，以后容易被当成异常或被误清理。
+  chown --reference="$DATA_DIR" "$f" 2>/dev/null || true
+  return 0
+}
+
+# 把上次成功的来源提到候选链最前面。
+# 只在它仍属于当前候选链时才生效——换了 IMAGE_SOURCE 或调整过 MIRROR_CANDIDATES 之后，
+# 旧来源可能已不在链上，此时直接忽略：绝不凭一条历史记录凭空造出一个来源。
+# 重排序保持其余元素的相对顺序，因此「链上最后一个来源不设拉取预算」这条保证
+# 仍然落在原本的末尾来源上（通常是加速器），不会被这次调整破坏。
+apply_preferred_source() {
+  local saved first="" rest=""
+  saved="$(read_preferred_source)"
+  [ -n "$saved" ] || return 0
+  case " $PULL_CHAIN " in
+    *" $saved "*) ;;
+    *) return 0 ;;
+  esac
+  for repo in $PULL_CHAIN; do
+    if [ "$repo" = "$saved" ]; then
+      first="$saved"
+    else
+      rest="$rest $repo"
+    fi
+  done
+  [ -n "$first" ] || return 0
+  PULL_CHAIN="${first}${rest}"
+  info "上次成功的镜像来源是 ${saved}，本次优先尝试它"
 }
 
 # 询问是否使用镜像加速器。回显两行：第一行模式（auto/mirror/official），
@@ -636,6 +688,13 @@ ANSWER_MIRROR="$(printf '%s' "$MIRROR_ANSWER" | sed -n '2p')"
 if [ -n "$ANSWER_MIRROR" ]; then MIRROR_OVERRIDE="$ANSWER_MIRROR"; fi
 build_pull_chain "$PULL_MODE"
 
+# 记忆来源优先。两种情况不干预，因为那时的顺序是用户的明确意图：
+#   1) 显式指定了加速器（IMAGE_MIRROR_PREFIX 或交互式选择）——它必须留在最前；
+#   2) 选了「仅官方源」——链上只有官方源，重排序无意义，也不该借历史记录引入加速器。
+if [ -z "$MIRROR_OVERRIDE" ] && [ "$PULL_MODE" != "official" ]; then
+  apply_preferred_source
+fi
+
 # manifest 子命令用于拉取前的可达性预判；缺失时 probe_repo 一律放行
 MANIFEST_OK=0
 if docker manifest inspect --help >/dev/null 2>&1; then MANIFEST_OK=1; fi
@@ -712,6 +771,8 @@ fi
 # 另一个镜像再拉一次（甚至拉不到）。加速器与官方源是同一份构建，内容一致。
 GHCR_IMAGE="$PULLED_REPO"
 export GHCR_IMAGE
+# 记录本次成功的来源，下次部署优先尝试它（尽力而为，失败不影响部署本身）
+remember_source "$PULLED_REPO"
 # 明确告知实际用的来源：主源不通时自动切换过，用户需要知道这份镜像是从哪来的
 if [ "$PULLED_REPO" = "$PRIMARY_REPO" ]; then
   info "镜像来源：${PULLED_REPO}"
