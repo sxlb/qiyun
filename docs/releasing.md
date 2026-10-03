@@ -19,13 +19,13 @@
 ```bash
 # 1. 同步版本号：package.json、package-lock.json（根与 packages[""] 两处）、
 #    README 徽章、教程与本文档里的示例版本号，以及 CHANGELOG 新增条目
-# 2. 提交并推送：git add -u && git commit -m 'chore: 发版 0.0.3' && git push
+# 2. 提交并推送：git add -u && git commit -m 'chore: 发版 0.0.4' && git push
 # 3. 确认工作区干净、与远端同步
 git status --short
 
 # 4. 打标签并推送（版本号与 package.json 保持一致，工作流会再次同步）
-git tag 0.0.3
-git push origin 0.0.3
+git tag 0.0.4
+git push origin 0.0.4
 ```
 
 推送后工作流分五个任务执行：
@@ -132,7 +132,7 @@ npm run validate:workflow
 后台「系统更新」面板列出的历史版本可一键回滚；命令行等价操作是指定版本重新部署：
 
 ```bash
-./deploy.sh 0.0.3
+./deploy.sh 0.0.4
 ```
 
 因为回滚依赖服务器端存在对应 tag，历史标签不要随意删除。
