@@ -234,6 +234,13 @@ export const authOptions: NextAuthOptions = {
         const userKey = getLoginUserRateKey(credentials.username);
         const userLock = checkRateLimit(userKey);
         if (userLock.locked) {
+          // 账号已锁、但当前来源 IP 还没到阈值时（典型场景：手机切换基站导致出口 IP 变化），
+          // 把这次「被拒」也计入来源 IP 的失败计数。这样该 IP 连续被拒到阈值后会一起进入
+          // 锁定，登录页的来源 IP 预检才可能给出「登录失败次数过多」的真实提示，而不是
+          // 一直误导成「账号或密码错误」，让用户无谓地反复重试。
+          // 刻意不把账号锁定状态直接回传给客户端：任何被拒的尝试（无论账号是否存在）
+          // 都同样计入来源 IP，避免形成「账号是否存在」的探测通道。
+          recordFailedAttempt(rateKey);
           return null;
         }
 
