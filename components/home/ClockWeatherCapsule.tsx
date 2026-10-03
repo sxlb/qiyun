@@ -170,17 +170,22 @@ export default function ClockWeatherCapsule({
                {city || "--"}
              </div>
 
-             {/* 天气 + 温度 + 风向 */}
-             <div className="flex items-center justify-center gap-3 overflow-hidden whitespace-nowrap">
-               <span className="text-[15px] text-white/60">{weather || "--"}</span>
-               <span className="opacity-30">·</span>
-               <span className="text-lg font-semibold">{temperature || "--"}</span>
-               <span className="opacity-30">·</span>
-               <span className="hidden items-center gap-1 text-[13px] text-white/50 sm:flex">
-                 <WindIcon className="h-4 w-4 shrink-0" />
-                 {dir} {power}
-               </span>
-             </div>
+             {/* 天气 + 温度 + 风向。
+                这一行允许换行（原来是 nowrap + overflow-hidden 的单行）：风向是最后一个元素，
+                单行放不下时被裁掉的只会是它，所以早先干脆在 <640px 整块隐藏 —— 代价是手机上
+                永远看不到风。改成换行后，风向在窄屏独占第二行，既不裁剪也不会挤掉天气与温度；
+                ≥sm 宽度够，仍旧是原来的一行。 */}
+            <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 overflow-hidden">
+              <span className="whitespace-nowrap text-[15px] text-white/60">{weather || "--"}</span>
+              <span className="opacity-30">·</span>
+              <span className="whitespace-nowrap text-lg font-semibold">{temperature || "--"}</span>
+              {/* 风向折到第二行时，这个分隔点不该孤零零留在上一行末尾 */}
+              <span className="opacity-30 max-sm:hidden">·</span>
+              <span className="flex items-center gap-1 whitespace-nowrap text-[13px] text-white/50">
+                <WindIcon className="h-4 w-4 shrink-0" />
+                {dir} {power}
+              </span>
+            </div>
            </div>
          </div>
 
