@@ -579,19 +579,23 @@ export default function ProfilePanel() {
                     <option value="menu">自定义站内功能菜单</option>
                   </select>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    自定义菜单用的都是本站功能：播放暂停 / 上一首 / 下一首 / 打开音乐列表 / 切换主题 /
-                    换一张壁纸 / 回到顶部 / 打开命令面板 / 复制本页链接；页面有选中文字时会在顶部追加「复制」
-                    「搜索选中文字」。<br />
+                    自定义菜单用的都是本站功能：播放暂停 / 上一首 / 下一首 / 打开音乐列表 / 换一张壁纸 /
+                    回到顶部 / 重新加载页面 / 打开命令面板 / 复制本页链接；页面有选中文字时追加「复制选中文字」
+                    「搜索选中文字」，右键落在链接上时追加「在新标签页打开」「复制链接地址」。<br />
                     注意：「禁用右键」只是提高复制门槛，做不到内容保护 —— F12、地址栏、禁用 JS 都能绕过，
                     真要防抓取应靠服务端渲染水印或权限控制。移动端长按一律保留原生菜单，不做拦截。
                   </p>
                 </div>
 
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2">
+                  {/* 计数紧贴标签、用浅色药丸底衬托，而不是 justify-between 推到行尾 ——
+                      后台表单在宽屏下很宽，推到行尾会离标签近一整屏，等于没提示。 */}
+                  <div className="flex items-center gap-2">
                     <Label htmlFor="bio">个性签名</Label>
-                    {/* 已用字数 / 上限：前台简介是固定宽度卡片，超长会挤成多行，这里给个即时反馈 */}
-                    <span className={bioCounterClass(profile.bio.length)}>
+                    <span
+                      className={`${bioCounterClass(profile.bio.length)} rounded-full bg-muted px-1.5 py-0.5`}
+                      title={`个性签名最长 ${BIO_MAX_LENGTH} 字`}
+                    >
                       {profile.bio.length} / {BIO_MAX_LENGTH}
                     </span>
                   </div>
