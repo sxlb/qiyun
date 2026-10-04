@@ -1096,7 +1096,12 @@
     width: 100%;
     gap: 0.5rem 0.6rem;
   }
+  /* 每个胶囊常驻毛玻璃底 + 阴影：阴影取 --shadow-3（即卡片 rest 档，与简介卡片同一档），
+     底色取主卡片玻璃不透明度的一个比例，跟随后台「玻璃不透明度」滑杆联动。
+     原先静止态完全透明、只有悬停才浮现底色，32px 图标与 11px 小字直接浮在壁纸上 ——
+     浅色或花哨壁纸下几乎看不见（悬停才有反馈，触屏连悬停都没有）。 */
   .social-icon {
+    --social-alpha: calc(var(--card-alpha, 0.35) * 0.72);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1104,6 +1109,10 @@
     padding: 0.4rem 0.65rem 0.35rem;
     border-radius: 10px;
     color: rgba(255, 255, 255, 0.92);
+    background-color: rgba(0, 0, 0, var(--social-alpha));
+    backdrop-filter: blur(8px) saturate(130%);
+    -webkit-backdrop-filter: blur(8px) saturate(130%);
+    box-shadow: var(--shadow-3);
     transition:
       color 0.25s ease,
       background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
@@ -1113,13 +1122,14 @@
   }
   .social-icon:hover {
     color: var(--accent-color, #7dd3fc);
-    background-color: rgba(0, 0, 0, var(--card-alpha, 0.3));
-    backdrop-filter: blur(10px) saturate(130%);
-    -webkit-backdrop-filter: blur(10px) saturate(130%);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    background-color: rgba(0, 0, 0, var(--card-alpha, 0.35));
+    backdrop-filter: blur(12px) saturate(135%);
+    -webkit-backdrop-filter: blur(12px) saturate(135%);
+    box-shadow: var(--shadow-4);
     transform: translateY(-1px);
   }
   .social-icon:active {
+    box-shadow: var(--shadow-active);
     transform: translateY(0) scale(0.98);
   }
   /* 图标下方的文字标题：小号辅助标签（11px），悬停随 currentColor 变强调色 */
@@ -1129,8 +1139,8 @@
     line-height: 1.2;
     letter-spacing: 0.02em;
     white-space: nowrap;
-    /* 壁纸亮色区域也保证可读 */
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    /* 壁纸亮色区域 + 胶囊玻璃底边缘也保证可读 */
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
   }
   /* 窄屏（≤480px）收窄胶囊内边距与间距，减少换行、避免横向溢出 */
   @media (max-width: 480px) {
