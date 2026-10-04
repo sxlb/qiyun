@@ -23,6 +23,7 @@ import {
   Plus,
   Trash2,
   Star,
+  Tag,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -97,6 +98,20 @@ interface UpdateStatusData {
   rollbackTargets: string[];
   backups: BackupSnapshot[];
   records: UpdateRecord[];
+}
+
+/** 发布列表条目相对当前版本的位置：决定该给「更新」还是「回滚」按钮 */
+type ReleaseRelation = "newer" | "current" | "older";
+
+/** /api/update/releases 返回的条目（ReleaseInfo + relation） */
+interface ReleaseListItem {
+  tag: string;
+  version: string;
+  name: string;
+  body: string;
+  htmlUrl: string;
+  publishedAt: string;
+  relation: ReleaseRelation;
 }
 
 function formatTime(iso: string): string {
@@ -226,6 +241,10 @@ export default function UpdatePanel() {
   const [testingProxies, setTestingProxies] = useState(false);
   const [savingProxies, setSavingProxies] = useState(false);
   const [newMirror, setNewMirror] = useState("");
+  // 版本列表：懒加载（展开区块时才拉）。null = 尚未加载；拉取失败保持 null，下次展开可自动重试
+  const [releases, setReleases] = useState<ReleaseListItem[] | null>(null);
+  const [releasesError, setReleasesError] = useState<string | null>(null);
+  const [loadingReleases, setLoadingReleases] = useState(false);
   const seqRef = useRef(0);
   const mountedRef = useRef(true);
 
@@ -287,6 +306,38 @@ export default function UpdatePanel() {
   useEffect(() => {
     loadProxies(false);
   }, [loadProxies]);
+
+  /** 拉取发布列表（含各版本更新说明）。30 条自带正文，因此不随面板打开就拉，展开区块时才拉 */
+  const loadReleases = useCallback(async (force = false) => {
+    setLoadingReleases(true);
+    try {
+      const res = await fetch(`/api/update/releases${force ? "?force=1" : ""}`, { cache: "no-store" });
+      const body = (await res.json().catch(() => ({}))) as {
+        releases?: ReleaseListItem[];
+        error?: string | null;
+      };
+      if (!mountedRef.current) return;
+      if (!res.ok) {
+        toast.error((body as { error?: string }).error || "获取版本列表失败");
+        return;
+      }
+      setReleases(body.releases ?? []);
+      // 服务端能返回列表但拉取来源全失败时带 error：要在区块里如实显示，而不是装作「没有版本」
+      setReleasesError(body.error ?? null);
+    } catch {
+      if (mountedRef.current) toast.error("网络错误，获取版本列表失败");
+    } finally {
+      if (mountedRef.current) setLoadingReleases(false);
+    }
+  }, []);
+
+  /** 区块展开时才拉一次（toggle 在部分浏览器挂载时也会触发，这里只认 open=true） */
+  const onReleasesToggle = useCallback(
+    (open: boolean) => {
+      if (open && releases === null && !loadingReleases) void loadReleases(false);
+    },
+    [releases, loadingReleases, loadReleases]
+  );
 
   /** 保存自定义代理整组列表（添加/删除都走这里），保存后立即重新测试一次 */
   async function saveMirrors(next: string[]) {
@@ -379,6 +430,8 @@ export default function UpdatePanel() {
   const estimatedSeconds = 90;
   const hostReady = data?.hostReady;
   const rollDone = data?.versions?.history?.length;
+  // 有数据库快照的版本：回滚时会连数据一起回到该版本；没有快照的只能切代码
+  const snapshotVersions = new Set((data?.backups ?? []).map((b) => b.version));
 
   return (
     <Card className="overflow-hidden border-border shadow-sm">
@@ -513,12 +566,181 @@ export default function UpdatePanel() {
               </div>
             </div>
           ) : (
-            <EmptyState
-              icon={<CheckCircle2 className="h-5 w-5" />}
-              title="当前已是最新版本"
-              hint="点击右上角「检查更新」可重新检测 GitHub 发布"
-            />
+            <div className="space-y-4">
+              <EmptyState
+                icon={<CheckCircle2 className="h-5 w-5" />}
+                title="当前已是最新版本"
+                hint="点击右上角「检查更新」可重新检测 GitHub 发布"
+              />
+              {/* 没有新版时也把最新版的说明摆出来：否则「已是最新」这块只剩一句提示，
+                  想看「我现在跑的这个版本改了什么」还得另找地方 */}
+              {latest?.body ? (
+                <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    最新版本 v{latest.version} 的更新日志
+                  </p>
+                  <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground">
+                    {latest.body}
+                  </pre>
+                </div>
+              ) : null}
+            </div>
           )}
+        </SectionBlock>
+
+        {/* 版本列表与更新日志：可查看每个已发布版本各自改了什么，并直接选定某个版本更新/回滚 */}
+        <SectionBlock
+          title="版本列表与更新日志"
+          subtitle={
+            loadingReleases && releases === null
+              ? "加载中…"
+              : releases
+                ? `${releases.length} 个已发布版本`
+                : "展开后加载"
+          }
+          dotClass="bg-primary"
+          open={false}
+          onToggle={onReleasesToggle}
+        >
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+                这里的每个版本都可以单独选，不必只更新到最新版。
+                <b className="text-foreground">更新</b>只换代码、保留现有数据；
+                <b className="text-foreground">回滚</b>会把数据库一并恢复到该版本的快照（该版本没有快照时只切代码，已标出）。
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => loadReleases(true)}
+                disabled={loadingReleases}
+                className="gap-1.5"
+              >
+                {loadingReleases ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+                刷新版本列表
+              </Button>
+            </div>
+
+            {loadingReleases && releases === null ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">正在获取版本列表…</p>
+            ) : releasesError ? (
+              <div className="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/10 p-4 text-sm">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                <div className="space-y-0.5">
+                  <p className="font-medium text-foreground">获取版本列表失败</p>
+                  <p className="text-xs text-muted-foreground">{releasesError}</p>
+                  <p className="text-xs text-muted-foreground">
+                    可在下方「GitHub 加速代理」里测试连通性并指定一个可用源后重试。
+                  </p>
+                </div>
+              </div>
+            ) : !releases?.length ? (
+              <EmptyState
+                icon={<Tag className="h-5 w-5" />}
+                title="没有可用的版本列表"
+                hint="GitHub 上还没有发布版本，或列表获取失败"
+              />
+            ) : (
+              <div className="space-y-2">
+                {releases.map((r) => {
+                  const isCurrent = r.relation === "current";
+                  const isNewer = r.relation === "newer";
+                  // 更新的和当前的走 update（不动数据）；更旧的走 rollback（恢复数据快照）
+                  const action: "update" | "rollback" = isNewer || isCurrent ? "update" : "rollback";
+                  const hasSnapshot = snapshotVersions.has(r.version);
+                  return (
+                    <div
+                      key={r.version}
+                      className={`rounded-lg border px-4 py-3 ${
+                        isCurrent ? "border-primary/40 bg-primary/5" : "border-border bg-muted/30"
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <Tag className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          <span className="font-mono text-sm font-semibold">{r.version}</span>
+                          {isCurrent ? (
+                            <span className="inline-flex items-center rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
+                              当前版本
+                            </span>
+                          ) : isNewer ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
+                              <Sparkles className="h-3 w-3" /> 新版本
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                              历史版本
+                            </span>
+                          )}
+                          {r.publishedAt ? (
+                            <span className="text-xs text-muted-foreground tabular-nums">
+                              {formatTime(r.publishedAt)}
+                            </span>
+                          ) : null}
+                          {!isNewer && !isCurrent && !hasSnapshot ? (
+                            <span
+                              className="text-xs text-warning"
+                              title="该版本没有数据库快照，回滚只切换代码、不回退数据"
+                            >
+                              无数据快照
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="flex shrink-0 flex-wrap items-center gap-2">
+                          <Button
+                            variant={isNewer ? "default" : "outline"}
+                            size="sm"
+                            disabled={busy || !!submitting || isCurrent}
+                            onClick={() => trigger(action, r.version)}
+                            className="gap-1.5"
+                            title={isCurrent ? "当前正在运行这个版本" : undefined}
+                          >
+                            {submitting === `${action}:${r.version}` ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : isCurrent ? (
+                              <CheckCircle2 className="h-4 w-4" />
+                            ) : isNewer ? (
+                              <DownloadCloud className="h-4 w-4" />
+                            ) : (
+                              <RotateCcw className="h-4 w-4" />
+                            )}
+                            {isCurrent ? "当前运行中" : isNewer ? "更新到此版本" : "回滚到此版本"}
+                          </Button>
+                          {r.htmlUrl ? (
+                            <a
+                              href={r.htmlUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-primary"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                              发布页
+                            </a>
+                          ) : null}
+                        </div>
+                      </div>
+                      {r.body ? (
+                        <details className="mt-2.5">
+                          <summary className="cursor-pointer text-xs text-muted-foreground transition-colors hover:text-foreground">
+                            更新内容
+                          </summary>
+                          <pre className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md border border-border bg-background/60 p-3 font-sans text-xs leading-relaxed">
+                            {r.body}
+                          </pre>
+                        </details>
+                      ) : (
+                        <p className="mt-2 text-xs text-muted-foreground">该版本未填写更新说明</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </SectionBlock>
 
         {/* 执行中进度 */}
@@ -807,10 +1029,10 @@ export default function UpdatePanel() {
           )}
         </SectionBlock>
 
-        {/* 更新历史 */}
+        {/* 操作记录：谁在什么时候触发了哪次更新 —— 与上面的「版本更新日志」不是一回事 */}
         <SectionBlock
-          title="更新日志"
-          subtitle={`${data?.records.length ?? 0} 条记录`}
+          title="操作记录"
+          subtitle={`${data?.records.length ?? 0} 次触发`}
           dotClass="bg-info"
           open={false}
         >

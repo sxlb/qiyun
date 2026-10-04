@@ -145,7 +145,13 @@ async function readVersionCache(): Promise<VersionCacheDoc | null> {
 
 /* ---------------- GitHub API 多源（官方优先，失败降级公共代理）+ 测速选源 ---------------- */
 
-const OFFICIAL_BASE = "https://api.github.com";
+/**
+ * ⚠️ 结尾斜杠不能省：releaseUrl() / releasesUrl() 都是直接在其后拼 "repos/..."，
+ * 少了斜杠会拼出 https://api.github.comrepos/... —— 这个主机根本不存在，
+ * 表现为「官方源永远 net 失败、所有请求都走代理兜底」，而且不会报错，只会在代理全挂时集体失败。
+ * （sourceKey() 只忽略结尾斜杠做去重，不会替这里补上。）
+ */
+const OFFICIAL_BASE = "https://api.github.com/";
 
 /**
  * 内置公共加速代理（后台「系统更新 → GitHub 加速代理」里会逐个测连通性）。
@@ -488,8 +494,10 @@ function classify(results: ProbeResult[]): ProbeResult {
   return http ?? { kind: "net" };
 }
 
-/** 失败原因的可读描述（仅用于服务端日志，便于事后定位） */
-function describeResult(r: ProbeResult): string {
+/** 失败原因的可读描述（仅用于服务端日志，便于事后定位）。
+ *  参数只取 kind 与可选的 status：单版本探测与发布列表探测共用这一套描述，
+ *  两边都只有 kind 的取值集合相同、且只有 http 一种带 status。 */
+function describeResult(r: { kind: ProbeResult["kind"]; status?: number }): string {
   switch (r.kind) {
     case "ok":
       return "成功";
@@ -629,6 +637,162 @@ export async function fetchLatestRelease(force = false): Promise<FetchLatestResu
   }
   globalCache.latest = { at: Date.now(), data: null, error: message };
   return { data: null, fromCache: false, error: message };
+}
+
+/* ---------------- 发布列表（后台「版本列表与更新日志」用） ---------------- */
+
+/**
+ * 一次拉取的发布条数上限。
+ * 取 30：够覆盖「最近几次版本」的更新日志需求，又把响应体控制在可接受范围
+ * （每条含 Markdown 说明正文，100 条会到几百 KB，后台展开一次就要等）。
+ */
+const RELEASES_PER_PAGE = 30;
+
+type ListProbeResult =
+  | { kind: "ok"; data: ReleaseInfo[] }
+  | { kind: "http"; status: number }
+  | { kind: "timeout" }
+  | { kind: "net" }
+  | { kind: "noRelease" };
+
+/** 发布列表端点：与 releaseUrl 同一套「base 自带上游完整地址」约定 */
+function releasesUrl(base: string): string {
+  return `${base}repos/${GITHUB_REPO}/releases?per_page=${RELEASES_PER_PAGE}`;
+}
+
+/**
+ * 单源单次探测（发布列表）。与 probe 同一套超时与错误定性，差别只在端点与返回体形状；
+ * 刻意不复用 probe：那个的返回体是单个对象，混在一起会让两边的类型都变模糊。
+ */
+async function probeReleases(base: string, timeoutMs: number): Promise<ListProbeResult> {
+  try {
+    const res = await fetch(releasesUrl(base), {
+      headers: RELEASE_HEADERS,
+      signal: AbortSignal.timeout(timeoutMs),
+      cache: "no-store",
+    });
+    if (res.ok) {
+      try {
+        const raw = (await res.json()) as unknown;
+        // 结构不符（例如代理返回了一个对象或 HTML）一律按连接失败处理，
+        // 不要把「拿不到列表」伪装成「没有发布」
+        if (!Array.isArray(raw)) return { kind: "net" };
+        return { kind: "ok", data: raw.map((r) => mapRelease(r as Record<string, unknown>)) };
+      } catch {
+        return { kind: "net" };
+      }
+    }
+    // 没有有效状态码：按连接失败处理（同 probe）
+    if (!res.status) return { kind: "net" };
+    return { kind: "http", status: res.status };
+  } catch (e) {
+    const timeout =
+      e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError" || TIMEOUT_RE.test(e.message));
+    return { kind: timeout ? "timeout" : "net" };
+  }
+}
+
+/** 汇总一轮发布列表探测的全失败结果：与 classify 同规则，官方源的失败原因最能代表实情 */
+function classifyList(results: ListProbeResult[]): ListProbeResult {
+  if (results.some((r) => r.kind === "noRelease" || (r.kind === "http" && r.status === 404))) {
+    return { kind: "noRelease" };
+  }
+  const official = results[0];
+  if (official && official.kind !== "ok") return official;
+  if (results.some((r) => r.kind === "timeout")) return { kind: "timeout" };
+  if (results.some((r) => r.kind === "net")) return { kind: "net" };
+  const http = results.find((r) => r.kind === "http");
+  return http ?? { kind: "net" };
+}
+
+/** 一轮竞速（发布列表）：并发探测全部候选源，首个成功即返回 */
+async function raceReleasesOnce(sources: string[], round: number): Promise<ListProbeResult> {
+  return new Promise<ListProbeResult>((resolve) => {
+    let settled = false;
+    let failed = 0;
+    const results = new Array<ListProbeResult>(sources.length);
+    sources.forEach((base, i) => {
+      probeReleases(base, i === 0 ? OFFICIAL_TIMEOUT_MS : MIRROR_TIMEOUT_MS).then((r) => {
+        if (settled) return;
+        if (r.kind === "ok") {
+          settled = true;
+          resolve(r);
+          return;
+        }
+        results[i] = r;
+        failed++;
+        if (failed === sources.length) {
+          settled = true;
+          console.warn(
+            `[version] 发布列表第 ${round} 轮全部源失败：` +
+              sources.map((s, idx) => `${safeHost(s)}=${describeResult(results[idx])}`).join("，")
+          );
+          resolve(classifyList(results));
+        }
+      });
+    });
+  });
+}
+
+/** 发布列表结果：空数组表示确实一个 release 都没有（与「拉取失败」区分开） */
+export interface FetchReleaseListResult {
+  data: ReleaseInfo[];
+  error?: string;
+}
+
+/** 进程级缓存（列表较大，TTL 长于单版本探测；force 时绕过） */
+let releaseListCache: { at: number; data: ReleaseInfo[]; error?: string } | null = null;
+const RELEASE_LIST_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * 拉取发布列表：与 fetchLatestRelease 同样的多源竞速 + 重试两轮，取最快成功的一个源。
+ * 返回的列表保持 GitHub 的顺序（新的在前）。全部源失败时返回 error，不抛异常。
+ */
+export async function fetchReleaseList(force = false): Promise<FetchReleaseListResult> {
+  if (!force && releaseListCache && Date.now() - releaseListCache.at < RELEASE_LIST_TTL_MS) {
+    return { data: releaseListCache.data, error: releaseListCache.error };
+  }
+
+  const sources = await candidateSources();
+  const preferred = await readProxyPreference();
+  // 后台指定的优先代理：先单独探它（同 fetchLatestRelease 的语义），成功即用
+  if (preferred && sources.includes(preferred)) {
+    const r = await probeReleases(preferred, MIRROR_TIMEOUT_MS);
+    if (r.kind === "ok") {
+      releaseListCache = { at: Date.now(), data: r.data };
+      return { data: r.data };
+    }
+    console.warn(`[version] 发布列表：优先代理 ${safeHost(preferred)} 不可用（${describeResult(r)}），回退全源竞速`);
+  }
+
+  let last: ListProbeResult | undefined;
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const res = await raceReleasesOnce(sources, round + 1);
+    if (res.kind === "ok") {
+      releaseListCache = { at: Date.now(), data: res.data };
+      return { data: res.data };
+    }
+    last = res;
+    if (res.kind === "noRelease") {
+      const message = "暂无已发布的版本";
+      releaseListCache = { at: Date.now(), data: [], error: message };
+      return { data: [], error: message };
+    }
+    if (round < MAX_ROUNDS - 1) await sleep(ROUND_GAP_MS);
+  }
+
+  const message =
+    last?.kind === "timeout"
+      ? "获取版本列表超时，请稍后重试"
+      : last?.kind === "http"
+        ? `GitHub 接口返回 ${last.status}${last.status === 403 ? "（可能触发限流，请稍后重试）" : ""}`
+        : "网络错误，获取版本列表失败，请重试";
+  return { data: [], error: message };
+}
+
+/** 供测试清空缓存，保证隔离 */
+export function resetReleaseListCache(): void {
+  releaseListCache = null;
 }
 
 /* ---------------- 版本缓存：按需刷新 / 写入（容器侧） ---------------- */

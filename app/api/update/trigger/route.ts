@@ -1,7 +1,13 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireSession, success, error, internalError, parseJsonBody, writeOperationLog, getClientIp } from "@/lib/server";
-import { CURRENT_VERSION, fetchLatestRelease, isNewerRelease, readCachedRelease } from "@/lib/version";
+import {
+  CURRENT_VERSION,
+  fetchLatestRelease,
+  fetchReleaseList,
+  isNewerRelease,
+  readCachedRelease,
+} from "@/lib/version";
 import {
   checkDeployDirWritable,
   execState,
@@ -16,9 +22,13 @@ import {
 /**
  * 系统更新/回滚触发：POST /api/update/trigger
  * 请求体：{ action: "update" | "rollback", version?: string, description?: string }
- *  - action=update      ：更新到 GitHub 最新 release（无需传 version，取最新）
- *  - action=rollback    ：回滚到历史版本（version 必须为可回滚目标 tag，如 1.2.0）
+ *  - action=update              ：更新到 GitHub 最新 release（无需传 version，取最新）
+ *  - action=update + version    ：更新到指定的已发布版本（后台「版本列表」里选一个）
+ *  - action=rollback            ：回滚到历史版本（version 必须为可回滚目标 tag，如 1.2.0）
  * 更新方式固定为拉取已发布的镜像，不在服务器上本地构建。
+ *
+ * 注意 update 与 rollback 的区别不只是方向：rollback 额外会把数据库恢复到该版本的快照，
+ * 而 update 不动数据。所以「回到旧版本」应当走 rollback（后台版本列表也是这么分派的）。
  * 仅管理员可访问；执行中/待执行时拒绝重复提交。
  */
 export async function POST(request: NextRequest) {
@@ -57,36 +67,63 @@ export async function POST(request: NextRequest) {
     let versionSource: "live" | "cache" = "live";
 
     if (action === "update") {
-      const latest = await fetchLatestRelease(true); // 强制刷新，避免误用旧缓存
-      let release = latest.data;
-      if (!release) {
-        // 实时检测失败（出网抖动 / GitHub 限流）时降级用缓存版本：
-        // 触发更新只需要一个有效的目标 tag，不该因为一次检测失败就把用户卡在「无法检测到最新版本」。
-        // 但缓存版本必须确实比当前版本新，否则会把「检测失败」变成「静默降级到旧版本」。
-        const cached = await readCachedRelease();
-        if (cached && isNewerRelease(cached.version, CURRENT_VERSION)) {
-          release = cached;
-          versionSource = "cache";
-        } else if (cached) {
+      // 指定版本更新（后台「版本列表」里点某一行的更新按钮）：必须以已发布版本为准校验，
+      // 避免手误或构造出不存在的 tag —— 宿主机那边只会以「拉取失败」收场，用户看不出是版本号写错。
+      const requested = String(body.version || "").trim().replace(/^v/i, "");
+      if (requested) {
+        const { data: releases, error: listError } = await fetchReleaseList();
+        const hit = releases.find((r) => r.version === requested);
+        if (!hit) {
           return error(
-            `实时检测最新版本失败（${latest.error ?? "网络异常"}）；缓存中的版本 ${cached.version} 不高于当前版本 ${CURRENT_VERSION}，没有可更新的版本`
+            listError
+              ? `无法校验目标版本 ${requested}：${listError}`
+              : `版本 ${requested} 不在已发布列表中，请点「刷新版本列表」后重试`
+          );
+        }
+        version = hit.version;
+        description = description || hit.body || "";
+      } else {
+        const latest = await fetchLatestRelease(true); // 强制刷新，避免误用旧缓存
+        let release = latest.data;
+        if (!release) {
+          // 实时检测失败（出网抖动 / GitHub 限流）时降级用缓存版本：
+          // 触发更新只需要一个有效的目标 tag，不该因为一次检测失败就把用户卡在「无法检测到最新版本」。
+          // 但缓存版本必须确实比当前版本新，否则会把「检测失败」变成「静默降级到旧版本」。
+          const cached = await readCachedRelease();
+          if (cached && isNewerRelease(cached.version, CURRENT_VERSION)) {
+            release = cached;
+            versionSource = "cache";
+          } else if (cached) {
+            return error(
+              `实时检测最新版本失败（${latest.error ?? "网络异常"}）；缓存中的版本 ${cached.version} 不高于当前版本 ${CURRENT_VERSION}，没有可更新的版本`
+            );
+          }
+        }
+        if (!release) {
+          return error(latest.error ? `无法检测到最新版本：${latest.error}` : "暂无可更新版本");
+        }
+        // 用归一化后的 version（去掉可能存在的 v 前缀），与宿主机侧 refs/tags/<version> 校验保持一致
+        version = release.version;
+        description = description || release.body || "";
+      }
+    } else {
+      // rollback：目标既可以是历史版本列表里的版本，也可以是任意一个已发布的版本。
+      // 后者等价于手工执行 ./deploy.sh <版本>（只切代码、不回退数据），是本来就有的能力；
+      // 只是这类版本往往没有对应的数据库快照，后台会在按钮上如实标注出来。
+      const requested = String(body.version || "").trim().replace(/^v/i, "");
+      if (!requested) return error("参数错误：回滚必须指定目标版本（git tag）");
+      if (!rollbackTargets().includes(requested)) {
+        const { data: releases, error: listError } = await fetchReleaseList();
+        const hit = releases.find((r) => r.version === requested);
+        if (!hit) {
+          return error(
+            listError
+              ? `无法校验目标版本 ${requested}：${listError}`
+              : `目标版本 ${requested} 既不在可回滚列表中，也不是已发布的版本`
           );
         }
       }
-      if (!release) {
-        return error(latest.error ? `无法检测到最新版本：${latest.error}` : "暂无可更新版本");
-      }
-      // 用归一化后的 version（去掉可能存在的 v 前缀），与宿主机侧 refs/tags/<version> 校验保持一致
-      version = release.version;
-      description = description || release.body || "";
-    } else {
-      // rollback：校验目标在历史版本列表中
-      version = String(body.version || "").trim();
-      if (!version) return error("参数错误：回滚必须指定目标版本（git tag）");
-      const targets = rollbackTargets();
-      if (!targets.includes(version)) {
-        return error(`目标版本 ${version} 不在可回滚列表中`);
-      }
+      version = requested;
     }
 
     const id = newId();

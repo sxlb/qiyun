@@ -79,17 +79,25 @@ export function SectionBlock({
   subtitle,
   dotClass,
   open,
+  onToggle,
   children,
 }: {
   title: string;
   subtitle: string;
   dotClass: string;
   open?: boolean;
+  /**
+   * 展开 / 收起回调。用途是「展开时才去拉数据」的懒加载
+   * （如系统更新里的版本列表：30 条发布各自带说明正文，开面板就拉太浪费）。
+   * 注意 toggle 事件在部分浏览器里也会在挂载时触发一次，调用方需自行判断 open。
+   */
+  onToggle?: (open: boolean) => void;
   children: ReactNode;
 }) {
   return (
     <details
       open={open}
+      onToggle={(e) => onToggle?.(e.currentTarget.open)}
       className="group overflow-hidden rounded-lg border border-border bg-card shadow-sm transition-all"
     >
       <summary className="flex cursor-pointer items-center justify-between px-4 py-3.5 transition-colors hover:bg-muted/40 [&::-webkit-details-marker]:hidden list-none">

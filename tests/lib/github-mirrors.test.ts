@@ -85,12 +85,14 @@ describe("候选源清单（官方 + 内置/环境变量 + 自定义）", () => 
 
   it("默认给出官方 + 内置代理，官方居首且全部为可拼接形式", async () => {
     const sources = await listProxySources();
-    expect(sources[0]).toEqual({ base: "https://api.github.com", scope: "official" });
+    expect(sources[0]).toEqual({ base: "https://api.github.com/", scope: "official" });
     expect(sources.length).toBeGreaterThanOrEqual(5);
     expect(sources.filter((s) => s.scope === "builtin").length).toBe(4);
-    // 每个内置代理都必须是「代理 + 上游完整地址」形式，否则会拼出 403 的路径
-    for (const s of sources.filter((x) => x.scope !== "official")) {
-      expect(s.base).toMatch(/api\.github\.com\/$/);
+    // 每个源的 base 都必须以斜杠结尾，才能直接拼 "repos/..."。
+    // 官方源曾漏写这个斜杠，拼出 https://api.github.comrepos/... 这种无效主机，
+    // 而失败是静默的（只是永远降级到代理），所以这里对所有源一并锁住。
+    for (const s of sources) {
+      expect(s.base.endsWith("/")).toBe(true);
     }
   });
 
@@ -115,7 +117,7 @@ describe("候选源清单（官方 + 内置/环境变量 + 自定义）", () => 
       { base: "https://mine.example.com/https://api.github.com/", scope: "custom" },
     ]);
     expect(sources.filter((s) => s.base.startsWith("https://gh-proxy.com"))).toHaveLength(1);
-    expect(sources.filter((s) => s.base === "https://api.github.com")).toHaveLength(1);
+    expect(sources.filter((s) => s.base === "https://api.github.com/")).toHaveLength(1);
   });
 });
 

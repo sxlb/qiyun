@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fetchLatestRelease, resetReleaseCache } from "../../lib/version";
 
-const OFFICIAL = "https://api.github.com";
+const OFFICIAL = "https://api.github.com/";
 const PROXY_BASE = "https://gh-proxy.com/https://api.github.com";
 const RELEASE_PATH = "/repos/sxlb/qiyun/releases/latest";
 
