@@ -106,14 +106,17 @@ model User {
 }
 
 model SocialLink {
-  id        Int      @id @default(autoincrement())
-  name      String
-  icon      String
-  url       String
-  tip       String   @default("")
-  sort      Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         Int      @id @default(autoincrement())
+  name       String
+  icon       String
+  url        String
+  /// 点击弹出的图片（微信/QQ 这类没有公开主页的平台放二维码）。
+  /// 非空时前台不再跳转链接，改为弹出这张图；此时 url 允许留空。
+  popupImage String   @default("")
+  tip        String   @default("")
+  sort       Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
 
 model SiteLink {

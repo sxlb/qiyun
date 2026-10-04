@@ -1110,6 +1110,15 @@
     align-items: center;
     gap: 0.3rem;
     padding: 0.4rem 0.65rem 0.35rem;
+    /* 有弹出图的条目渲染成 <button>（见 SocialLinks.tsx），其余是 <a>。
+       这里显式清掉按钮的默认底色 / 边框 / 字体，保证两种标签长得完全一样 ——
+       不依赖 Tailwind preflight 是否开启，避免以后换样式方案时两边长相分叉。 */
+    border: 0;
+    background: none;
+    font: inherit;
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
     border-radius: 10px;
     color: rgba(255, 255, 255, 0.92);
     transition:
@@ -1137,6 +1146,84 @@
     white-space: nowrap;
     /* 壁纸亮色区域 + 胶囊玻璃底边缘也保证可读 */
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  }
+  /* ---------- 点击弹出的图片（微信 / QQ 二维码） ----------
+     固定浮层铺满视口：首页是「页面不滚动 + 容器内滚动」的单屏外壳，
+     fixed 定位才不会被那层滚动容器裁掉。 */
+  .social-qr-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 150;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.25rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    animation: fade 0.2s ease both;
+  }
+  .social-qr-backdrop {
+    position: absolute;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+  .social-qr-card {
+    /* relative + z-index：压在遮罩之上，否则点卡片也会关掉弹层 */
+    position: relative;
+    z-index: 1;
+    /* margin: auto 而非仅靠 align-items：矮屏上内容超高时能被滚动到，
+       居中方案在溢出时会把顶部裁掉 */
+    margin: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+    max-width: min(88vw, 22rem);
+    padding: 0.85rem;
+    border-radius: var(--radius-lg);
+    /* 比主卡片再实一点：弹出的是一张需要看清的二维码，不能让壁纸透上来干扰 */
+    background-color: rgba(0, 0, 0, calc(var(--card-alpha, 0.35) + 0.3));
+    backdrop-filter: blur(var(--glass-blur, 16px)) saturate(140%);
+    -webkit-backdrop-filter: blur(var(--glass-blur, 16px)) saturate(140%);
+    box-shadow: var(--shadow-4);
+  }
+  .social-qr-img {
+    display: block;
+    width: 100%;
+    max-width: min(72vw, 18rem);
+    /* 长边也压住：矮视口下整张卡仍在一屏内 */
+    max-height: 62vh;
+    max-height: 62dvh;
+    object-fit: contain;
+    border-radius: calc(var(--radius-lg) - 4px);
+    /* 二维码多为浅底图，给白底避免透明 PNG 在暗色玻璃上发灰 */
+    background-color: #fff;
+  }
+  .social-qr-caption {
+    font-size: 0.8125rem;
+    color: rgba(255, 255, 255, 0.85);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  }
+  .social-qr-close {
+    position: absolute;
+    top: 0.35rem;
+    right: 0.35rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.3rem;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    border-radius: 999px;
+    color: rgba(255, 255, 255, 0.75);
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+  .social-qr-close:hover {
+    background-color: rgba(255, 255, 255, 0.14);
+    color: #fff;
   }
   /* 窄屏（≤480px）收窄胶囊内边距与间距，减少换行、避免横向溢出 */
   @media (max-width: 480px) {

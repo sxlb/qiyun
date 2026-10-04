@@ -38,6 +38,57 @@ describe("socialLinkSchema（社交链接）", () => {
   });
 });
 
+describe("socialLinkSchema 的「点击弹出图片」", () => {
+  const base = { name: "微信", icon: "simple-icons:wechat" };
+
+  it("地址可留空：只配二维码图片也能通过（微信没有可跳转的主页）", () => {
+    const r = socialLinkSchema.safeParse({ ...base, url: "", popupImage: "/api/uploads/file/qr.png" });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.url).toBe("");
+  });
+
+  it("未提供该字段时归一化为空串（存量数据不带这列也能过）", () => {
+    const r = socialLinkSchema.safeParse({ ...base, url: "https://example.com" });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.popupImage).toBe("");
+  });
+
+  it("接受外链图片与站内媒体路径", () => {
+    for (const popupImage of [
+      "https://cdn.example.com/qr.png",
+      "/api/uploads/file/x.webp",
+      "/images/qr.png",
+    ]) {
+      expect(socialLinkSchema.safeParse({ ...base, url: "", popupImage }).success).toBe(true);
+    }
+  });
+
+  it("拒绝「不是图片」的取值：图标名 / 危险协议 / 含空格的路径", () => {
+    // 这些值在 icon 字段里合法，但作为「要展示的图片」不成立 —— 放进来前台会弹一个破图
+    for (const popupImage of [
+      "github",
+      "icon-github",
+      "javascript:alert(1)",
+      "data:image/png;base64,AAAA",
+      "ftp://example.com/a.png",
+      "/images/a b.png",
+    ]) {
+      expect(socialLinkSchema.safeParse({ ...base, url: "", popupImage }).success).toBe(false);
+    }
+  });
+
+  it("地址的协议校验没有因为「允许留空」被放宽", () => {
+    expect(socialLinkSchema.safeParse({ ...base, url: "ftp://example.com" }).success).toBe(false);
+    expect(socialLinkSchema.safeParse({ ...base, url: "example.com" }).success).toBe(false);
+  });
+
+  it("schema 仍是可直接 .extend 的普通对象", () => {
+    // 批量保存（link-list-api）要在它上面 .extend({ id })；一旦有人把跨字段规则写成
+    // 对象级 refine，schema 会变成 ZodEffects（没有 extend），接口层会在运行时才炸
+    expect(typeof (socialLinkSchema as unknown as { extend?: unknown }).extend).toBe("function");
+  });
+});
+
 describe("图标字段支持网络图片（MediaPicker 产出的值）", () => {
   const imageIcons = [
     "https://www.google.com/s2/favicons?domain=github.com&sz=64",

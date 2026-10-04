@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Github,
   Mail,
@@ -10,6 +11,7 @@ import {
   Youtube,
   MessageCircle,
   Link2,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { useIconfontSymbols } from "./Iconfont";
@@ -48,6 +50,8 @@ interface SocialLink {
   name: string;
   icon: string;
   url: string;
+  /** 点击弹出的图片（微信/QQ 这类没有可跳转主页的平台放二维码）；非空时不再跳转 */
+  popupImage?: string;
   tip: string;
   sort: number;
 }
@@ -148,6 +152,8 @@ function SocialIcon({
  */
 export default function SocialLinks({ initialLinks, iconifyApi }: SocialLinksProps) {
   const [links, setLinks] = useState<SocialLink[]>(initialLinks ?? []);
+  // 当前展开的弹出图（微信/QQ 二维码）；null 表示未展开
+  const [popup, setPopup] = useState<{ src: string; name: string } | null>(null);
   // 已注册的 iconfont symbol（阿里云矢量图标库），供图标优先渲染
   const iconfontSymbols = useIconfontSymbols();
 
@@ -160,6 +166,16 @@ export default function SocialLinks({ initialLinks, iconifyApi }: SocialLinksPro
       .catch((e) => { if (process.env.NODE_ENV === "development") console.error("[SocialLinks]", e); });
   }, [initialLinks]);
 
+  // Esc 关闭弹层：只在展开时挂监听，平时零开销
+  useEffect(() => {
+    if (!popup) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPopup(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [popup]);
+
   const sortedLinks = useMemo(
     () => [...links].sort((a, b) => a.sort - b.sort),
     [links],
@@ -170,26 +186,82 @@ export default function SocialLinks({ initialLinks, iconifyApi }: SocialLinksPro
   return (
     <div className="social-links-bar">
       <div className="social-link-row">
-        {sortedLinks.map((link) => (
-          <a
-            key={link.id}
-            href={link.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="social-icon"
-            title={link.tip || link.name}
-            aria-label={link.tip || link.name}
-          >
+        {sortedLinks.map((link) => {
+          const label = link.tip || link.name;
+          const popupImage = link.popupImage?.trim() ?? "";
+          const icon = (
             <SocialIcon
               icon={link.icon}
               name={link.name}
               iconfontSymbols={iconfontSymbols}
               iconifyApi={iconifyApi}
             />
-            <span className="social-link-title">{link.name}</span>
-          </a>
-        ))}
+          );
+
+          // 有弹出图时不再跳转：改渲染成 button 弹出图片。
+          // 两者都填时以弹出图为准 —— 字段名本身就是「点击弹出图片」，
+          // 用户在后台填了它，期望的就是点开看图。
+          if (popupImage) {
+            return (
+              <button
+                key={link.id}
+                type="button"
+                className="social-icon"
+                title={label}
+                aria-label={label}
+                aria-haspopup="dialog"
+                onClick={() => setPopup({ src: popupImage, name: link.name })}
+              >
+                {icon}
+                <span className="social-link-title">{link.name}</span>
+              </button>
+            );
+          }
+
+          return (
+            <a
+              key={link.id}
+              href={link.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="social-icon"
+              title={label}
+              aria-label={label}
+            >
+              {icon}
+              <span className="social-link-title">{link.name}</span>
+            </a>
+          );
+        })}
       </div>
+
+      {/* 弹出图查看器：portal 到 body，两个理由都不能省 ——
+          1. 弹层是 fixed，留在单屏外壳的滚动容器里虽不会被裁切，但 .social-links-bar 所在的
+             <section> 带 z-10、自身形成层叠上下文，里面的 z-index 再高也压不过外层 z-[85] 的公告浮层
+             （实测被欢迎通知整个盖住）；
+          2. 挂到 body 后才在根层叠上下文里比大小：150 高于内容与公告，低于加载动画的 999。 */}
+      {popup && typeof document !== "undefined" && createPortal(
+        <div className="social-qr-scrim" role="dialog" aria-modal="true" aria-label={`${popup.name} 二维码`}>
+          {/* 点遮罩关闭：与站内其它浮层（如控制台彩蛋）用同一套写法 */}
+          <div className="social-qr-backdrop" onClick={() => setPopup(null)} aria-hidden="true" />
+          <figure className="social-qr-card">
+            <button
+              type="button"
+              className="social-qr-close"
+              onClick={() => setPopup(null)}
+              aria-label="关闭"
+              title="关闭"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            {/* 管理员上传/配置的图片，走原生 img */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={popup.src} alt={`${popup.name} 二维码`} className="social-qr-img" />
+            <figcaption className="social-qr-caption">{popup.name}</figcaption>
+          </figure>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

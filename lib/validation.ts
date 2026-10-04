@@ -513,6 +513,24 @@ const iconOrMediaValue = (required: boolean) =>
       }
     });
 
+/**
+ * 「点击弹出图片」字段（社交链接独有）：留空表示不启用；填了必须是能直接当图片展示的地址。
+ * 不复用 iconOrMediaValue —— 那里放行纯图标名（如 github）与内联 SVG，
+ * 两者都不是可展示的图片源，混进来会在前台弹出一个破图。
+ */
+const popupImageValue = z
+  .string()
+  .trim()
+  .max(2048, "图片地址过长")
+  .optional()
+  .default("")
+  .refine((v) => {
+    if (v === "") return true;
+    if (!MEDIA_VALUE_RE.test(v)) return false;
+    // 站内路径额外做字符合法性校验（与 iconOrMediaValue 同一套规则）
+    return !isLocalImagePath(v) || isValidRelativePath(v);
+  }, "弹出图片须为 http(s) 图片地址或站内图片路径");
+
 // SocialLink 校验 schema
 export const socialLinkSchema = z.object({
   name: z
@@ -521,13 +539,21 @@ export const socialLinkSchema = z.object({
     .min(1, "名称不能为空")
     .max(32, "名称最长 32 字符"),
   icon: iconOrMediaValue(true),
+  // url 允许留空：微信/QQ 这类平台没有公开主页，改用 popupImage 放二维码。
+  // 「url 与 popupImage 至少填一项」刻意不写成对象级 refine —— 那会把 schema 变成 ZodEffects，
+  // 而 link-list-api 的批量保存要在它上面 .extend({ id })（ZodEffects 没有 extend）。
+  // 该规则因此落在后台的行内校验（LinksPanel）上，接口层只保证「非空时协议合法」。
   url: z
     .string()
+    .trim()
     .max(2048, "链接过长")
+    .optional()
+    .default("")
     .refine(
-      (v) => /^(https?:\/\/|mailto:|tel:)/.test(v),
+      (v) => v === "" || /^(https?:\/\/|mailto:|tel:)/.test(v),
       "链接必须以 http://, https://, mailto: 或 tel: 开头"
     ),
+  popupImage: popupImageValue,
   tip: z
     .string()
     .max(100, "提示文本最长 100 字符")

@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { useListCrud } from "./useListCrud";
 import { PanelHeader, EmptyState, PanelLoading } from "./panel";
 import MediaPicker from "./MediaPicker";
+import UploadButton from "./UploadButton";
 import { resolveLucideIcon, isLucideIcon } from "@/lib/lucideIconResolver";
 import { resolveIconImageSrc, isInlineSvgValue, isIconifyValue, renderInlineSvg } from "@/lib/iconValue";
 import IconifyIcon from "@/components/home/IconifyIcon";
@@ -23,6 +24,8 @@ interface LinkItem {
   name: string;
   icon: string;
   url: string;
+  /** 「点击弹出图片」（社交链接独有）：非空时前台改为弹出这张图，url 可留空 */
+  popupImage?: string;
   tip?: string;
   sort: number;
 }
@@ -104,7 +107,7 @@ export default function LinksPanel({
   tabLabel,
   presets,
 }: LinksPanelProps) {
-  const { items: links, loading, saving, dirty, addItem, removeItem, update: updateItem, save } = useListCrud<LinkItem>({
+  const { items: links, loading, saving, dirty, addItem, removeItem, update: updateItem, save, collectErrors } = useListCrud<LinkItem>({
     id: apiPath,
     label: tabLabel ?? "链接",
     api: apiPath,
@@ -112,13 +115,18 @@ export default function LinksPanel({
       name: "",
       icon: defaultIcon,
       url: "",
-      ...(showTip ? { tip: "" } : {}),
+      ...(showTip ? { popupImage: "", tip: "" } : {}),
       sort: index,
     }),
     isSubmittable: (l) => l.name.trim() !== "",
     rowValidators: [
       makeUrlValidator(DEFAULT_URL_PATTERN),
       (link: LinkItem, row: number) => (!link.icon?.trim() ? `第 ${row} 行：图标不能为空` : null),
+      // 社交链接允许「不填地址、只放二维码」，但不能两者都空 —— 那样前台点了没有任何反应
+      (link: LinkItem, row: number) =>
+        showTip && !link.url?.trim() && !link.popupImage?.trim()
+          ? `第 ${row} 行：链接地址与弹出图片至少填一项`
+          : null,
     ],
     successMessage: () => successMessage,
     loadError: "加载失败",
@@ -173,6 +181,14 @@ export default function LinksPanel({
   };
 
   const handleSave = async () => {
+    // 行内校验必须在这条路径上也跑一遍：collectErrors 原本只接进了「保存全部修改」的注册中心，
+    // 面板自己的保存按钮直接调 save()，于是「第 N 行链接格式不合法」「图标不能为空」
+    // 以及本次新增的「链接地址与弹出图片至少填一项」从来没在这里触发过。
+    const err = collectErrors();
+    if (err) {
+      toast.error(err);
+      return;
+    }
     await save();
     setExpandedIndex(-1);
   };
@@ -225,7 +241,7 @@ export default function LinksPanel({
                   key={p.name}
                   type="button"
                   onClick={() => handleAddPreset(p)}
-                  title={`添加「${p.name}」${p.urlPrefix ? `（地址前缀 ${p.urlPrefix}）` : ""}`}
+                  title={`添加「${p.name}」${p.urlPrefix ? `（地址前缀 ${p.urlPrefix}）` : "（没有可跳转的主页，请在「点击弹出图片」里放二维码）"}`}
                   className="rounded-full border border-border bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-150 hover:border-primary/50 hover:bg-muted hover:text-foreground"
                 >
                   + {p.name}
@@ -335,7 +351,7 @@ function LinkRow({
             {link.name.trim() || "未命名链接"}
           </p>
           <p className="truncate text-xs text-muted-foreground">
-            {link.url || "（未填写链接地址）"}
+            {link.url || (link.popupImage?.trim() ? "点击弹出图片（无跳转地址）" : "（未填写链接地址）")}
           </p>
         </div>
         {/* 操作区：排序 / 编辑 / 删除 */}
@@ -463,6 +479,54 @@ function LinkRow({
             className="h-10 sm:h-8"
           />
         </div>
+        {/* 点击弹出图片：给微信 / QQ 这类没有可跳转主页的平台放二维码。
+            填了之后前台不再跳转、改为点开看大图，所以上面的链接地址可以留空。 */}
+        {showTip && (
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+              <Label htmlFor={`link-popup-${index}`} className="text-xs font-medium text-muted-foreground">
+                点击弹出图片
+              </Label>
+              <span className="text-xs text-muted-foreground">
+                留空则点击直接跳转上面的链接
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Input
+                id={`link-popup-${index}`}
+                value={link.popupImage ?? ""}
+                onChange={(e) => onUpdate("popupImage", e.target.value)}
+                placeholder="上传二维码，或填 https://…/qrcode.png"
+                className="h-10 sm:h-8"
+              />
+              {link.popupImage?.trim() ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onUpdate("popupImage", "")}
+                  className="h-8 shrink-0 px-2 text-xs text-muted-foreground hover:text-destructive sm:h-6"
+                  title="清除弹出图片"
+                >
+                  清除
+                </Button>
+              ) : null}
+              <UploadButton label="上传二维码" onUploaded={(url) => onUpdate("popupImage", url)} />
+            </div>
+            {link.popupImage?.trim() ? (
+              // 管理员上传/配置的图片，走原生 img（同 LinkIconPreview 的做法）
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={link.popupImage}
+                alt="弹出图片预览"
+                className="mt-1 h-24 w-24 rounded-md border border-border bg-muted/30 object-contain p-1"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.opacity = "0.3";
+                }}
+              />
+            ) : null}
+          </div>
+        )}
         <div className="grid gap-3 sm:grid-cols-2">
           {showTip && (
             <div className="space-y-1.5">

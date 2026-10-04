@@ -31,8 +31,7 @@ export interface SocialPreset {
  * 预设清单（顺序即展示顺序，按国内站长常用程度排列）。
  *
  * 关于两个特殊项：
- * - 微信：没有公开的个人主页 URL 方案，因此 urlPrefix 只给到 `https://`，
- *   用户可填公众号文章、二维码图片等可访问地址（协议校验要求 http(s)/mailto/tel/music）。
+ * - 微信：没有可跳转的公开主页 URL，因此 urlPrefix 留空，改在「点击弹出图片」里放二维码图片。
  * - 抖音：simple-icons 没有 douyin 这个字形，用 tiktok 代替 —— 两者是同一枚音符标识。
  */
 export const SOCIAL_PRESETS: SocialPreset[] = [
@@ -87,8 +86,8 @@ export const SOCIAL_PRESETS: SocialPreset[] = [
   {
     name: "微信",
     icon: "simple-icons:wechat",
-    urlPrefix: "https://",
-    tip: "微信号无公开主页，可填公众号/二维码图片地址",
+    urlPrefix: "",
+    tip: "点开看二维码",
   },
   {
     name: "抖音",
