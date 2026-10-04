@@ -4,8 +4,10 @@
  * - `default`  浏览器原生菜单（默认，等于不改现状）
  * - `disabled` 静默禁用右键。**只是提高复制门槛，不是内容保护**：
  *              F12、地址栏直接访问、禁用 JS、抓包都能绕过。
- * - `menu`     弹本站自定义功能菜单。刻意做成「本站能力清单」而不是通用导航菜单
- *              （首页 / 前进 / 后退 / 重载这类浏览器自己就有），条目按当前上下文裁剪。
+ * - `menu`     弹本站自定义功能菜单。定位是「本站能力清单」而非通用导航菜单
+ *              （首页 / 前进 / 后退这类浏览器自己就有，不复刻），条目按当前上下文裁剪。
+ *              唯一的例外是「重新加载页面」：右键一旦被接管，原生菜单里的重载也一并没了，
+ *              只剩工具栏那一个入口，补回来才算接管得完整。
  *
  * 本模块只放纯数据与纯函数，图标与副作用留在组件里 —— 这样「什么情况下出现哪些条目」
  * 可以脱离 DOM 单测。
@@ -28,7 +30,7 @@ export const RIGHT_CLICK_MODE_OPTIONS: {
   {
     value: "menu",
     label: "自定义站内功能菜单",
-    hint: "弹出音乐控制 / 换壁纸 / 回到顶部 / 复制等本站功能，按上下文裁剪条目",
+    hint: "弹出音乐控制 / 换壁纸 / 回到顶部 / 重新加载 / 复制等本站功能，按上下文裁剪条目",
   },
 ];
 
@@ -57,7 +59,8 @@ export type ContextMenuAction =
   | "next-wallpaper"
   | "scroll-top"
   | "open-command-palette"
-  | "copy-page-link";
+  | "copy-page-link"
+  | "reload-page";
 
 /** 分组：换组时渲染一条分隔线，让「链接 / 选中 / 音乐 / 页面」四类一眼可分 */
 export type ContextMenuGroup = "link" | "selection" | "music" | "page";
@@ -131,6 +134,9 @@ export function buildContextMenu(ctx: ContextMenuContext): ContextMenuItem[] {
   }
 
   items.push({ action: "copy-page-link", label: "复制本页链接", group: "page" });
+  // 放在最末：重载会丢掉页面内的临时状态（音乐播放进度、已展开的面板），
+  // 与高频条目拉开距离，减少误点
+  items.push({ action: "reload-page", label: "重新加载页面", group: "page" });
 
   return items;
 }

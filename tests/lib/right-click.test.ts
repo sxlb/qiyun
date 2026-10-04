@@ -44,12 +44,13 @@ describe("normalizeRightClickMode（右键行为取值收敛）", () => {
 });
 
 describe("buildContextMenu（按上下文组装菜单）", () => {
-  it("最简上下文：只有「打开音乐列表 / 回到顶部 / 命令面板 / 复制本页链接」", () => {
+  it("最简上下文：只有「打开音乐列表 / 回到顶部 / 命令面板 / 复制本页链接 / 重新加载」", () => {
     expect(actions(buildContextMenu(ctx()))).toEqual([
       "open-playlist",
       "scroll-top",
       "open-command-palette",
       "copy-page-link",
+      "reload-page",
     ]);
   });
 
@@ -62,6 +63,7 @@ describe("buildContextMenu（按上下文组装菜单）", () => {
       "scroll-top",
       "open-command-palette",
       "copy-page-link",
+      "reload-page",
     ]);
     expect(items[0].group).toBe("link");
   });
@@ -97,6 +99,7 @@ describe("buildContextMenu（按上下文组装菜单）", () => {
       "scroll-top",
       "open-command-palette",
       "copy-page-link",
+      "reload-page",
     ]);
     expect(items.filter((i) => i.group === "music")).toHaveLength(4);
   });
@@ -135,6 +138,7 @@ describe("buildContextMenu（按上下文组装菜单）", () => {
       "music",
       "music",
       "music",
+      "page",
       "page",
       "page",
       "page",

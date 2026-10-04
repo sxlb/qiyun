@@ -19,6 +19,7 @@ import {
   ListMusic,
   Pause,
   Play,
+  RotateCw,
   Search,
   SkipBack,
   SkipForward,
@@ -60,6 +61,7 @@ const ACTION_ICONS: Record<ContextMenuAction, LucideIcon> = {
   "scroll-top": ArrowUpToLine,
   "open-command-palette": Wand2,
   "copy-page-link": Link2,
+  "reload-page": RotateCw,
 };
 
 /** 复制成功的提示停留时长（毫秒）：够看清，又不至于让菜单挡着页面 */
@@ -298,6 +300,14 @@ export default function ContextMenu({
             return;
           }
           break;
+        case "reload-page":
+          // 先关菜单再重载：万一重载被环境拦下（内嵌浏览器 / 无导航权限），
+          // 也不会留下一个「点了像没反应」的菜单挂着
+          close();
+          // 走原生重载（等同 F5）。不用 router.refresh()：那只重新取 RSC 数据，
+          // 不会重新拉静态资源，而点「重新加载」的诉求通常正是把整页资源重取一遍
+          window.location.reload();
+          return;
       }
       close();
     },

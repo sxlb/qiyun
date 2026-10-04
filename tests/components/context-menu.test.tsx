@@ -108,6 +108,20 @@ describe("menu 模式", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
+  it("「重新加载页面」触发整页重载并收起菜单", () => {
+    // jsdom 不实现导航，没有可断言的副作用：直接把 location 换成桩
+    const reload = vi.fn();
+    vi.stubGlobal("location", { href: "http://localhost/", reload });
+
+    setup({ mode: "menu" });
+    rightClick(screen.getByTestId("page"));
+    fireEvent.click(screen.getByText("重新加载页面"));
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    // 菜单要先关掉：否则重载被环境拦下时会留下一个「点了没反应」的菜单
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
   it("复制类条目给出「已复制」反馈后再关闭", async () => {
     const writeText = vi.fn(async () => {});
     Object.defineProperty(navigator, "clipboard", {
