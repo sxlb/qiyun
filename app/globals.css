@@ -1071,6 +1071,9 @@
      每个链接 = 图标 + 文字标题胶囊按钮，始终可见；
      悬停时图标与名称随 currentColor 变为主题强调色（--accent-color），
      并浮现毛玻璃背景（--card-alpha / --glass-blur 与后台滑杆联动，适配主题） */
+  /* 容器本身是一块玻璃面板：视觉语言对齐简介卡片（同一档阴影 --shadow-3、
+     同一半径 --radius-lg、同一套 --card-alpha），但不复用 .card-glass 的 hover 抬升 ——
+     那会让「悬停某一个图标」变成整块面板一起动，观感很怪。 */
   .social-links-bar {
     margin-top: 1.75rem;
     display: flex;
@@ -1080,10 +1083,12 @@
     width: 100%;
     /* 允许容器收缩：防止胶囊固有宽度撑开外层 flex 产生横向溢出 */
     min-width: 0;
-    min-height: 50px;
-    padding: 0;
-    background-color: transparent;
-    border-radius: 10px;
+    padding: 0.45rem 0.65rem;
+    background-color: rgba(0, 0, 0, var(--card-alpha, 0.35));
+    backdrop-filter: blur(var(--glass-blur, 16px)) saturate(140%);
+    -webkit-backdrop-filter: blur(var(--glass-blur, 16px)) saturate(140%);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-3);
     animation: fade 0.5s ease both;
   }
   /* 胶囊自带内边距，行间距收窄：行距 0.5rem / 列距 0.6rem；
@@ -1096,12 +1101,10 @@
     width: 100%;
     gap: 0.5rem 0.6rem;
   }
-  /* 每个胶囊常驻毛玻璃底 + 阴影：阴影取 --shadow-3（即卡片 rest 档，与简介卡片同一档），
-     底色取主卡片玻璃不透明度的一个比例，跟随后台「玻璃不透明度」滑杆联动。
-     原先静止态完全透明、只有悬停才浮现底色，32px 图标与 11px 小字直接浮在壁纸上 ——
-     浅色或花哨壁纸下几乎看不见（悬停才有反馈，触屏连悬停都没有）。 */
+  /* 胶囊在面板内不再自带底色与阴影：否则和面板叠成「双层玻璃」，发灰发脏。
+     静止态完全交给面板，只保留悬停/按压的浅色填充作为反馈
+     （面板本身是深色玻璃，填充用白色半透明比再压一层黑更好读）。 */
   .social-icon {
-    --social-alpha: calc(var(--card-alpha, 0.35) * 0.72);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1109,27 +1112,20 @@
     padding: 0.4rem 0.65rem 0.35rem;
     border-radius: 10px;
     color: rgba(255, 255, 255, 0.92);
-    background-color: rgba(0, 0, 0, var(--social-alpha));
-    backdrop-filter: blur(8px) saturate(130%);
-    -webkit-backdrop-filter: blur(8px) saturate(130%);
-    box-shadow: var(--shadow-3);
     transition:
       color 0.25s ease,
       background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-      backdrop-filter 0.3s cubic-bezier(0.4, 0, 0.2, 1),
       box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1),
       transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
   .social-icon:hover {
     color: var(--accent-color, #7dd3fc);
-    background-color: rgba(0, 0, 0, var(--card-alpha, 0.35));
-    backdrop-filter: blur(12px) saturate(135%);
-    -webkit-backdrop-filter: blur(12px) saturate(135%);
-    box-shadow: var(--shadow-4);
+    background-color: rgba(255, 255, 255, 0.12);
+    box-shadow: var(--shadow-2);
     transform: translateY(-1px);
   }
   .social-icon:active {
-    box-shadow: var(--shadow-active);
+    background-color: rgba(255, 255, 255, 0.08);
     transform: translateY(0) scale(0.98);
   }
   /* 图标下方的文字标题：小号辅助标签（11px），悬停随 currentColor 变强调色 */
@@ -1145,7 +1141,7 @@
   /* 窄屏（≤480px）收窄胶囊内边距与间距，减少换行、避免横向溢出 */
   @media (max-width: 480px) {
     .social-links-bar {
-      padding: 0 0.6rem;
+      padding: 0.35rem 0.45rem;
     }
     .social-link-row {
       gap: 0.4rem 0.45rem;
