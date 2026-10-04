@@ -60,11 +60,11 @@ docker compose version   # 应输出 Docker Compose version v2.x.x
 
 ### 2.1 下载并解压
 
-1. 打开 [Releases 页面](https://github.com/sxlb/qiyun/releases/latest)，下载 `qiyun-<版本号>.tar.gz`（如 `qiyun-0.0.9.tar.gz`）
+1. 打开 [Releases 页面](https://github.com/sxlb/qiyun/releases/latest)，下载 `qiyun-<版本号>.tar.gz`（如 `qiyun-0.0.10.tar.gz`）
 2. 上传到服务器并解压：
 
 ```bash
-tar -xzf qiyun-0.0.9.tar.gz -C /opt
+tar -xzf qiyun-0.0.10.tar.gz -C /opt
 cd /opt/qiyun
 ```
 
@@ -99,7 +99,7 @@ cd /opt/qiyun
 chmod +x deploy.sh
 
 ./deploy.sh          # 自动查询并拉取最新版本
-./deploy.sh 0.0.9    # 或指定版本号
+./deploy.sh 0.0.10   # 或指定版本号
 ```
 
 脚本会依次完成：环境自检（Docker、Compose v2、端口占用、磁盘空间）→ 生成密钥 → 准备数据目录 → 拉取镜像 → 升级前备份数据库 → 启动容器 → 健康检查，最后打印访问地址与常用命令。看到下面这行即部署成功：
@@ -113,7 +113,7 @@ chmod +x deploy.sh
 > 脚本本质是 `docker compose --env-file .env.deploy up -d`，需要时可自行执行。compose 文件强制校验镜像版本，手动执行时必须显式传入，否则会直接报 `IMAGE_TAG 未设置`：
 >
 > ```bash
-> IMAGE_TAG=0.0.9 docker compose --env-file .env.deploy up -d
+> IMAGE_TAG=0.0.10 docker compose --env-file .env.deploy up -d
 > ```
 
 #### 镜像源与加速
@@ -127,9 +127,9 @@ chmod +x deploy.sh
 不想被问到时用环境变量指定：
 
 ```bash
-IMAGE_SOURCE=ghcr ./deploy.sh 0.0.9                   # 换主源：hub（默认）/ ghcr / 完整仓库地址
+IMAGE_SOURCE=ghcr ./deploy.sh 0.0.10                  # 换主源：hub（默认）/ ghcr / 完整仓库地址
 IMAGE_MIRROR_PREFIX=docker.1panel.live ./deploy.sh    # 指定加速器，会被优先使用
-DEPLOY_NO_PROMPT=1 ./deploy.sh 0.0.9                  # 不提问，直接走自动链路
+DEPLOY_NO_PROMPT=1 ./deploy.sh 0.0.10                 # 不提问，直接走自动链路
 ```
 
 > 公共加速器存活期很短，有的还只镜像白名单内的公共镜像、会直接拒绝本项目这类用户镜像（`docker.m.daocloud.io` 就是这样）。因此内置候选是「依次尝试」而不是让你单选。另外加速器处在链路上，理论上能看到并替换镜像内容，能直连时优先直连。
@@ -148,7 +148,7 @@ DEPLOY_NO_PROMPT=1 ./deploy.sh 0.0.9                  # 不提问，直接走自
 
 | 参数 | 值 |
 |------|-----|
-| 镜像 | `ghcr.io/sxlb/qiyun:<版本号>`，如 `ghcr.io/sxlb/qiyun:0.0.9` |
+| 镜像 | `ghcr.io/sxlb/qiyun:<版本号>`，如 `ghcr.io/sxlb/qiyun:0.0.10` |
 | 容器名 | `qiyun` |
 | 端口映射 | 宿主机 `3000` → 容器 `3000`（TCP） |
 | 挂载 | 宿主机 `/opt/qiyun/data` → 容器 `/app/data`，读写 |
@@ -250,8 +250,8 @@ sudo bash scripts/setup-update.sh
 它会把更新执行器安装到 `/usr/local/bin`，并写入每分钟轮询的 cron。完成后即可在后台「系统更新」面板一键升级或回滚，也可用命令行操作：
 
 ```bash
-./scripts/update.sh update 0.0.9     # 更新到指定版本
-./scripts/update.sh rollback 0.0.9   # 回滚到历史版本
+./scripts/update.sh update 0.0.10    # 更新到指定版本
+./scripts/update.sh rollback 0.0.10  # 回滚到历史版本
 ```
 
 > 更新与回滚都是拉取已发布的预编译镜像，服务器上**不需要 git，也不做本地构建**。未启用更新通道时，后台「系统更新」面板会提示「宿主机更新通道尚未就绪（未安装脚本）」，此时只能用下面「方式二」手动升级。
@@ -262,7 +262,7 @@ sudo bash scripts/setup-update.sh
 
 ```bash
 cd /opt/qiyun
-./deploy.sh 0.0.9     # 改成目标版本号
+./deploy.sh 0.0.10    # 改成目标版本号
 ```
 
 两种方式都保留 `data/` 目录中的数据。用 `./deploy.sh` 升级时无需手动备份：脚本会先停容器并把数据库快照写入 `data/deploy/backups/`（保留最近 20 份）；若新版本起不来，会自动退回原版本。
@@ -296,7 +296,7 @@ docker logs qiyun --tail=100
 |------|----------|
 | `NEXTAUTH_SECRET` 为空 | 确认 `.env.deploy` 中有该变量 |
 | 日志出现 `SQLITE_CANTOPEN` 或 `attempt to write a readonly database` | 宿主机 `data/` 目录属主不对（Docker 首次创建时归属 root，而容器内以 UID 1001 运行）。用一键脚本部署时脚本已自动校正；GUI 部署需手工执行 `sudo chown -R 1001:1001 /opt/qiyun/data`，再 `docker restart qiyun` |
-| 国内无法访问 `ghcr.io` | 不用手动处理：脚本会按候选链自动改走 Docker Hub 与公共加速器。也可显式指定：`IMAGE_SOURCE=hub ./deploy.sh 0.0.9` 或 `IMAGE_MIRROR_PREFIX=加速器域名 ./deploy.sh 0.0.9` |
+| 国内无法访问 `ghcr.io` | 不用手动处理：脚本会按候选链自动改走 Docker Hub 与公共加速器。也可显式指定：`IMAGE_SOURCE=hub ./deploy.sh 0.0.10` 或 `IMAGE_MIRROR_PREFIX=加速器域名 ./deploy.sh 0.0.10` |
 
 ### Q2：页面打不开
 
