@@ -2,7 +2,7 @@
 # ============================================================
 # 栖云 · Qiyun — 更新/回滚执行器（宿主机侧，由 cron 每分钟调用一次）
 # 作用：轮询 data/deploy/request.json（应用后台写入的握手请求），
-#       认领后拉取目标版本镜像 → 备份数据库 → 重建容器 → 写回执行结果，
+#       认领后拉取目标版本镜像 → 备份数据库 → 重建容器 → 清理上一版本镜像 → 写回执行结果，
 #       并维护 data/deploy/versions.json 的版本权威记录。
 #
 # 全程只依赖 docker 与 docker compose：镜像在 CI 中预编译，服务器上不需要 git，也不做本地构建。
@@ -260,6 +260,43 @@ restore_db() { # targetVersion
   log "已恢复数据库 → ${db}（来源 ${snap}，含 WAL）"
 }
 
+# 清理上一版本镜像，避免每次更新都留一份几百 MB 的历史镜像把磁盘吃满。
+#
+# 只删「上一个容器实际使用的那一个镜像引用」，不做 `docker image prune -a`：
+# 那会连别的服务、别的项目的镜像一起删掉，在一台机器上跑多个容器时是不可接受的。
+# （无标签的悬空层另行 prune，dangling 镜像是构建残留，删掉没有副作用。）
+#
+# 代价：回滚到刚离开的那个版本需要重新拉取镜像（几十秒）。这是「省空间」的对价，
+# 不想要就在 cron 里设 PRUNE_OLD_IMAGES=0 关掉。
+prune_old_image() { # oldImageRef
+  PRUNED_NOTE=""
+  [ "${PRUNE_OLD_IMAGES:-1}" = "1" ] || { log "已跳过旧镜像清理（PRUNE_OLD_IMAGES=0）"; return 0; }
+  [ -n "${1:-}" ] || return 0
+
+  # 与当前容器用的是同一个镜像（例如重装同一版本）就没必要删
+  local now
+  now="$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null || true)"
+  if [ "$1" = "$now" ]; then
+    log "旧镜像与当前镜像相同（$1），无需清理"
+    return 0
+  fi
+
+  # 删不掉不算更新失败：镜像可能仍被其它容器引用，或标签已被覆盖。
+  # 只记一行日志，绝不让「清理」把一次成功的更新变成失败。
+  if docker rmi "$1" >/dev/null 2>&1; then
+    log "已清理旧镜像 $1"
+    PRUNED_NOTE="；已清理旧镜像 $1"
+  else
+    log "旧镜像 $1 未能删除（可能仍被其它容器引用），已跳过"
+  fi
+
+  # 再顺手清掉无标签悬空层（只删 <none>，不动任何有标签的镜像）
+  local freed
+  freed="$(docker image prune -f 2>/dev/null | sed -n 's/.*[Tt]otal reclaimed space:[[:space:]]*//p' | head -1 || true)"
+  [ -n "$freed" ] && log "悬空层已清理，回收 ${freed}"
+  return 0
+}
+
 # 写回执行结果（应用侧 readLatestResult 读取 result-*.json）
 write_result() { # id action version method status message
   local vf="$DEPLOY_DIR/result-$1.json"
@@ -408,6 +445,10 @@ fi
 # 统一去掉 v 前缀：基线版本与快照文件名均用无 v 版本号（0.0.1），与发布标签一致
 cur="${cur#v}"
 
+# 旧容器实际使用的镜像引用（形如 docker.io/sxlb/qiyun:0.0.10）。
+# 必须在重建容器之前取：compose up 会替换容器，之后就查不到旧引用，也就无从清理。
+OLD_IMAGE="$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null || true)"
+
 log "当前基线版本：$cur，目标版本：$version"
 
 # 1) 先拉取目标版本镜像：此时旧容器仍在运行，版本不存在或网络不通都不会造成停机。
@@ -472,9 +513,13 @@ log "启动 ${PULL_IMAGE}:${version} 容器..."
 IMAGE_TAG="$version" GHCR_IMAGE="$PULL_IMAGE" APP_VERSION="$version" docker compose --env-file "$ENV_FILE" up --no-build -d \
   || fail_after_switch "启动容器失败，请查看 docker compose logs"
 
-# 6) 记录版本历史并写成功结果
+# 6) 清理上一版本镜像，释放磁盘（默认开启，可用 PRUNE_OLD_IMAGES=0 关闭）
+prune_old_image "${OLD_IMAGE:-}"
+
+# 7) 记录版本历史并写成功结果
 output="已${action}到 $version（镜像 ${PULL_IMAGE}:${version}）"
 [ "$action" = "rollback" ] && output="${output}（数据库已恢复到 ${version} 快照，若未找到快照则保持现有数据库）"
+output="${output}${PRUNED_NOTE:-}"
 update_versions "$version" "$action"
 write_result "$req_id" "$action" "$version" "$req_method" success "$output"
 rm -f "$running"
