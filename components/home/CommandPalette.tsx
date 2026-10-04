@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, CornerDownLeft, Globe, Users, ArrowUp, Music, X } from "lucide-react";
+import { scrollPageToTop } from "@/lib/scroll";
 
 export interface CmdLink {
   id: number;
@@ -129,7 +130,7 @@ export default function CommandPalette({ siteLinks = [], friendLinks = [], siteT
     }
     // 站点操作
     const actions: Action[] = [
-      { key: "top", label: "回到顶部", hint: "", icon: ArrowUp, group: "操作", order: 1000, run: () => window.scrollTo({ top: 0, behavior: "smooth" }) },
+      { key: "top", label: "回到顶部", hint: "", icon: ArrowUp, group: "操作", order: 1000, run: () => scrollPageToTop("smooth") },
       { key: "music", label: "打开音乐列表", hint: "", icon: Music, group: "操作", order: 1001, run: () => window.dispatchEvent(new CustomEvent("toggle-music-player")) },
     ];
     actions.forEach((a) => out.push({ ...a, label: match(a.label) ? a.label : "" }));

@@ -46,6 +46,12 @@ export const DEFAULT_SITE_DESCRIPTION = "记录我的作品与生活，这里是
 export const DEFAULT_SITE_KEYWORDS = "个人主页,个人博客,作品集,技术分享,前端开发";
 
 /**
+ * 个性签名长度上限。
+ * 前后台共用这一个来源：schema 校验与后台的字数计数器都读它，避免改了一处漏掉另一处。
+ */
+export const BIO_MAX_LENGTH = 280;
+
+/**
  * 外部服务地址的通用校验：允许留空（表示回退内置默认值，见 lib/external-api.ts）。
  * 非空时须为 http(s) 地址 —— 模板占位符（{w}/{h}/{kw}/{host}）仍以 https:// 开头，
  * 因此该校验既能放行模板型地址，又能拦下 javascript: / data: 等危险协议。
@@ -83,7 +89,7 @@ export const profileSchema = z.object({
     .default("无名"),
   bio: z
     .string()
-    .max(280, "个性签名最长 280 字符")
+    .max(BIO_MAX_LENGTH, `个性签名最长 ${BIO_MAX_LENGTH} 字符`)
     .optional()
     .default(""),
   github: z

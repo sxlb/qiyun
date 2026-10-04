@@ -38,6 +38,13 @@ function makeUrlValidator(pattern: RegExp) {
   };
 }
 
+/**
+ * 社交链接的推荐数量上限（仅提示，不拦截保存）。
+ * 首页左栏的社交胶囊按标签长度自动折行，数量越多行数越多、左栏越高；
+ * 手机屏窄会在更少的数量上就开始折行，所以给一个偏保守的推荐值。
+ */
+const SOCIAL_LINKS_SOFT_MAX = 6;
+
 interface LinksPanelProps {
   /** 链接列表 API 路径（如 /api/social-links、/api/site-links） */
   apiPath: string;
@@ -186,6 +193,27 @@ export default function LinksPanel({
             </Button>
           }
         />
+        {/* 社交链接的排版建议：胶囊按标签长度折行，数量越多左栏越高、可视区域越容易要滚动 */}
+        {showTip && (
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            推荐 3 到 6 个：再多会自动折成多行，左栏整体变高、需要滚动才能看全；手机屏幕窄，会更早折行。
+            {links.length > 0 && (
+              <>
+                {" "}
+                <span
+                  className={
+                    links.length > SOCIAL_LINKS_SOFT_MAX
+                      ? "text-amber-600 dark:text-amber-400"
+                      : ""
+                  }
+                >
+                  当前 {links.length} 个
+                  {links.length > SOCIAL_LINKS_SOFT_MAX ? "，建议精简一些" : ""}
+                </span>
+              </>
+            )}
+          </p>
+        )}
         {presets && presets.length > 0 && (
           <div className="space-y-1.5 rounded-md border border-dashed border-border px-3 py-2.5">
             <p className="text-xs text-muted-foreground">

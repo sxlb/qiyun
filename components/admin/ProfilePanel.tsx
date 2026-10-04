@@ -7,13 +7,26 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
-import { DEFAULT_WELCOME_MESSAGES, DEFAULT_SITE_TITLE, DEFAULT_SITE_DESCRIPTION, DEFAULT_SITE_KEYWORDS } from "@/lib/validation";
+import { DEFAULT_WELCOME_MESSAGES, DEFAULT_SITE_TITLE, DEFAULT_SITE_DESCRIPTION, DEFAULT_SITE_KEYWORDS, BIO_MAX_LENGTH } from "@/lib/validation";
 
 import { PanelLoading } from "./panel";
 import { MUSIC_PANEL_STYLE_OPTIONS } from "@/lib/musicPanelThemes";
 import { loadProfile, setCachedProfile, hasCachedProfile, profileFieldPatch, selectClass } from "./profileShared";
 import { useGlobalSaveState, useRegisterSave, useEditRevision, type SaveOutcome } from "./GlobalSave";
 import UploadButton from "./UploadButton";
+
+/**
+ * 个性签名字数计数的配色：接近上限转警示色、超出转错误色。
+ * 上限取自 lib/validation 的 BIO_MAX_LENGTH，与保存时的校验同源，改上限不会两边脱节。
+ *
+ * 导出供单测使用：这几个阈值是「字数反馈」这块的全部逻辑，值得单独锁住。
+ */
+export function bioCounterClass(length: number): string {
+  const base = "text-xs tabular-nums";
+  if (length > BIO_MAX_LENGTH) return `${base} text-destructive`;
+  if (length > BIO_MAX_LENGTH * 0.9) return `${base} text-amber-600 dark:text-amber-400`;
+  return `${base} text-muted-foreground`;
+}
 
 interface Profile {
   avatar: string;
@@ -575,7 +588,13 @@ export default function ProfilePanel() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="bio">个性签名</Label>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label htmlFor="bio">个性签名</Label>
+                    {/* 已用字数 / 上限：前台简介是固定宽度卡片，超长会挤成多行，这里给个即时反馈 */}
+                    <span className={bioCounterClass(profile.bio.length)}>
+                      {profile.bio.length} / {BIO_MAX_LENGTH}
+                    </span>
+                  </div>
                   <Textarea
                     id="bio"
                     value={profile.bio}

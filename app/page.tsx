@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { headers } from "next/headers";
 import { deviceFromUserAgent } from "@/lib/external-api";
+import { HOME_SCROLL_CONTAINER_ID } from "@/lib/scroll";
 import { DEFAULT_SITE_TITLE, DEFAULT_SITE_DESCRIPTION, DEFAULT_SITE_KEYWORDS } from "@/lib/validation";
 import { cache } from "react";
 import { Quote } from "lucide-react";
@@ -150,10 +151,12 @@ export default async function Home() {
           />
         )}
 
-        {/* 桌面端 main 最小一屏高（md:min-h-dvh）：内容不足一屏时仍整体垂直居中，页脚贴底；
-            内容超高（如并入技能云后）自然增长而非裁切，仅超高部分滚动。
-            移动端 main 自然高度，页脚在内容后滚动出现 */}
-        <main className="relative flex min-h-dvh w-full flex-col text-white">
+        {/* 单屏外壳：整页高度锁死一屏（h-dvh）并关掉页面自身滚动 —— 页面永远不出现滚动条。
+            内容不足一屏时内部整体垂直居中、页脚贴底；内容超高（社交链接折成多行、并入技能云后）
+            只在这一层内部滚动，滚动边界用 overscroll-contain 拦住，不会带动页面。
+            全屏装饰与浮层（壁纸 / 季节特效 / 公告 / 命令面板 / 右键菜单 / 加载动画）都是 fixed，
+            不受这层滚动影响。 */}
+        <main id={HOME_SCROLL_CONTAINER_ID} className="relative flex h-dvh w-full flex-col overflow-y-auto overscroll-contain text-white">
         {process.env.NODE_ENV === "development" && pkg.author !== "sxlb" &&
           (() => { console.warn("[qiyun] 检测到作者信息已被修改，请保留 package.json 中的 author 版权标识"); return null; })()}
         <FaviconUpdater icon={d.siteIcon} />

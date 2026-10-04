@@ -8,6 +8,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
+import { scrollPageToTop } from "@/lib/scroll";
 import {
   ArrowUpToLine,
   Check,
@@ -285,7 +286,7 @@ export default function ContextMenu({
           window.dispatchEvent(new Event("wallpaper-next"));
           break;
         case "scroll-top":
-          window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? "auto" : "smooth" });
+          scrollPageToTop(prefersReducedMotion() ? "auto" : "smooth");
           break;
         case "open-command-palette":
           window.dispatchEvent(new Event("open-command-palette"));
