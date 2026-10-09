@@ -5,6 +5,16 @@ import { getClientIp } from "@/lib/server";
 import { pickLocatableIp, resolveAmapCityQuery, buildTencentParams, parseTencentRealtime } from "@/lib/weather";
 import { composeRegionLabel } from "@/lib/region-label";
 import { buildAmapParams } from "@/lib/amap";
+import {
+  parseCoords,
+  amapLocationParam,
+  tencentLocationParam,
+  parseAmapRegeo,
+  parseTencentGeocode,
+  isUsableAdcode,
+  type Coords,
+  type ReverseGeocodeResult,
+} from "@/lib/regeo";
 
 export const dynamic = "force-dynamic";
 
@@ -40,21 +50,26 @@ interface WeatherResult {
   winddirection: string;
   windpower: string;
   /**
-   * 访客地域标签（如"广东省 深圳市"）。
+   * 访客地域标签（如"江苏省 泰州市 海陵区"）。
    *
-   * 只在**三个条件同时满足**时才带上：
-   * 1. 这次定位用的是访客自己的公网 IP（locIp 非空）—— 拿不到访客 IP 时会退化成
-   *    「按服务器出口 IP 定位」，那地方是服务器的城市，展示给访客就是错的；
-   * 2. 定位来自腾讯位置服务的 IP 库 —— 它是这几条链路里精度最高的（境内可到区县）。
-   *    高德的 IP 定位刻意不用作访客地域：它常把地级市归到省会，拿它当地域标签反而更不准；
-   * 3. 定位至少到市级 —— 腾讯对部分机房/异常 IP 只返回省份（city/district 皆空），
-   *    那时的标签就是个省份名，当地域标签没有意义。
+   * 两条链路可以产出它，都要求「这次定位的位置确实是访客的」：
    *
-   * 三个条件任一不满足就不返回 `region`，前台欢迎通知会退回本地离线库
-   * （/api/visitor/location，ip2region）。这正是「宁可粗一点，也不能显示错的」的取舍。
+   * **A. 浏览器精确定位**（访客带了 `lng`/`lat`）：逆地理编码来自高德/腾讯的**地址库**，
+   *    精度到区县，且坐标由访客设备给出、不受运营商 IP 登记地影响 —— 这是唯一能绕开
+   *    「IP 登记在邻市」的手段。拿到合法 adcode 就产出标签。
    *
-   * 反过来，凡是天气查询真正落到「站主配置的固定城市」的路径（高德/腾讯免费版/混合模式配了城市），
-   * 也都不会返回它：那是站主的位置，展示给访客就是错的。
+   * **B. 腾讯位置服务的 IP 定位**：境内精度最高的 IP 库（可到区县），但需同时满足：
+   *    1. 用的是访客自己的公网 IP（`locIp` 非空）—— 拿不到时会退化成「按服务器出口 IP
+   *       定位」，那是服务器的城市，展示给访客就是错的；
+   *    2. 定位至少到市级 —— 腾讯对部分机房/异常 IP 只返回省份（city/district 皆空），
+   *       那时的标签就是个省份名，当地域标签没有意义。
+   *    高德的 IP 定位刻意不用作访客地域：它常把地级市归到省会，拿它当地域标签反而更不准。
+   *
+   * 两条都不成立就不返回 `region`，前台欢迎通知会退回本地离线库
+   * （/api/visitor/location，ip2region，天花板市级）。这正是「宁可粗一点，也不能显示错的」的取舍。
+   *
+   * 反过来，凡是天气查询真正落到「站主配置的固定城市」的路径（配置了 weatherCity），
+   * 都不会返回它：那是站主的位置，展示给访客就是错的。
    */
   region?: string;
 }
@@ -341,22 +356,32 @@ async function tencentIpLocate(
   if (!/^\d{6}$/.test(adcode)) {
     throw new Error(`tencent-key location error: adcode 非法（${adcode || "空"}，访客可能为海外/内网 IP）`);
   }
-  // 展示用名称取市级（如「盐城市」）；只有区县/省份时逐级回退
+  // 展示用名称取市级（如「盐城市」）；只有区县/省份时逐级回退。
+  // 注意这里仍是**市级**：天气数据本身按市级给，卡片上显示到市才不会显得数据与地名不匹配。
   const city = ad.city || ad.district || ad.province || "未知地区";
-  // 地域标签是「省 + 更细一级」，与上面展示名的回退口径不同（展示名可能直接落到省份上），
-  // 所以单独组合；省市同名（直辖市）由 composeRegionLabel 去重。
+  // 地域标签是「省 + 市 + 区」，与上面展示名的回退口径不同，所以单独组合。
   // 三个条件全满足才给标签：带着访客自己的 IP（locIp）、且定位至少到市级。
   // 腾讯对部分机房/异常 IP 只给到省份（实测 114.114.114.114 → province=江西省、city 与
   // district 均为空），那时标签本身就是个省份名，既不准也没意义，退回本地离线库更好。
-  const finer = ad.city || ad.district || "";
-  const region = locIp && finer ? composeRegionLabel(ad.province, finer) : "";
+  // 区级字段（district）能拿到就带上——这是 IP 链路里唯一的区级来源。
+  const region =
+    locIp && (ad.city || ad.district)
+      ? composeRegionLabel(ad.province, ad.city, ad.district)
+      : "";
   return { adcode, city, region };
 }
 
-async function fetchTencentKeyWeather(txKey: string, txSk: string, ip: string): Promise<WeatherResult> {
-  const { adcode, city, region } = await tencentIpLocate(txKey, txSk, ip);
-
-  // 腾讯天气实况（同样携带签名；adcode 用定位结果）
+/**
+ * 腾讯位置服务实况天气（按 adcode 查，携带签名）。
+ * 腾讯 Key 版（IP 定位）与浏览器精确定位链路共用 —— 区别只在 adcode 从哪来。
+ */
+async function fetchTencentWeatherByAdcode(
+  txKey: string,
+  txSk: string,
+  adcode: string,
+  city: string,
+  region: string
+): Promise<WeatherResult> {
   const weatherPath = "ws/weather/v1/";
   const wParams: Record<string, string> = { key: txKey, adcode, type: "now" };
   const wUrl = new URL(`https://apis.map.qq.com/${weatherPath}`);
@@ -373,6 +398,88 @@ async function fetchTencentKeyWeather(txKey: string, txSk: string, ip: string): 
     throw new Error(`tencent-key weather error: ${wData.message || "no data"}`);
   }
   return { city, ...(region ? { region } : {}), ...parsed };
+}
+
+async function fetchTencentKeyWeather(txKey: string, txSk: string, ip: string): Promise<WeatherResult> {
+  const { adcode, city, region } = await tencentIpLocate(txKey, txSk, ip);
+  return fetchTencentWeatherByAdcode(txKey, txSk, adcode, city, region);
+}
+
+// ===== 浏览器精确定位链路（坐标 → 逆地理编码 → 天气 + 地域标签） =====
+// 这是唯一能绕开「运营商 IP 登记地 ≠ 设备实际位置」的手段：坐标由访客设备给出，
+// 逆地理编码查的是地址库而非 IP 库，因此不受 IP 池登记影响。
+
+/**
+ * 逆地理编码：坐标 → 行政区划。高德优先（其 adcode 直接是**区级**，可原样喂给高德天气），
+ * 腾讯兜底。两家都没给出合法 adcode 时返回 null，调用方落回 IP 定位链路。
+ */
+async function reverseGeocode(
+  coords: Coords,
+  amapKey: string,
+  amapSecret: string,
+  txKey: string,
+  txSk: string
+): Promise<ReverseGeocodeResult | null> {
+  if (amapKey) {
+    try {
+      const params: Record<string, string> = {
+        key: amapKey,
+        location: amapLocationParam(coords),
+        extensions: "base",
+        output: "JSON",
+      };
+      const url = new URL("https://restapi.amap.com/v3/geocode/regeo");
+      url.search = buildAmapParams(params, amapSecret).toString();
+      const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(8000) });
+      if (res.ok) {
+        const parsed = parseAmapRegeo(await res.json());
+        if (parsed && isUsableAdcode(parsed.adcode)) return parsed;
+        console.warn("[weather] 高德逆地理编码无合法 adcode，尝试腾讯");
+      } else {
+        console.warn(`[weather] 高德逆地理编码 HTTP ${res.status}`);
+      }
+    } catch (e) {
+      console.warn(`[weather] 高德逆地理编码异常: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+  if (txKey) {
+    try {
+      const path = "ws/geocoder/v1/";
+      const params: Record<string, string> = { key: txKey, location: tencentLocationParam(coords) };
+      const url = new URL(`https://apis.map.qq.com/${path}`);
+      url.search = buildTencentParams(path, params, txSk).toString();
+      const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(8000) });
+      if (res.ok) {
+        const parsed = parseTencentGeocode(await res.json());
+        if (parsed && isUsableAdcode(parsed.adcode)) return parsed;
+        console.warn("[weather] 腾讯逆地理编码无合法 adcode");
+      } else {
+        console.warn(`[weather] 腾讯逆地理编码 HTTP ${res.status}`);
+      }
+    } catch (e) {
+      console.warn(`[weather] 腾讯逆地理编码异常: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+  return null;
+}
+
+/**
+ * 精确定位链路的天气查询：adcode 已由逆地理编码给出，直接用，不再走 IP 定位。
+ * 数据源优先级与 IP 链路一致（高德 → 腾讯 Key 版）；不含腾讯免费版 ——
+ * 它只吃城市名，精度反而比这里已有的区级 adcode 低。
+ */
+async function weatherByLocate(
+  located: ReverseGeocodeResult,
+  amapKey: string,
+  amapSecret: string,
+  txKey: string,
+  txSk: string
+): Promise<WeatherResult> {
+  const region = composeRegionLabel(located.province, located.city, located.district);
+  const city = located.city || located.district || located.province || "未知地区";
+  if (amapKey) return amapWeatherQuery(amapKey, located.adcode, amapSecret, city, region);
+  if (txKey) return fetchTencentWeatherByAdcode(txKey, txSk, located.adcode, city, region);
+  throw new Error("未配置可用于精确定位的数据源（需要高德 Key 或腾讯位置服务 Key）");
 }
 
 // ===== 数据源 4：混合模式（腾讯 IP 定位 + 高德实况天气） =====
@@ -395,6 +502,12 @@ async function fetchTencentLocAmapWeather(
 export async function GET(request: NextRequest) {
   // 访客真实 IP：天气自动定位使用（取 x-forwarded-for 首个 IP，可被代理设置）
   const visitorIp = sanitizeIp(getClientIp(request));
+  // 浏览器精确定位坐标（可选，前端在获得授权后带上）。坐标由访客设备提供，
+  // 是唯一能绕开「运营商 IP 登记地 ≠ 设备实际位置」的定位依据。
+  const coords = parseCoords(
+    request.nextUrl.searchParams.get("lng"),
+    request.nextUrl.searchParams.get("lat")
+  );
   const profile = await prisma.profile.findFirst().catch(() => null);
   const provider = profile?.weatherProvider || "";
   const amapKey = profile?.amapKey || "";
@@ -402,12 +515,16 @@ export async function GET(request: NextRequest) {
   const weatherCity = profile?.weatherCity || "";
   const txKey = profile?.txWeatherKey || "";
   const txSk = profile?.txWeatherSk || "";
-  // 缓存键：配置了固定城市则全局共享；未配置（按访客 IP 自动定位）则按 IP 区分，避免跨访客串缓存。
-  // 密钥等不含明文入键，整体取 SHA-256 摘要，避免密钥泄漏进缓存键/日志
+  // 缓存键：配置了固定城市则全局共享；否则按**本次定位依据**区分（精确定位用坐标，IP 定位用 IP），
+  // 避免跨访客串缓存。坐标取 3 位小数（约 100m 精度）——浮点尾差会制造出大量等价唯一键，
+  // 白白撑爆缓存上限。密钥等不含明文入键，整体取 SHA-256 摘要，避免密钥泄漏进缓存键/日志。
+  const locateKey = weatherCity
+    ? ""
+    : coords
+      ? `${coords.lng.toFixed(3)},${coords.lat.toFixed(3)}`
+      : visitorIp;
   const cacheKey = createHash("sha256")
-    .update(
-      `${provider}|${amapKey}|${amapSecretKey}|${weatherCity}|${txKey}|${txSk}|${weatherCity ? "" : visitorIp}`
-    )
+    .update(`${provider}|${amapKey}|${amapSecretKey}|${weatherCity}|${txKey}|${txSk}|${locateKey}`)
     .digest("hex");
 
   // 命中有效缓存：直接返回（响应 <100ms，且不再打外部接口）
@@ -418,6 +535,24 @@ export async function GET(request: NextRequest) {
   // 防止伪造 x-forwarded-for 频繁触发外部天气接口
   if (!weatherCity && isIpRateLimited(visitorIp)) {
     return NextResponse.json({ error: "请求过于频繁，请稍后再试" }, { status: 429 });
+  }
+
+  // 精确定位链路优先：访客带了合法坐标且站主未配置固定城市时，
+  // 用「坐标 → 逆地理编码 → 区级 adcode」查天气，地域标签也据此产出。
+  // 任一环节失败都静默落回下面的 IP 定位链路（缓存键仍是这次的坐标，语义上仍属同一访客）。
+  if (!weatherCity && coords) {
+    const located = await reverseGeocode(coords, amapKey, amapSecretKey, txKey, txSk);
+    if (located) {
+      try {
+        const result = await weatherByLocate(located, amapKey, amapSecretKey, txKey, txSk);
+        setWeatherCache(cacheKey, result);
+        return NextResponse.json(result);
+      } catch (e) {
+        console.warn(`[weather] 精确定位链路取天气失败，回退 IP 定位: ${e instanceof Error ? e.message : e}`);
+      }
+    } else {
+      console.warn("[weather] 逆地理编码无结果，回退 IP 定位");
+    }
   }
 
   // 收集可用数据源（高德 / 腾讯 Key 版 / 腾讯免费版 / 混合模式），配置的 provider 优先尝试；

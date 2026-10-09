@@ -1373,8 +1373,36 @@
   }
   .notice-visitor {
     margin-top: 0.25rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
     font-size: 0.75rem;
     color: rgba(255, 255, 255, 0.5);
+  }
+  /* 「使用精确位置」兜底按钮：自动定位失败时才出现。
+     做成虚线下的文字链而非实心按钮 —— 它只是欢迎卡上的一行辅助信息，
+     实心按钮会跟底部「我知道了」抢视线；强调色与下划线足够表明"可点"。 */
+  .notice-precise {
+    padding: 0;
+    border: 0;
+    background: none;
+    font-size: 0.6875rem;
+    line-height: 1.4;
+    color: var(--accent-color);
+    text-decoration: underline dotted;
+    text-underline-offset: 2px;
+    opacity: 0.85;
+    cursor: pointer;
+    transition: opacity 0.2s ease;
+  }
+  .notice-precise:hover:not(:disabled) {
+    opacity: 1;
+  }
+  .notice-precise:disabled {
+    color: rgba(255, 255, 255, 0.4);
+    text-decoration: none;
+    cursor: default;
   }
   .notice-list {
     display: flex;

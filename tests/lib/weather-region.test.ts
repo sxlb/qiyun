@@ -43,6 +43,14 @@ let tencentAdInfo: { adcode: number; province: string; city: string; district?: 
   city: "北京市",
 };
 
+/** 高德逆地理编码返回（浏览器精确定位链路用）；另有用例覆盖"给不出结果" */
+let amapRegeo: unknown = {
+  status: "1",
+  regeocode: {
+    addressComponent: { adcode: "321202", province: "江苏省", city: "泰州市", district: "海陵区" },
+  },
+};
+
 function stubApis() {
   calls = [];
   vi.stubGlobal(
@@ -59,6 +67,9 @@ function stubApis() {
           status: "1",
           lives: [{ province: "浙江省", city: "杭州市", weather: "晴", temperature: "25", winddirection: "东", windpower: "3" }],
         });
+      }
+      if (url.includes("restapi.amap.com/v3/geocode/regeo")) {
+        return jsonResponse(amapRegeo);
       }
       if (url.includes("apis.map.qq.com/ws/location/v1/ip")) {
         return jsonResponse({ status: 0, result: { ad_info: tencentAdInfo } });
@@ -94,6 +105,17 @@ async function getWeather() {
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
 }
 
+/** 带浏览器精确定位坐标的请求（模拟前端拿到 geolocation 后的调用） */
+async function getWeatherWithCoords(lng: number, lat: number) {
+  const { GET } = await import("@/app/api/weather/route");
+  const res = await GET(
+    new NextRequest(`http://localhost:3000/api/weather?lng=${lng}&lat=${lat}`, {
+      headers: { "x-forwarded-for": "203.0.113.45" },
+    })
+  );
+  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+}
+
 /** 出站 URL 是编码过的，比较中文前先解码 */
 const decodedCalls = () => calls.map((u) => decodeURIComponent(u));
 
@@ -101,6 +123,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   env.ip = "203.0.113.45";
   tencentAdInfo = { adcode: 110000, province: "北京市", city: "北京市" };
+  amapRegeo = {
+    status: "1",
+    regeocode: {
+      addressComponent: { adcode: "321202", province: "江苏省", city: "泰州市", district: "海陵区" },
+    },
+  };
   stubApis();
 });
 
@@ -194,5 +222,77 @@ describe("天气接口 · 访客地域字段", () => {
     expect(body.region).toBeUndefined();
     expect(calls.some((u) => u.includes("/ws/location/v1/ip"))).toBe(false);
     expect(calls.some((u) => u.includes("/v3/ip"))).toBe(false);
+  });
+});
+
+/**
+ * 浏览器精确定位链路（访客带了 `lng`/`lat`）。
+ *
+ * 这是唯一能绕开「运营商 IP 登记地 ≠ 设备实际位置」的手段，因此它必须：
+ * - 用坐标做逆地理编码拿到**区级** adcode，天气按这个 adcode 查，地域标签也到区；
+ * - 任一环节失败都静默落回 IP 定位（不能因为定位不准就让页面没天气）；
+ * - 站主配了固定城市时彻底不理会坐标（那是站主的位置，不能顶替成访客地域）。
+ */
+describe("天气接口 · 浏览器精确定位链路", () => {
+  it("坐标 + 高德 Key：逆地理编码得到区级 adcode，region 精确到区，且不再走 IP 定位", async () => {
+    profileMock.mockResolvedValue(baseProfile({ amapKey: "k" }));
+
+    const { status, body } = await getWeatherWithCoords(119.915, 32.485);
+
+    expect(status).toBe(200);
+    // 省 + 市 + 区三级标签（高德 regeo 的 adcode 本身就是区级）
+    expect(body.region).toBe("江苏省 泰州市 海陵区");
+    // 天气用的是逆地理编码给出的区级 adcode，而不是 IP 定位来的城市
+    expect(decodedCalls().some((u) => u.includes("city=321202"))).toBe(true);
+    // 精确定位成功后不该再多打一次 IP 定位
+    expect(calls.some((u) => u.includes("restapi.amap.com/v3/ip"))).toBe(false);
+  });
+
+  it("逆地理编码给不出结果时静默回退 IP 定位（页面不能没天气）", async () => {
+    amapRegeo = { status: "0", info: "INVALID_USER_KEY" };
+    profileMock.mockResolvedValue(baseProfile({ amapKey: "k", txWeatherKey: "t", txWeatherSk: "s" }));
+
+    const { status, body } = await getWeatherWithCoords(120.123, 31.123);
+
+    expect(status).toBe(200);
+    // 回退到腾讯 IP 定位链路，region 来自 IP 库
+    expect(body.region).toBe("北京市");
+    expect(calls.some((u) => u.includes("/ws/location/v1/ip"))).toBe(true);
+  });
+
+  it("没有任何 Key 时坐标链路发不出去，直接按「未配置数据源」返回 400", async () => {
+    profileMock.mockResolvedValue(baseProfile());
+
+    const { status, body } = await getWeatherWithCoords(121.234, 30.234);
+
+    expect(status).toBe(400);
+    expect(String(body.error)).toContain("未配置天气数据源");
+    // 逆地理编码需要 Key，没有 Key 就不该白打一次出站请求
+    expect(calls.some((u) => u.includes("/geocode/regeo"))).toBe(false);
+  });
+
+  it("配置了固定城市：忽略坐标，不返回 region（站主城市不能顶替访客地域）", async () => {
+    // 城市名刻意与上一个用例不同：天气结果缓存的键含固定城市，
+    // 同名会直接命中缓存而跳过全部出站，断言就失去意义
+    profileMock.mockResolvedValue(baseProfile({ amapKey: "k", weatherCity: "重庆市" }));
+
+    const { status, body } = await getWeatherWithCoords(122.345, 29.345);
+
+    expect(status).toBe(200);
+    expect(body.region).toBeUndefined();
+    expect(calls.some((u) => u.includes("/geocode/regeo"))).toBe(false);
+    expect(decodedCalls().some((u) => u.includes("city=重庆市"))).toBe(true);
+  });
+
+  it("(0,0) 这类无效坐标被忽略，退回 IP 定位", async () => {
+    // 浏览器拿不到定位时会给出 (0,0)，那是几内亚湾，必须当作"没有坐标"
+    env.ip = "198.51.100.7";
+    profileMock.mockResolvedValue(baseProfile({ txWeatherKey: "t", txWeatherSk: "s" }));
+
+    const { status, body } = await getWeatherWithCoords(0, 0);
+
+    expect(status).toBe(200);
+    expect(body.region).toBe("北京市");
+    expect(calls.some((u) => u.includes("/geocode/regeo"))).toBe(false);
   });
 });

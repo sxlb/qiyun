@@ -22,6 +22,26 @@ describe("composeRegionLabel", () => {
     expect(composeRegionLabel("上海市", "上海市浦东新区")).toBe("上海市浦东新区");
   });
 
+  it("省 + 市 + 区（区级只有逆地理编码与腾讯 IP 库能给到）", () => {
+    expect(composeRegionLabel("江苏省", "泰州市", "海陵区")).toBe("江苏省 泰州市 海陵区");
+    expect(composeRegionLabel("广东省", "深圳市", "南山区")).toBe("广东省 深圳市 南山区");
+  });
+
+  it("直辖市省市同名顶替后仍追加区级", () => {
+    expect(composeRegionLabel("北京市", "北京市", "东城区")).toBe("北京市 东城区");
+    expect(composeRegionLabel("上海市", "上海市", "浦东新区")).toBe("上海市 浦东新区");
+  });
+
+  it("中间级缺失时跳过该级，区级照常显示", () => {
+    // 腾讯对部分 IP 只给省 + 区（city 空），此时不能因为中间缺失就丢掉区
+    expect(composeRegionLabel("江苏省", "", "海陵区")).toBe("江苏省 海陵区");
+    expect(composeRegionLabel("江苏省", undefined, "海陵区")).toBe("江苏省 海陵区");
+  });
+
+  it("区级与市级同名时去重（如地级市直管街道场景）", () => {
+    expect(composeRegionLabel("广东省", "东莞市", "东莞市")).toBe("广东省 东莞市");
+  });
+
   it("只拿到一级就只显示那一级", () => {
     expect(composeRegionLabel("浙江省", "")).toBe("浙江省");
     expect(composeRegionLabel(undefined, "杭州市")).toBe("杭州市");

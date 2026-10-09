@@ -6,7 +6,7 @@ import { fetchWeatherShared, type WeatherPayload } from "@/lib/weatherClient";
 // ===== 天气数据加载 Hook =====
 // 走共享层（lib/weatherClient.ts）：欢迎通知也要用这次请求顺带解析出的访客地域，
 // 两处共用同一次请求而不是各发一次。
-function useWeather(): { data: WeatherPayload; error?: string } {
+function useWeather(precise: boolean): { data: WeatherPayload; error?: string } {
   const [data, setData] = useState<WeatherPayload>({});
   const [error, setError] = useState<string>();
 
@@ -14,7 +14,7 @@ function useWeather(): { data: WeatherPayload; error?: string } {
     let disposed = false;
 
     async function load() {
-      const { data: next, error: err } = await fetchWeatherShared();
+      const { data: next, error: err } = await fetchWeatherShared({ precise });
       // 过期结果（组件已卸载）不写进 state
       if (disposed) return;
       if (next) {
@@ -33,7 +33,7 @@ function useWeather(): { data: WeatherPayload; error?: string } {
       // 这里**不**需要处理在途请求：请求在共享层发起，不绑定本组件生命周期，
       // 因此开发模式 StrictMode 的「挂载→清理→再挂载」不会把它打断
     };
-  }, []);
+  }, [precise]);
 
   return { data, error };
 }
@@ -78,6 +78,7 @@ export default function ClockWeatherCapsule({
   timeFormat = "24",
   showSeconds = true,
   dateFormat = "YYYY年M月D日 dddd",
+  preciseLocation = false,
 }: {
   /** 时钟格式：24 小时制 / 12 小时制 */
   timeFormat?: string;
@@ -85,13 +86,15 @@ export default function ClockWeatherCapsule({
   showSeconds?: boolean;
   /** 日期格式（YYYY/YY/MM/M/DD/D/dddd） */
   dateFormat?: string;
+  /** 是否启用浏览器精确定位（后台开关；开启时由本组件发起定位授权请求） */
+  preciseLocation?: boolean;
 }) {
   // 时钟/日期 ref 直写：1s 间隔仅更新 DOM 文本，不触发 React re-render，
   // 天气卡片（独立 state）不受每秒 tick 影响（避免整卡每秒重渲染）
   const timeRef = useRef<HTMLSpanElement>(null);
   const dateRef = useRef<HTMLDivElement>(null);
 
-  const { data, error: weatherError } = useWeather();
+  const { data, error: weatherError } = useWeather(preciseLocation);
   const { city, weather, temperature, winddirection, windpower } = data;
 
   // 每秒更新时钟与日期（ref 直写 DOM，无 state 变更）

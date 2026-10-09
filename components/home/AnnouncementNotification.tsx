@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Megaphone, Pin, X, BellRing } from "lucide-react";
 import { fetchWeatherShared } from "@/lib/weatherClient";
+import { requestPreciseCoords, hasPreciseCoords } from "@/lib/geolocation";
 
 interface Announcement {
   id: number;
@@ -20,6 +21,8 @@ interface AnnouncementNotificationProps {
   welcomeMessages?: string;
   /** 当前生效欢迎语的下标 */
   welcomeIndex?: number;
+  /** 是否启用浏览器精确定位（后台开关；未拿到坐标时提供手动重试入口） */
+  preciseLocation?: boolean;
 }
 
 const DISMISS_KEY = "qiyun-announcement-dismissed";
@@ -59,14 +62,17 @@ async function fetchVisitorLocation(): Promise<string> {
 /**
  * 获取访客地域：**优先复用天气接口**那次请求顺带解析出的 region。
  *
- * 天气接口在「未配置固定城市」时会按访客 IP 定位（腾讯/高德，境内精度优于本地离线库），
- * 而这次请求本来就因为时钟卡片要发，所以先问它，命中就省掉一次请求。
+ * 天气接口在「未配置固定城市」时会按访客定位，而这次请求本来就因为时钟卡片要发，
+ * 所以先问它，命中就省掉一次请求。
  *
  * 回退到本地离线库的四种情况：配置了固定城市（那时 region 是站主的城市，不能给访客看）、
- * 未配置天气 Key、被限流（429）、海外或内网 IP（定位接口给不出结果）。
+ * 未配置天气 Key、被限流（429）、定位接口给不出结果（海外/内网 IP，或逆地理编码失败）。
+ *
+ * @param precise 是否允许浏览器精确定位（后台开关）：开启时接口会用设备坐标做逆地理编码，
+ *                标签能到区县，且不受运营商 IP 登记地影响
  */
-async function fetchVisitorRegion(): Promise<string> {
-  const { data } = await fetchWeatherShared();
+async function fetchVisitorRegion(precise: boolean): Promise<string> {
+  const { data } = await fetchWeatherShared({ precise });
   if (data?.region) return data.region;
   return fetchVisitorLocation();
 }
@@ -84,10 +90,16 @@ export default function AnnouncementNotification({
   siteName = "",
   welcomeMessages = "[]",
   welcomeIndex = 0,
+  preciseLocation = false,
 }: AnnouncementNotificationProps) {
   const [items, setItems] = useState<Announcement[]>([]);
   const [visible, setVisible] = useState(false);
   const [visitorInfo, setVisitorInfo] = useState("");
+  // 开了精确定位开关但自动定位没成功（被拒绝/超时/浏览器不支持）时，给一个手动重试入口。
+  // 浏览器把「永久拒绝」记在权限层，这个按钮拿不回权限，但超时、临时拒绝、桌面端
+  // 首次失败等情形都能靠它再试一次。
+  const [showPreciseBtn, setShowPreciseBtn] = useState(false);
+  const [locating, setLocating] = useState(false);
 
   // 解析当前生效欢迎语（纯函数，每次渲染结果一致）
   let welcomeText = "";
@@ -133,17 +145,35 @@ export default function AnnouncementNotification({
     })();
 
     void (async () => {
-      const region = await fetchVisitorRegion();
+      const region = await fetchVisitorRegion(preciseLocation);
       if (cancelled) return;
       const parts = [getBrowserName(), region].filter(Boolean);
       setVisitorInfo(parts.length > 0 ? `来自 ${parts.join(" · ")}` : "");
+      // 开关开着却没拿到坐标 → 自动定位没成功，给出手动重试入口
+      if (preciseLocation && !hasPreciseCoords()) setShowPreciseBtn(true);
     })();
 
     return () => {
       cancelled = true;
     };
     // 仅组件挂载时预取一次；公告/访客信息在切换 site 后会重新挂载，由组件层面保证刷新
-  }, []);
+  }, [preciseLocation]);
+
+  /** 用户主动点「使用精确位置」：忽略「曾被拒绝」的记忆重新定位，成功后刷新地域标签 */
+  async function applyPreciseLocation() {
+    setLocating(true);
+    try {
+      const coords = await requestPreciseCoords(true);
+      if (!coords) return;
+      const { data } = await fetchWeatherShared({ precise: true, force: true });
+      const region = data?.region || (await fetchVisitorLocation());
+      const parts = [getBrowserName(), region].filter(Boolean);
+      if (parts.length > 0) setVisitorInfo(`来自 ${parts.join(" · ")}`);
+      setShowPreciseBtn(!region);
+    } finally {
+      setLocating(false);
+    }
+  }
 
   /**
    * 是否已经自动弹过一次。
@@ -237,7 +267,23 @@ export default function AnnouncementNotification({
           {welcomeText && (
             <div className="notice-welcome">
               <p className="notice-welcome-text">{welcomeText}</p>
-              {visitorInfo && <p className="notice-visitor">{visitorInfo}</p>}
+              {(visitorInfo || showPreciseBtn) && (
+                <p className="notice-visitor">
+                  {visitorInfo && <span>{visitorInfo}</span>}
+                  {/* 自动定位没成功时的兜底入口：文案直白说明"能得到什么"，不写"开启定位"这种术语 */}
+                  {showPreciseBtn && (
+                    <button
+                      type="button"
+                      onClick={applyPreciseLocation}
+                      disabled={locating}
+                      className="notice-precise"
+                      title="用浏览器定位把位置精确到区（需要你授权）"
+                    >
+                      {locating ? "定位中…" : "使用精确位置"}
+                    </button>
+                  )}
+                </p>
+              )}
             </div>
           )}
 
