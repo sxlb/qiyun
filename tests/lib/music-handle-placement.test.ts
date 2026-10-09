@@ -7,9 +7,12 @@ import {
   HANDLE_BOTTOM_KEY,
   HANDLE_SIDE_KEY,
   MUSIC_PANEL_BOOL_KEYS,
+  MUSIC_SIDEBAR_DEFAULT,
+  MUSIC_SIDEBAR_DEFAULT_OPTIONS,
   parseHandleBottom,
   parseHandleSide,
   parseMusicPanelPrefs,
+  parseMusicSidebarDefault,
   readHandlePlacement,
   writeHandlePlacement,
 } from "@/lib/musicPanelThemes";
@@ -73,6 +76,37 @@ describe("把手停靠位置：默认左侧贴底，脏值一律回落", () => {
     // 漏清的症状：点了恢复默认，把手还停在拖动后的位置
     expect(ALL_MUSIC_LOCAL_KEYS).toContain(HANDLE_SIDE_KEY);
     expect(ALL_MUSIC_LOCAL_KEYS).toContain(HANDLE_BOTTOM_KEY);
+  });
+});
+
+describe("侧栏默认状态：后台只在三个值里选，脏值回落默认", () => {
+  it("三个取值都有对应选项，默认是 demo（保留侧栏上线以来的表现）", () => {
+    expect(MUSIC_SIDEBAR_DEFAULT_OPTIONS.map((o) => o.value)).toEqual([
+      "demo",
+      "expand",
+      "collapse",
+    ]);
+    expect(MUSIC_SIDEBAR_DEFAULT).toBe("demo");
+    expect(parseMusicSidebarDefault(undefined)).toBe("demo");
+    expect(parseMusicSidebarDefault("")).toBe("demo");
+  });
+
+  it("合法值原样透传，非法值一律回落默认", () => {
+    expect(parseMusicSidebarDefault("expand")).toBe("expand");
+    expect(parseMusicSidebarDefault("collapse")).toBe("collapse");
+    expect(parseMusicSidebarDefault("demo")).toBe("demo");
+    // 脏数据不能把侧栏卡在一个说不通的状态上（例如老数据 / 手改配置）
+    expect(parseMusicSidebarDefault("EXPAND")).toBe("demo");
+    expect(parseMusicSidebarDefault("open")).toBe("demo");
+    expect(parseMusicSidebarDefault(1)).toBe("demo");
+    expect(parseMusicSidebarDefault(null)).toBe("demo");
+  });
+
+  it("每个选项都要有给人看的说明（后台下拉旁要显示它）", () => {
+    for (const option of MUSIC_SIDEBAR_DEFAULT_OPTIONS) {
+      expect(option.label.length).toBeGreaterThan(0);
+      expect(option.hint.length).toBeGreaterThan(0);
+    }
   });
 });
 

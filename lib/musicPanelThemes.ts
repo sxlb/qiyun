@@ -47,6 +47,56 @@ export const MUSIC_PANEL_STYLE_OPTIONS: {
 
 const STYLE_VALUES: string[] = MUSIC_PANEL_STYLE_OPTIONS.map((o) => o.value);
 
+/* ==================== 音乐侧栏的默认状态（站点级） ==================== */
+
+/**
+ * 访客进门时音乐侧栏的默认状态。
+ *
+ * - `demo`：首次访问展开示范一次，随后自动收起（默认，也是侧栏上线以来的行为）
+ * - `expand`：默认展开并保持，直到访客自己收起
+ * - `collapse`：默认收起，只留贴边把手
+ *
+ * 之所以保留 `demo` 而不是只做「展开 / 收起」两项：它是前几轮的既定行为，
+ * 直接砍掉会让已经在用它的站点被静默改掉默认表现。
+ */
+export type MusicSidebarDefault = "demo" | "expand" | "collapse";
+
+export const MUSIC_SIDEBAR_DEFAULT_OPTIONS: {
+  value: MusicSidebarDefault;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: "demo",
+    label: "展开示范一次",
+    hint: "首次访问展开、过 3 秒自动收起成把手；同一个标签页再访问不再示范",
+  },
+  {
+    value: "expand",
+    label: "默认展开",
+    hint: "进门就是展开的播放器，保持打开直到访客自己收起；不铺满屏遮罩，不挡页面操作",
+  },
+  {
+    value: "collapse",
+    label: "默认收起",
+    hint: "只留贴边的把手，不自动展开；访客想用时自己点开",
+  },
+];
+
+const SIDEBAR_DEFAULT_VALUES: string[] = MUSIC_SIDEBAR_DEFAULT_OPTIONS.map((o) => o.value);
+
+/** 默认值：保持侧栏上线以来的表现 */
+export const MUSIC_SIDEBAR_DEFAULT: MusicSidebarDefault = "demo";
+
+/** 收敛站点配置里的取值：非法值 / 空值一律回落默认，不让脏数据把侧栏卡在某个状态 */
+export function parseMusicSidebarDefault(value: unknown): MusicSidebarDefault {
+  return isMusicSidebarDefault(value) ? value : MUSIC_SIDEBAR_DEFAULT;
+}
+
+export function isMusicSidebarDefault(value: unknown): value is MusicSidebarDefault {
+  return typeof value === "string" && SIDEBAR_DEFAULT_VALUES.includes(value);
+}
+
 /** 是否为受支持的风格值（把任意来源的字符串收敛成联合类型） */
 export function isMusicPanelStyle(value: unknown): value is MusicPanelStyle {
   return typeof value === "string" && STYLE_VALUES.includes(value);

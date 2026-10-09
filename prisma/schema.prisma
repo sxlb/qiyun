@@ -72,6 +72,7 @@ model Profile {
   dateFormat             String   @default("YYYY年M月D日 dddd") // 日期格式（YYYY/MM/M/DD/D/dddd/ddd）
   hitokotoType           String   @default("") // 一言类型：空=随机，a动画 b漫画 c游戏 d文学 e原创 f网络 g其他 h影视 i诗词 j网易云 k哲学 l抖机灵
   musicPanelStyle        String   @default("vinyl") // 音乐面板风格：vinyl 黑胶暖色 / editorial 纸面印刷 / mono 黑白等宽
+  musicSidebarDefault    String   @default("demo") // 音乐侧栏默认状态：demo 展开示范一次 / expand 默认展开 / collapse 默认收起
   bgOverlay              Int      @default(0) // 背景遮罩暗化强度 0-80（%）
   avatarShape            String   @default("circle") // 头像形状：circle / rounded / square
   avatarBorderColor      String   @default("") // 头像边框颜色（空则用默认白色半透明）

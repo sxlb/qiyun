@@ -238,6 +238,8 @@ export async function getHomeData(
   hitokotoType: string;
   /** 音乐面板风格（站点默认，访客可在音乐面板里本机覆盖） */
   musicPanelStyle: string;
+  /** 音乐侧栏默认状态（站点级，后台可改）：demo / expand / collapse */
+  musicSidebarDefault: string;
   bgOverlay: number;
   avatarShapeClass: string;
   avatarStyle: React.CSSProperties | undefined;
@@ -351,6 +353,7 @@ export async function getHomeData(
     dateFormat: profile?.dateFormat || "YYYY年M月D日 dddd",
     hitokotoType: profile?.hitokotoType || "",
     musicPanelStyle: profile?.musicPanelStyle || "vinyl",
+    musicSidebarDefault: profile?.musicSidebarDefault || "demo",
     bgOverlay: profile?.bgOverlay ?? 0,
     avatarShapeClass,
     avatarStyle,

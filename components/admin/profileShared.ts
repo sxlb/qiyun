@@ -62,6 +62,8 @@ export interface ProfileShape {
   hitokotoType: string;
   /** 音乐面板风格：vinyl / editorial / mono（见 lib/musicPanelThemes.ts） */
   musicPanelStyle: string;
+  /** 音乐侧栏默认状态（站点级）：demo 展开示范一次 / expand 默认展开 / collapse 默认收起 */
+  musicSidebarDefault: string;
   bgOverlay: number;
   avatarShape: string;
   avatarBorderColor: string;
@@ -147,6 +149,7 @@ export const INITIAL_PROFILE: ProfileShape = {
   dateFormat: "YYYY年M月D日 dddd",
   hitokotoType: "",
   musicPanelStyle: "vinyl",
+  musicSidebarDefault: "demo",
   bgOverlay: 0,
   avatarShape: "circle",
   avatarBorderColor: "",

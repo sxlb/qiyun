@@ -38,11 +38,13 @@ function zIndexOf(selector: string): number {
 }
 
 describe("音乐侧栏：收起态是一枚竖直把手", () => {
-  it("把手是 44px 宽的胶囊，竖直排布、可抓取", () => {
+  it("把手是 44px 宽的贴边标签，竖直排布、可抓取", () => {
     const body = ruleBody(".music-handle");
     expect(body).toMatch(/position:\s*fixed/);
     expect(body).toMatch(/width:\s*2\.75rem/);
-    expect(body).toMatch(/border-radius:\s*999px/);
+    expect(body, "不再是浮空胶囊：贴边一侧直角、内侧半圆").toMatch(
+      /border-radius:\s*0 1\.375rem 1\.375rem 0/
+    );
     expect(body).toMatch(/flex-direction:\s*column/);
     expect(body).toMatch(/cursor:\s*grab/);
     // 触摸拖动不要变成滚页
@@ -58,11 +60,19 @@ describe("音乐侧栏：收起态是一枚竖直把手", () => {
   it("位置用 transform 表达（合成层动画、不触发布局），并有默认兜底", () => {
     const body = ruleBody(".music-handle");
     expect(body).toMatch(/transform:\s*translate3d\(var\(--handle-x/);
-    // 未挂载时（SSR / 首帧）要有默认值：左侧贴底，不能先闪到左上角
-    expect(body).toMatch(/--handle-x:\s*var\(--handle-inset\)/);
+    // 未挂载时（SSR / 首帧）要有默认值：左侧贴边贴底，不能先闪到别处
+    expect(body, "水平必须贴边（0），留缝就不像挂在屏幕上").toMatch(/--handle-x:\s*0px/);
     expect(body).toMatch(/--handle-y:\s*calc\(100dvh - var\(--handle-inset\) - 6\.125rem\)/);
     expect(body).toMatch(/left:\s*0/);
     expect(body).toMatch(/top:\s*0/);
+  });
+
+  it("贴屏一侧不做圆角、内侧做成半圆，并随停靠侧镜像", () => {
+    // 贴边一侧直角才像「挂在屏幕上」；内侧 1.375rem = 宽度的一半，正好是半圆
+    expect(ruleBody(".music-handle")).toMatch(/border-radius:\s*0 1\.375rem 1\.375rem 0/);
+    expect(ruleBody('.music-handle[data-side="right"]')).toMatch(
+      /border-radius:\s*1\.375rem 0 0 1\.375rem/
+    );
   });
 
   it("拖动中关掉过渡（跟手）并给出抬起感", () => {

@@ -141,6 +141,7 @@ export default async function Home() {
         songId={d.songId}
         musicAutoplay={d.musicAutoplay}
         musicPanelStyle={d.musicPanelStyle}
+        musicSidebarDefault={d.musicSidebarDefault}
       >
         {/* 前端右键行为：default 时根本不渲染（连 contextmenu 监听都不挂） */}
         {d.rightClickMode !== "default" && (

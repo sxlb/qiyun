@@ -428,6 +428,13 @@ export const profileSchema = z.object({
     })
     .optional()
     .default("vinyl"),
+  // 音乐侧栏默认状态：demo 展开示范一次（默认，保留原行为）/ expand 默认展开 / collapse 默认收起
+  musicSidebarDefault: z
+    .enum(["demo", "expand", "collapse"], {
+      errorMap: () => ({ message: "音乐侧栏默认状态不合法" }),
+    })
+    .optional()
+    .default("demo"),
   // 背景遮罩暗化强度 0-80（%）
   bgOverlay: z
     .number()

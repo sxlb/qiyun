@@ -1686,6 +1686,7 @@ Cookie 头中会设置 `qiyun-uv=1`（httpOnly, sameSite=lax, maxAge=365 天）�
 | `songServer` | String | "netease" | 音乐服务器 |
 | `songId` | String | "" | 歌单 ID |
 | `musicAutoplay` | Boolean | false | 音乐自动播放的**站点初值**：访客在播放器「设置 → 播放 → 自动播放」里显式设过就以访客为准（该开关本机默认关闭） |
+| `musicSidebarDefault` | String | "demo" | 音乐侧栏进门时的默认状态：`demo` 首次访问展开示范一次、通知离场后 3 秒收起 / `expand` 默认展开并保持（**不铺满屏遮罩**，不挡页面操作）/ `collapse` 默认收起、只留贴边把手 |
 | `siteUrl` | String | "" | 站点 URL |
 | `siteIcp` | String | "" | ICP 备案号 |
 | `siteMps` | String | "" | 公安备案号 |

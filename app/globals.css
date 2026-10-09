@@ -1522,7 +1522,9 @@
     top: 0;
     z-index: 55;
     --handle-inset: 1rem;
-    --handle-x: var(--handle-inset);
+    /* 水平方向**贴紧屏幕边缘**（0），只留垂直方向的浮起感：
+       贴边一侧直角、内侧半圆，像一片挂在屏幕边上的标签，而不是浮在半空的胶囊 */
+    --handle-x: 0px;
     --handle-y: calc(100vh - var(--handle-inset) - 6.125rem);
     --handle-y: calc(100dvh - var(--handle-inset) - 6.125rem);
     display: flex;
@@ -1534,7 +1536,9 @@
     height: 6.125rem;
     padding: 0;
     border: 0;
-    border-radius: 999px;
+    /* 贴屏一侧直角、内侧半圆（1.375rem 正好是宽度的一半）：
+       贴着边缘的那一边不做圆角，看起来才是「挂在屏幕上」而不是「浮在旁边」 */
+    border-radius: 0 1.375rem 1.375rem 0;
     background-color: rgba(0, 0, 0, calc(var(--card-alpha, 0.35) + 0.28));
     backdrop-filter: blur(var(--glass-blur, 16px)) saturate(140%);
     -webkit-backdrop-filter: blur(var(--glass-blur, 16px)) saturate(140%);
@@ -1567,6 +1571,10 @@
   .music-handle[data-side="right"]::after {
     right: 0.26rem;
     left: auto;
+  }
+  /* 贴边一侧直角、内侧半圆 —— 停靠侧换了要跟着镜像（1.375rem = 宽度的一半，内侧正好是半圆） */
+  .music-handle[data-side="right"] {
+    border-radius: 1.375rem 0 0 1.375rem;
   }
   .music-handle:hover {
     --handle-scale: 1.05;

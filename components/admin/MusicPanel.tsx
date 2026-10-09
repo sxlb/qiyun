@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { PanelLoading } from "./panel";
 import { useProfileForm } from "./useProfileForm";
 import { SONG_SERVERS, SONG_API_PRESETS, selectClass } from "./profileShared";
+import { MUSIC_SIDEBAR_DEFAULT_OPTIONS, parseMusicSidebarDefault } from "@/lib/musicPanelThemes";
 
 /**
  * 音乐设置面板：歌单 API 源、平台、歌单 ID。
@@ -43,6 +44,8 @@ export default function MusicPanel() {
 
   // 当前 songApi 是否命中预设（未命中且非空时，下拉显示"自定义"占位项）
   const matchedPreset = SONG_API_PRESETS.find((p) => p.value === profile.songApi);
+  // 侧栏默认状态：脏值一律按默认收敛，避免下拉出现一个不存在的选项
+  const sidebarDefault = parseMusicSidebarDefault(profile.musicSidebarDefault);
 
   if (loading) {
     return <PanelLoading />;
@@ -173,6 +176,26 @@ export default function MusicPanel() {
                 className="h-4 w-4 accent-primary"
               />
             </label>
+
+            {/* ── 侧栏默认状态 ── */}
+            <div className="space-y-2">
+              <Label htmlFor="musicSidebarDefault">侧栏默认状态</Label>
+              <select
+                id="musicSidebarDefault"
+                value={sidebarDefault}
+                onChange={(e) => set("musicSidebarDefault", e.target.value)}
+                className={selectClass}
+              >
+                {MUSIC_SIDEBAR_DEFAULT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                {MUSIC_SIDEBAR_DEFAULT_OPTIONS.find((o) => o.value === sidebarDefault)?.hint}
+              </p>
+            </div>
           </div>
 
           <Button type="submit" disabled={saving} className="w-full">

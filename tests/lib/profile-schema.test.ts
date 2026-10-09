@@ -283,6 +283,8 @@ describe("金丝雀：profileSchema 所有字段都能被 route.ts 落库", () =
         "avatar", "nickname", "bio",
         // 音乐（本次修复的 musicAutoplay）
         "songApi", "songServer", "songId", "musicAutoplay",
+        // 音乐侧栏默认状态（后台可配：demo / expand / collapse）
+        "musicSidebarDefault",
         // 天气（本次新增的混合模式）
         "weatherProvider", "amapKey", "txWeatherKey",
         // 功能开关

@@ -20,9 +20,9 @@ import { HANDLE_SIDE_KEY, HANDLE_BOTTOM_KEY } from "@/lib/musicPanelThemes";
  * 5. 「音乐列表」仍然只进既有的那个弹窗。
  */
 
-function setup() {
+function setup(props: { musicSidebarDefault?: string } = {}) {
   return render(
-    <MusicProvider songApi="" songId="" autoplay={false}>
+    <MusicProvider songApi="" songId="" autoplay={false} {...props}>
       <div />
     </MusicProvider>
   );
@@ -46,16 +46,16 @@ function mountNoticeScrim(): HTMLElement {
   return scrim;
 }
 
-/** jsdom 没有布局：给把手一个合理的矩形（默认左侧贴底），拖动数学才成立 */
+/** jsdom 没有布局：给把手一个合理的矩形（默认左侧贴边贴底），拖动数学才成立 */
 function mockHandleRect() {
   return vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
-    left: 16,
+    left: 0,
     top: 700,
     width: 44,
     height: 98,
-    right: 60,
+    right: 44,
     bottom: 798,
-    x: 16,
+    x: 0,
     y: 700,
     toJSON: () => ({}),
   } as DOMRect);
@@ -119,15 +119,61 @@ describe("音乐侧栏：只首次访问展开一次，且等通知离场后才�
     expect(handle()).toBeTruthy();
   });
 
-  it("默认贴左侧，且位置由 CSS 变量给出（左 16px、底 16px）", () => {
+  it("默认贴左侧，且位置由 CSS 变量给出（水平贴边 0、底 16px）", () => {
     setup();
     settleAutoCollapse();
 
     const btn = handle()!;
     expect(btn.getAttribute("data-side")).toBe("left");
-    // jsdom 视口 1024×768、把手 44×98：左 16；底 16 → y = 768 - 16 - 98 = 654
-    expect(btn.style.getPropertyValue("--handle-x")).toBe("16px");
+    // jsdom 视口 1024×768、把手 44×98：水平贴边 → x = 0；底 16 → y = 768 - 16 - 98 = 654
+    expect(btn.style.getPropertyValue("--handle-x"), "水平是贴边的，不该留缝").toBe("0px");
     expect(btn.style.getPropertyValue("--handle-y")).toBe("654px");
+  });
+
+  it("默认收起（后台可配）：进门只有把手，过多久都不会自己弹开", () => {
+    setup({ musicSidebarDefault: "collapse" });
+
+    expect(drawerOpen(), "配置成默认收起时不该展开").toBe(false);
+    expect(handle()).toBeTruthy();
+
+    settleAutoCollapse();
+    expect(drawerOpen()).toBe(false);
+  });
+
+  it("默认展开（后台可配）：常驻打开、不铺遮罩、也不会自己收走", () => {
+    const { container } = setup({ musicSidebarDefault: "expand" });
+
+    expect(drawerOpen()).toBe(true);
+    expect(container.querySelector(".music-drawer-scrim"), "常驻面板不该铺满屏遮罩").toBeNull();
+
+    settleAutoCollapse();
+    expect(drawerOpen(), "配置成默认展开就该保持打开").toBe(true);
+  });
+
+  it("默认展开时访客自己收起后不会被弹回来", () => {
+    setup({ musicSidebarDefault: "expand" });
+    act(() => {
+      fireEvent.click(screen.getByLabelText("收起音乐控制"));
+    });
+    expect(drawerOpen()).toBe(false);
+
+    settleAutoCollapse();
+    expect(drawerOpen(), "收起是访客的意愿，不该被默认值覆盖").toBe(false);
+    expect(handle()).toBeTruthy();
+  });
+
+  it("访客自己点开的抽屉仍是模态：铺遮罩、点空白处能关", () => {
+    const { container } = setup({ musicSidebarDefault: "collapse" });
+    act(() => {
+      fireEvent.click(handle()!);
+    });
+
+    const scrim = container.querySelector(".music-drawer-scrim");
+    expect(scrim, "访客点开的抽屉应铺遮罩").toBeTruthy();
+    act(() => {
+      fireEvent.click(scrim!);
+    });
+    expect(drawerOpen()).toBe(false);
   });
 
   it("窗口内用户自己开过，就不再自动收走", () => {
@@ -250,9 +296,9 @@ describe("音乐侧栏：按住拖动、松手贴合两侧", () => {
     mockHandleRect();
 
     const btn = handle()!;
-    // 从把手中心(38,749)拖到屏幕右侧偏上(600,300)
+    // 从把手中心(22,749)拖到屏幕右侧偏上(600,300)
     act(() => {
-      fireEvent.pointerDown(btn, { pointerId: 1, clientX: 38, clientY: 749 });
+      fireEvent.pointerDown(btn, { pointerId: 1, clientX: 22, clientY: 749 });
       fireEvent.pointerMove(btn, { pointerId: 1, clientX: 600, clientY: 300 });
     });
     expect(handle()!.getAttribute("data-dragging"), "拖动中要有状态标记（跟手 + 抬起感）").toBe("true");
@@ -265,10 +311,10 @@ describe("音乐侧栏：按住拖动、松手贴合两侧", () => {
     // 水平吸附到最近的一侧（松手点在中线右侧 → 右），垂直位置保持
     expect(localStorage.getItem(HANDLE_SIDE_KEY)).toBe("right");
     expect(localStorage.getItem(HANDLE_BOTTOM_KEY)).toBe("419");
-    // 右侧贴合：x = 1024 - 44 - 16 = 964；y = 768 - 419 - 98 = 251
+    // 右侧贴合：x = 1024 - 44 - 0 = 980；y = 768 - 419 - 98 = 251
     const after = handle()!;
     expect(after.getAttribute("data-side")).toBe("right");
-    expect(after.style.getPropertyValue("--handle-x")).toBe("964px");
+    expect(after.style.getPropertyValue("--handle-x")).toBe("980px");
     expect(after.style.getPropertyValue("--handle-y")).toBe("251px");
   });
 
@@ -280,7 +326,7 @@ describe("音乐侧栏：按住拖动、松手贴合两侧", () => {
 
     const btn = handle()!;
     expect(btn.getAttribute("data-side")).toBe("right");
-    expect(btn.style.getPropertyValue("--handle-x")).toBe("964px");
+    expect(btn.style.getPropertyValue("--handle-x")).toBe("980px");
     expect(btn.style.getPropertyValue("--handle-y")).toBe("370px");
   });
 
@@ -291,9 +337,9 @@ describe("音乐侧栏：按住拖动、松手贴合两侧", () => {
 
     const btn = handle()!;
     act(() => {
-      fireEvent.pointerDown(btn, { pointerId: 1, clientX: 38, clientY: 749 });
-      fireEvent.pointerMove(btn, { pointerId: 1, clientX: 40, clientY: 750 });
-      fireEvent.pointerUp(btn, { pointerId: 1, clientX: 40, clientY: 750 });
+      fireEvent.pointerDown(btn, { pointerId: 1, clientX: 22, clientY: 749 });
+      fireEvent.pointerMove(btn, { pointerId: 1, clientX: 24, clientY: 750 });
+      fireEvent.pointerUp(btn, { pointerId: 1, clientX: 24, clientY: 750 });
       fireEvent.click(btn);
     });
 

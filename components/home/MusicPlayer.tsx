@@ -52,7 +52,9 @@ import {
   DEFAULT_HANDLE_PLACEMENT,
   readHandlePlacement,
   writeHandlePlacement,
+  parseMusicSidebarDefault,
   type HandlePlacement,
+  type MusicSidebarDefault,
   type LyricAlignPref,
   type LyricSizeLevel,
   type MusicPanelBoolPref,
@@ -100,6 +102,16 @@ interface MusicContextValue {
   // UI 状态（对齐 home：musicOpenState 控制面板 / musicBoxOpenState 列表弹窗）
   panelOpen: boolean;
   setPanelOpen: (b: boolean) => void;
+  /**
+   * 抽屉是否铺满屏遮罩。
+   *
+   * 只有访客自己点开时才是模态（点空白处关闭）；站点配置成「默认展开」时它是常驻面板 ——
+   * 铺遮罩会让访客必须先点掉遮罩才能用网站，一个默认展开的播放器不该有这种代价。
+   */
+  panelModal: boolean;
+  setPanelModal: (b: boolean) => void;
+  /** 站点配置的音乐侧栏默认状态：demo 展开示范一次 / expand 默认展开 / collapse 默认收起 */
+  sidebarDefault: MusicSidebarDefault;
   boxOpen: boolean;
   setBoxOpen: (b: boolean) => void;
   /** 当前生效的音乐面板风格（站点默认 + 本机覆盖解析后的结果） */
@@ -711,8 +723,13 @@ export function MusicCard({ hitokotoType = "" }: { hitokotoType?: string }) {
  * 这样侧栏不必重复实现弹窗已有的能力，也就不存在两处逻辑漂移。
  */
 
-/** 把手与视口边缘的内缩（与 CSS 的 --handle-inset 一致） */
+/** 把手与视口**上下**边缘的内缩（与 CSS 的 --handle-inset 一致）；水平方向贴边，见下 */
 const HANDLE_INSET = 16;
+/**
+ * 水平内缩为 0：把手贴在屏幕边缘上，就是「挂在屏幕边上的那片标签」。
+ * 停靠时贴到 0、拖动夹取也贴到 0，否则拖到边上会留出一缝、看起来又浮起来了。
+ */
+const HANDLE_EDGE_X = 0;
 /** 把手尺寸的兜底值（与 CSS 的 2.75rem × 6.125rem 一致）；挂载后会实测校正 */
 const HANDLE_DEFAULT_SIZE = { w: 44, h: 98 };
 /** 位移超过这个距离才算「拖动」，否则按点击处理（打开抽屉） */
@@ -769,7 +786,7 @@ function markIntroShown(): void {
 
 export function MusicSidebar() {
   const m = useMusic();
-  const { setPanelOpen } = m;
+  const { setPanelOpen, setPanelModal, sidebarDefault } = m;
   const track = m.currentTrack;
   const noData = !track && m.playlist.length === 0;
 
@@ -838,14 +855,25 @@ export function MusicSidebar() {
   if (introPendingRef.current === null) introPendingRef.current = readIntroPending();
 
   /**
-   * 首次进入（本会话第一次）时做一次「展开示范」：先展开让人看见入口，随后自动收起。
+   * 按站点配置决定侧栏进门时的状态（后台「音乐设置 → 侧栏默认状态」）：
    *
-   * 倒计时的起点是**欢迎通知离场之后**，不是挂载那一刻：两者同时占屏会让页面被两层遮罩
-   * 叠暗，而且抽屉会在弹窗还开着的时候自己收走，看起来像闪了一下。
+   * - `collapse`：什么都不做，只留贴边把手；
+   * - `expand`：常驻展开，且**不铺遮罩** —— 它是面板不是弹窗，访客随时可以自己收起；
+   * - `demo`：本会话首次访问展开示范一次，倒计时从「欢迎通知离场」之后才开始。
+   *
+   * 倒计时起点不是挂载那一刻：两者同时占屏会让页面被两层遮罩叠暗，
+   * 而且抽屉会在弹窗还开着的时候自己收走，看起来像闪了一下。
    */
   useEffect(() => {
+    if (sidebarDefault === "collapse") return;
+    if (sidebarDefault === "expand") {
+      setPanelModal(false);
+      setPanelOpen(true);
+      return;
+    }
     if (!introPendingRef.current) return;
     markIntroShown();
+    setPanelModal(true);
     setPanelOpen(true);
 
     let collapseTimer = 0;
@@ -900,16 +928,16 @@ export function MusicSidebar() {
       window.clearInterval(pollTimer);
       window.removeEventListener("loading-screen-removed", onLoaderGone);
     };
-  }, [setPanelOpen]);
+  }, [setPanelOpen, setPanelModal, sidebarDefault]);
 
-  /** 把位置夹在视口内（留出 HANDLE_INSET 的边距） */
+  /** 把位置夹在视口内（水平贴边、垂直留出 HANDLE_INSET 的浮起感） */
   function clampPos(x: number, y: number) {
     const vw = viewport?.w ?? window.innerWidth;
     const vh = viewport?.h ?? window.innerHeight;
-    const maxX = Math.max(HANDLE_INSET, vw - size.w - HANDLE_INSET);
+    const maxX = Math.max(HANDLE_EDGE_X, vw - size.w - HANDLE_EDGE_X);
     const maxY = Math.max(HANDLE_INSET, vh - size.h - HANDLE_INSET);
     return {
-      x: Math.min(Math.max(x, HANDLE_INSET), maxX),
+      x: Math.min(Math.max(x, HANDLE_EDGE_X), maxX),
       y: Math.min(Math.max(y, HANDLE_INSET), maxY),
     };
   }
@@ -990,13 +1018,18 @@ export function MusicSidebar() {
     // 拖动结束后的那次 click 不该顺手打开抽屉（movedRef 在 pointerdown 时已复位）
     if (movedRef.current) return;
     interactedRef.current = true;
+    // 访客自己点开的，就是模态：铺遮罩、点空白处收起
+    setPanelModal(true);
     setPanelOpen(true);
   }
 
   if (!m.panelOpen) {
-    // 停靠位置：左侧贴左、右侧贴右；垂直位置由 bottom 换算成左上角坐标
+    // 停靠位置：左侧贴左、右侧贴右（水平都是 0）；垂直位置由 bottom 换算成左上角坐标
     const rest = {
-      x: placement.side === "left" ? HANDLE_INSET : Math.max(HANDLE_INSET, (viewport?.w ?? 0) - size.w - HANDLE_INSET),
+      x:
+        placement.side === "left"
+          ? HANDLE_EDGE_X
+          : Math.max(HANDLE_EDGE_X, (viewport?.w ?? 0) - size.w - HANDLE_EDGE_X),
       y: Math.max(HANDLE_INSET, (viewport?.h ?? 0) - placement.bottom - size.h),
     };
     const pos = dragPos ?? rest;
@@ -1051,8 +1084,12 @@ export function MusicSidebar() {
 
   return (
     <>
-      {/* 遮罩：点空白处收起（抽屉的通用预期）。层级 56 低于音乐列表弹窗(200) */}
-      <div className="music-drawer-scrim" onClick={() => m.setPanelOpen(false)} aria-hidden />
+        {/* 遮罩：点空白处收起（抽屉的通用预期）。层级 56 低于音乐列表弹窗(200)。
+            站点配置成「默认展开」时它是常驻面板，不铺遮罩 ——
+            否则访客必须先点掉遮罩才能操作网站，一个默认展开的播放器不该有这种代价 */}
+        {m.panelModal && (
+          <div className="music-drawer-scrim" onClick={() => m.setPanelOpen(false)} aria-hidden />
+        )}
       <section className="music-drawer music-dark-scope" data-side={placement.side} aria-label="音乐控制">
         <div className="music-drawer-head">
           <span className="music-drawer-title">正在播放</span>
@@ -1155,12 +1192,17 @@ export function MusicSidebar() {
 export default function MusicProvider({
   children,
   musicPanelStyle,
+  musicSidebarDefault,
   ...props
 }: UseAudioPlayerProps & {
   children: React.ReactNode;
   /** 站点默认的音乐面板风格（后台配置；访客可在面板里本机覆盖） */
   musicPanelStyle?: string;
+  /** 站点配置的音乐侧栏默认状态（后台配置）：demo / expand / collapse */
+  musicSidebarDefault?: string;
 }) {
+  // 站点配置先收敛一次：脏值不会把侧栏卡在一个说不通的状态上
+  const sidebarDefault = parseMusicSidebarDefault(musicSidebarDefault);
   // 面板风格与偏好都留在本机：站点默认来自后台配置，访客可在面板里覆盖（localStorage）。
   // 首屏先按站点默认 + 默认偏好渲染，挂载后再读本机值
   // （服务端渲染读不到 localStorage，首屏直接读会导致 hydration 不一致而闪烁）。
@@ -1208,6 +1250,8 @@ export default function MusicProvider({
   } = useAudioPlayer({ ...props, autoplay: prefs.autoplay, prefs, prefsReady });
 
   const [panelOpen, setPanelOpen] = useState(false);
+  /** 抽屉是否铺遮罩：访客自己点开时铺（模态），站点「默认展开」不铺（常驻面板） */
+  const [panelModal, setPanelModal] = useState(true);
   const [boxOpen, setBoxOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -1429,6 +1473,9 @@ export default function MusicProvider({
     audioEl,
     panelOpen,
     setPanelOpen,
+    panelModal,
+    setPanelModal,
+    sidebarDefault,
     boxOpen,
     setBoxOpen,
     settingsOpen,
@@ -1494,6 +1541,8 @@ interface MusicProviderWrapperProps {
   musicAutoplay: boolean;
   /** 站点默认的音乐面板风格（透传给 Provider） */
   musicPanelStyle?: string;
+  /** 站点配置的音乐侧栏默认状态（透传给 Provider）：demo / expand / collapse */
+  musicSidebarDefault?: string;
   children: ReactNode;
 }
 
@@ -1503,6 +1552,7 @@ export function MusicProviderLazy({
   songId,
   musicAutoplay,
   musicPanelStyle,
+  musicSidebarDefault,
   children,
 }: MusicProviderWrapperProps) {
   return (
@@ -1512,6 +1562,7 @@ export function MusicProviderLazy({
       songId={songId}
       autoplay={musicAutoplay}
       musicPanelStyle={musicPanelStyle}
+      musicSidebarDefault={musicSidebarDefault}
     >
       {children}
     </MusicProviderLazyComp>
