@@ -2,17 +2,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 /**
- * 天气接口新增的 `region` 字段（供前台欢迎通知复用访客地域，省掉一次请求）。
+ * 天气接口的 `region` 字段（供前台欢迎通知复用访客地域，省掉一次请求）。
  *
- * 关键不变式：**region 与 city 同源**。只有这次天气确实按访客 IP 定位过才会带上 region，
- * 而那时候 city 也是访客的城市。凡是天气真正落到「站主配置的固定城市」的路径都不得返回
- * region —— 否则会把站主的位置当成访客的位置展示出去，这是本文件最要紧的一条。
+ * 关键不变式：**region 只在「确实拿到访客自己的公网 IP」且「定位来自腾讯 IP 库」时才出现**。
+ * 两个条件缺一不可：
+ * - 拿不到访客 IP 时，定位会退化成按**服务器出口 IP** 定位，那是服务器的城市，
+ *   展示给访客就是错的（而且看起来像个真实城市，比"未知"更容易误导）；
+ * - 高德的 IP 定位常把地级市归到省会，拿它当地域标签比本地离线库更不准。
+ * 任一不满足就必须不返回 region，让前台退回 /api/visitor/location（ip2region）。
+ * 凡是天气真正落到「站主配置的固定城市」的路径同样不得返回 —— 那是站主的位置。
  */
 
 const profileMock = vi.fn();
+/** 访客 IP 可逐用例切换：默认给一个公网 IPv4，另有用例专门给私网地址 */
+const env = vi.hoisted(() => ({ ip: "203.0.113.45" }));
 
 vi.mock("@/lib/db", () => ({ prisma: { profile: { findFirst: () => profileMock() } } }));
-vi.mock("@/lib/server", () => ({ getClientIp: () => "203.0.113.45" }));
+vi.mock("@/lib/server", () => ({ getClientIp: () => env.ip }));
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
@@ -78,6 +84,7 @@ const decodedCalls = () => calls.map((u) => decodeURIComponent(u));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  env.ip = "203.0.113.45";
   stubApis();
 });
 
@@ -86,15 +93,15 @@ afterEach(() => {
 });
 
 describe("天气接口 · 访客地域字段", () => {
-  it("未配置固定城市：按访客 IP 定位，顺带返回地域标签", async () => {
+  it("高德自动定位：拿到 city 但没有 region —— 高德的 IP 定位常把地级市归到省会，不能当地域标签", async () => {
     profileMock.mockResolvedValue(baseProfile({ amapKey: "k" }));
 
     const { status, body } = await getWeather();
 
     expect(status).toBe(200);
     expect(body.city).toBe("杭州市");
-    expect(body.region).toBe("浙江省 杭州市");
-    // 确实走了 IP 定位，而不是凭空拼出来的
+    expect(body.region, "高德定位不作为访客地域，前台应退回本地离线库").toBeUndefined();
+    // 定位本身照走（天气查询需要 adcode），只是不产出地域标签
     expect(calls.some((u) => u.includes("restapi.amap.com/v3/ip"))).toBe(true);
   });
 
@@ -118,6 +125,31 @@ describe("天气接口 · 访客地域字段", () => {
     expect(body.city).toBe("北京市");
     // province=北京市 / city=北京市 → 只留一个，不是"北京市 北京市"
     expect(body.region).toBe("北京市");
+  });
+
+  it("拿不到访客公网 IP（私网/代理没转发）时不得返回 region —— 否则显示的是服务器所在城市", async () => {
+    // 私网地址会被 pickLocatableIp 拦掉，于是这次定位退化成"按请求来源（服务器出口）IP"，
+    // 定位结果其实是服务器的城市：天气照样能查（city 会显示成北京市），但它绝不能当访客地域
+    env.ip = "192.168.1.5";
+    profileMock.mockResolvedValue(baseProfile({ txWeatherKey: "t", txWeatherSk: "s" }));
+
+    const { status, body } = await getWeather();
+
+    expect(status).toBe(200);
+    expect(body.city).toBe("北京市"); // 定位确实发生了
+    expect(body.region, "服务器所在城市不能当成访客地域").toBeUndefined();
+    // 定位请求里不能带这个私网 IP（带了上游必然失败），确认走的是"不传 ip"的分支
+    expect(decodedCalls().some((u) => u.includes("ip=192.168.1.5"))).toBe(false);
+  });
+
+  it("同一个坑：高德链路 + 私网 IP 同样不返回 region", async () => {
+    env.ip = "10.0.0.7";
+    profileMock.mockResolvedValue(baseProfile({ amapKey: "k" }));
+
+    const { body } = await getWeather();
+
+    expect(body.city).toBe("杭州市");
+    expect(body.region).toBeUndefined();
   });
 
   it("混合模式配置了固定城市：跳过定位，不返回 region", async () => {

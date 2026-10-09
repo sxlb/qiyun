@@ -41,13 +41,17 @@ interface WeatherResult {
   /**
    * 访客地域标签（如"广东省 深圳市"）。
    *
-   * 只在**这次天气是按访客 IP 定位**时才带上：要么没配固定城市（自动定位），
-   * 要么配置的数据源本身就是 IP 定位（腾讯 Key 版）。此时 `city` 也是访客的城市，
-   * 两者同源 —— 前台欢迎通知复用它，从而省掉向 /api/visitor/location 的第二次请求
-   * （那里是本地离线库，精度不如腾讯/高德）。
+   * 只在**两个条件同时满足**时才带上：
+   * 1. 这次定位用的是访客自己的公网 IP（locIp 非空）—— 拿不到访客 IP 时会退化成
+   *    「按服务器出口 IP 定位」，那地方是服务器的城市，展示给访客就是错的；
+   * 2. 定位来自腾讯位置服务的 IP 库 —— 它是这几条链路里精度最高的（境内可到区县）。
+   *    高德的 IP 定位刻意不用作访客地域：它常把地级市归到省会，拿它当地域标签反而更不准。
+   *
+   * 两个条件任一不满足就不返回 `region`，前台欢迎通知会退回本地离线库
+   * （/api/visitor/location，ip2region）。这正是「宁可粗一点，也不能显示错的」的取舍。
    *
    * 反过来，凡是天气查询真正落到「站主配置的固定城市」的路径（高德/腾讯免费版/混合模式配了城市），
-   * 都不会返回它：那是站主的位置，展示给访客就是错的。
+   * 也都不会返回它：那是站主的位置，展示给访客就是错的。
    */
   region?: string;
 }
@@ -171,8 +175,6 @@ async function fetchAmapWeather(
   secret: string
 ): Promise<WeatherResult> {
   let cityCode = city.trim();
-  // 按访客 IP 定位时顺带解析出的地域标签；配置了固定城市时保持空串（那是站主的城市）
-  let region = "";
   // 高德天气接口必须传 city（adcode），否则返回 20000 INVALID_PARAMS：
   // 未指定城市时尝试 IP 定位自动获取 adcode
   if (!cityCode) {
@@ -201,9 +203,9 @@ async function fetchAmapWeather(
           // 用省级 adcode 查天气只会返回省份（页面显示「浙江省」而非「杭州市」）
           const query = resolveAmapCityQuery(ipData);
           if (query) {
+            // 只取查询参数，**不带地域标签**：高德的 IP 定位常把地级市归到省会，
+            // 拿它当访客地域比本地离线库更不准（详见 WeatherResult.region 的说明）
             cityCode = query;
-            // 定位成功顺手把地域标签带出去，前台欢迎通知直接用，不必再查一次
-            region = composeRegionLabel(ipData.province, ipData.city);
           } else {
             // 高德对识别不了的来源 IP 会返回 status=1 但字段全空（实测），留痕便于排查
             console.warn(`[weather] 高德 IP 定位无结果（ip=${locIp || "未传，按来源定位"}）`);
@@ -223,7 +225,7 @@ async function fetchAmapWeather(
       "高德无法定位访客 IP 且未配置固定城市（可在后台「天气设置 → 城市」填写城市名，或改用腾讯 Key 版数据源）"
     );
   }
-  return amapWeatherQuery(amapKey, cityCode, secret, "", region);
+  return amapWeatherQuery(amapKey, cityCode, secret, "");
 }
 
 /** 高德实况天气查询（cityCode 为 adcode 或城市名；amap 源与混合模式共用）
@@ -361,8 +363,9 @@ async function tencentIpLocate(
   // 展示用名称取市级（如「盐城市」）；只有区县/省份时逐级回退
   const city = ad.city || ad.district || ad.province || "未知地区";
   // 地域标签是「省 + 更细一级」，与上面展示名的回退口径不同（展示名可能直接落到省份上），
-  // 所以单独组合；省市同名（直辖市）由 composeRegionLabel 去重
-  const region = composeRegionLabel(ad.province, ad.city || ad.district);
+  // 所以单独组合；省市同名（直辖市）由 composeRegionLabel 去重。
+  // 限定必须带着访客自己的 IP：locIp 为空时这次定位的是服务器自己，它的省市不能当成访客地域。
+  const region = locIp ? composeRegionLabel(ad.province, ad.city || ad.district) : "";
   return { adcode, city, region };
 }
 
