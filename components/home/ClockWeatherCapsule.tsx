@@ -1,49 +1,28 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { fetchWeatherShared, type WeatherPayload } from "@/lib/weatherClient";
 
 // ===== 天气数据加载 Hook =====
-interface WeatherData {
-  city?: string;
-  weather?: string;
-  temperature?: string;
-  winddirection?: string;
-  windpower?: string;
-}
-
-function useWeather(): { data: WeatherData; error?: string } {
-  const [data, setData] = useState<WeatherData>({});
+// 走共享层（lib/weatherClient.ts）：欢迎通知也要用这次请求顺带解析出的访客地域，
+// 两处共用同一次请求而不是各发一次。
+function useWeather(): { data: WeatherPayload; error?: string } {
+  const [data, setData] = useState<WeatherPayload>({});
   const [error, setError] = useState<string>();
 
   useEffect(() => {
     let disposed = false;
-    // 每次请求须用独立的 AbortController 与超时定时器
-    // 若复用同一个：挂载满 8 秒后必然 aborted，之后轮询 fetch 会立刻抛 AbortError 被吞掉，天气永不刷新
-    let inflight: AbortController | null = null;
 
     async function load() {
-      inflight = new AbortController();
-      const timeoutTimer = setTimeout(() => inflight?.abort(), 8000);
-      try {
-        const res = await fetch("/api/weather", { signal: inflight.signal });
-        if (disposed) return;
-        if (res.ok) {
-          const json = await res.json();
-          if (!disposed) {
-            setData(json);
-            // 恢复成功要清掉上一次的错误，否则失败过的提示会一直挂着
-            setError(undefined);
-          }
-        } else {
-          setError("天气数据获取失败");
-        }
-      } catch (e) {
-        // abort signal 触发时忽略错误
-        if (e instanceof Error && e.name === "AbortError") return;
-        if (!disposed) setError("网络错误");
-      } finally {
-        clearTimeout(timeoutTimer);
+      const { data: next, error: err } = await fetchWeatherShared();
+      // 过期结果（组件已卸载）不写进 state
+      if (disposed) return;
+      if (next) {
+        setData(next);
+        // 恢复成功要清掉上一次的错误，否则失败过的提示会一直挂着
+        setError(undefined);
       }
+      if (err) setError(err);
     }
 
     load();
@@ -51,9 +30,8 @@ function useWeather(): { data: WeatherData; error?: string } {
     return () => {
       disposed = true;
       clearInterval(timer);
-      // 这里**不** abort 在途请求：开发模式的 StrictMode 会「挂载→清理→再挂载」，
-      // 取消会把第一次请求打断，控制台必然出现 net::ERR_ABORTED。
-      // 过期结果已由 disposed 拦住不写进 state，请求自身也有 8s 超时定时器兜底。
+      // 这里**不**需要处理在途请求：请求在共享层发起，不绑定本组件生命周期，
+      // 因此开发模式 StrictMode 的「挂载→清理→再挂载」不会把它打断
     };
   }, []);
 

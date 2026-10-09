@@ -1,15 +1,17 @@
 import { NextResponse, NextRequest } from "next/server";
 import { getClientIp } from "@/lib/server";
 import { lookupIpRegion, type RegionInfo } from "@/lib/geo";
+import { composeRegionLabel } from "@/lib/region-label";
 
 export const dynamic = "force-dynamic";
 
 /** 访客地域展示标签：国内 → 省+市（"广东省 深圳市"，去掉冗余的"中国"前缀）；
- *  海外 → 国家（"日本"）。内网/未知 → 空串（前端不展示地域）。 */
+ *  海外 → 国家（"日本"）。内网/未知 → 空串（前端不展示地域）。
+ *  省市同名（直辖市）由 composeRegionLabel 去重，避免显示成"北京市 北京市"。 */
 function visitorRegion(info: RegionInfo): string {
   if (info.internal) return "";
   const isChina = info.country === "中国" || info.country === "中国香港" || info.country === "中国澳门" || info.country === "中国台湾";
-  if (isChina) return [info.province, info.city].filter(Boolean).join(" ");
+  if (isChina) return composeRegionLabel(info.province, info.city);
   return info.country || info.province || info.city || "";
 }
 

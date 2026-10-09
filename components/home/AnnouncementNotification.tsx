@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Megaphone, Pin, X, BellRing } from "lucide-react";
+import { fetchWeatherShared } from "@/lib/weatherClient";
 
 interface Announcement {
   id: number;
@@ -56,6 +57,21 @@ async function fetchVisitorLocation(): Promise<string> {
 }
 
 /**
+ * 获取访客地域：**优先复用天气接口**那次请求顺带解析出的 region。
+ *
+ * 天气接口在「未配置固定城市」时会按访客 IP 定位（腾讯/高德，境内精度优于本地离线库），
+ * 而这次请求本来就因为时钟卡片要发，所以先问它，命中就省掉一次请求。
+ *
+ * 回退到本地离线库的四种情况：配置了固定城市（那时 region 是站主的城市，不能给访客看）、
+ * 未配置天气 Key、被限流（429）、海外或内网 IP（定位接口给不出结果）。
+ */
+async function fetchVisitorRegion(): Promise<string> {
+  const { data } = await fetchWeatherShared();
+  if (data?.region) return data.region;
+  return fetchVisitorLocation();
+}
+
+/**
  * 站点通知居中弹窗（欢迎 + 公告合并为同一容器框）：
  * - 半透明遮罩 + 居中卡片：欢迎语（若启用）与公告列表自上而下排列在同一容器内，风格统一。
  * - 待全屏 LoadingScreen 收起后再弹出，避免与加载动画重叠。
@@ -90,19 +106,22 @@ export default function AnnouncementNotification({
   // 有内容时才预取 & 展示（welcomeText 上方已计算；公告加载完会更新 items→hasContent）
   const hasContent = welcomeText.length > 0 || items.length > 0;
 
-  // 立即并行预取访客信息（浏览器 + IP 归属地）与公告，组件挂载即发起，
-  // 而非等弹窗 visible 后再发——消除展示时的延迟等待
+  // 立即预取公告与访客信息（浏览器 + 地域），组件挂载即发起，
+  // 而非等弹窗 visible 后再发——消除展示时的延迟等待。
+  //
+  // 两者刻意各自独立落地、不再放进同一个 Promise.all：公告决定弹窗是否出现（hasContent），
+  // 而"来自 X · Y"只是欢迎卡上的一行文案。合在一起会让地域的等待（天气那次调用要打外网，
+  // 最长 8 秒）拖住整个弹窗；拆开后地址晚到就晚补，弹窗该弹就弹。
   useEffect(() => {
     let cancelled = false;
+
     void (async () => {
-      const [browser, location, ann] = await Promise.all([
-        Promise.resolve(getBrowserName()),
-        fetchVisitorLocation(),
-        // 单独并行拉公告（与访客信息互不阻塞）
-        fetch("/api/announcements/public", { cache: "no-store", signal: AbortSignal.timeout(8000) })
-          .then((r) => (r.ok ? r.json() : []))
-          .catch(() => [] as Announcement[]),
-      ]);
+      const ann = await fetch("/api/announcements/public", {
+        cache: "no-store",
+        signal: AbortSignal.timeout(8000),
+      })
+        .then((r) => (r.ok ? r.json() : []))
+        .catch(() => [] as Announcement[]);
       if (cancelled) return;
       let dismissed: number[] = [];
       try {
@@ -111,9 +130,15 @@ export default function AnnouncementNotification({
         dismissed = [];
       }
       setItems(Array.isArray(ann) ? ann.filter((a: Announcement) => !dismissed.includes(a.id)) : []);
-      const parts = [browser, location].filter(Boolean);
+    })();
+
+    void (async () => {
+      const region = await fetchVisitorRegion();
+      if (cancelled) return;
+      const parts = [getBrowserName(), region].filter(Boolean);
       setVisitorInfo(parts.length > 0 ? `来自 ${parts.join(" · ")}` : "");
     })();
+
     return () => {
       cancelled = true;
     };
@@ -187,120 +212,64 @@ export default function AnnouncementNotification({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[85] flex items-center justify-center p-4"
-      role="dialog"
-      aria-modal="false"
-      aria-label={title}
-    >
+    <div className="notice-scrim" role="dialog" aria-modal="false" aria-label={title}>
       {/* 遮罩：仅视觉分隔，点击不关闭（关闭需明确操作「我知道了」/ ×） */}
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" aria-hidden />
-      <div
-        className="animate-notice-center relative flex max-h-[70vh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-white/20 bg-gradient-to-br from-[#1b2440]/95 via-[#161d33]/92 to-[#101627]/95 shadow-2xl shadow-black/50 backdrop-blur-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* 顶部强调色渐变条 */}
-        <div
-          className="pointer-events-none absolute inset-x-0 top-0 h-[3px]"
-          style={{
-            background:
-              "linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--accent-color, #7dd3fc) 90%, transparent) 50%, transparent 100%)",
-          }}
-        />
-        {/* 头部 */}
-        <div className="shrink-0 border-b border-white/10 px-5 py-4">
-          <div className="flex items-center gap-3">
-            <span
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
-              style={{
-                backgroundColor: "color-mix(in srgb, var(--accent-color, #7dd3fc) 22%, transparent)",
-                color: "var(--accent-color, #7dd3fc)",
-              }}
-            >
-              <HeadIcon className="h-5 w-5" />
-            </span>
-            <h2 className="min-w-0 flex-1 text-[15px] font-semibold text-white">{title}</h2>
-            <button
-              type="button"
-              onClick={closeAll}
-              aria-label="关闭全部通知"
-              className="shrink-0 rounded-lg border border-white/10 bg-white/10 p-1.5 text-white/60 transition-all hover:bg-white/20 hover:text-white active:scale-95"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
+      <div className="notice-backdrop" aria-hidden />
+      {/* 外观全部交给 globals.css 的 .notice-* 组件类：玻璃三要素（--card-alpha /
+          --glass-blur / --accent-color）与圆角投影走站内令牌，改后台配色弹窗自动跟随 */}
+      <div className="notice-card animate-notice-center">
+        {/* 顶部强调色发丝线 */}
+        <span className="notice-hairline" aria-hidden />
 
-        {/* 内容：欢迎卡固定展示 + 公告列表独立滚动（内容多时不遮挡欢迎卡与底部按钮） */}
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {/* 头部 */}
+        <header className="notice-head">
+          <span className="notice-head-icon">
+            <HeadIcon className="h-[18px] w-[18px]" />
+          </span>
+          <h2 className="notice-title">{title}</h2>
+          <button type="button" onClick={closeAll} aria-label="关闭全部通知" className="notice-close">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </header>
+
+        {/* 内容：欢迎语固定展示 + 公告列表独立滚动（内容多时不遮挡欢迎语与底部按钮） */}
+        <div className="notice-body">
           {welcomeText && (
-            <div
-              className={`shrink-0 px-5 pt-4 ${
-                items.length > 0 ? "border-b border-white/10 pb-3" : ""
-              }`}
-            >
-              <div className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/5 p-3.5">
-                <span
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-                  style={{
-                    backgroundColor:
-                      "color-mix(in srgb, var(--accent-color, #7dd3fc) 18%, transparent)",
-                    color: "var(--accent-color, #7dd3fc)",
-                  }}
-                >
-                  <BellRing className="h-4 w-4" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="break-words text-[14px] leading-relaxed text-white/90">
-                    {welcomeText}
-                  </p>
-                  {visitorInfo && <p className="mt-1 text-[12px] text-white/50">{visitorInfo}</p>}
-                </div>
-              </div>
+            <div className="notice-welcome">
+              <p className="notice-welcome-text">{welcomeText}</p>
+              {visitorInfo && <p className="notice-visitor">{visitorInfo}</p>}
             </div>
           )}
 
           {items.length > 0 && (
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
+            <div className="notice-list">
               {items.map((a) => (
-            <div key={a.id} className="rounded-xl border border-white/10 bg-white/5 p-3.5">
-              <div className="flex items-center gap-1.5 pr-1">
-                <span className="text-[13px] font-semibold text-white/90">{a.title}</span>
-                {a.pinned && <Pin className="h-3 w-3 shrink-0 text-amber-300/90" />}
-                <button
-                  type="button"
-                  onClick={() => dismissOne(a.id)}
-                  aria-label={`关闭公告：${a.title}`}
-                  className="ml-auto rounded p-0.5 text-white/40 transition hover:bg-white/10 hover:text-white/80"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-              <p className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-white/70">
-                {a.content}
-              </p>
-            </div>
+                <div key={a.id} className="notice-item">
+                  <div className="notice-item-head">
+                    <span className="notice-item-title">{a.title}</span>
+                    {a.pinned && <Pin className="notice-pin h-3 w-3" />}
+                    <button
+                      type="button"
+                      onClick={() => dismissOne(a.id)}
+                      aria-label={`关闭公告：${a.title}`}
+                      className="notice-item-close"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                  <p className="notice-item-text">{a.content}</p>
+                </div>
               ))}
             </div>
           )}
         </div>
 
         {/* 底部主操作：我知道了 */}
-        <div className="shrink-0 border-t border-white/10 px-5 py-4">
-          <button
-            type="button"
-            onClick={closeAll}
-            className="w-full rounded-xl py-2.5 text-sm font-semibold text-[#0b1220] transition-all duration-200 hover:brightness-105 active:scale-[0.99]"
-            style={{
-              background:
-                "linear-gradient(135deg, color-mix(in srgb, var(--accent-color, #7dd3fc) 80%, white) 0%, var(--accent-color, #7dd3fc) 100%)",
-              boxShadow:
-                "0 8px 20px -8px color-mix(in srgb, var(--accent-color, #7dd3fc) 75%, transparent)",
-            }}
-          >
+        <footer className="notice-foot">
+          <button type="button" onClick={closeAll} className="notice-primary">
             我知道了
           </button>
-        </div>
+        </footer>
       </div>
     </div>
   );

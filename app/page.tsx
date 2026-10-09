@@ -251,10 +251,10 @@ export default async function Home() {
               <div className="flex w-full flex-col gap-5 md:w-1/2 md:max-w-[500px] lg:gap-7">
                 {/* 功能卡片组：一言 + 时钟天气（≥880px 起并排以适配矮视口单屏；更窄时堆叠避免时钟过窄） */}
                 <div className="grid grid-cols-1 gap-4 min-[880px]:grid-cols-2 min-[880px]:gap-5 lg:gap-6">
-                  {/* 一言 / 音乐控制面板（hover 或"打开音乐"按钮切换，对齐 home）。
-                      窄于 880px 时这一格独占一行，行高由内容决定：一言约 88px，
-                      音乐面板的紧凑布局约 84px（见 MusicPlayer.tsx 的 <880px 分支）。
-                      给一个共同的最小高度锁住行高，两者切换时下方卡片就不会被推移。 */}
+                  {/* 一言卡片。
+                      音乐控制已搬到右下角的音乐侧栏（MusicSidebar，由 MusicProvider 常驻渲染），
+                      这一格不再与音乐面板互换 —— 原来为了「切换时不推移下方卡片」把音乐面板
+                      压到 84px 高，窄屏下信息挤成一团，那个约束随之一并消失。 */}
                   <div className="min-h-[90px]">
                     <MusicCardLazy hitokotoType={d.hitokotoType} />
                   </div>

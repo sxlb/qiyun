@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import AnnouncementNotification from "@/components/home/AnnouncementNotification";
+import { resetWeatherShare } from "@/lib/weatherClient";
 
 /**
  * 欢迎/公告弹窗的唤出时序回归。
@@ -63,6 +64,8 @@ beforeEach(() => {
   localStorage.clear();
   // 只替换与用例相关的两个定时器：Date / rAF 等保持真实，避免影响 React 的调度
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  // 天气取数是模块级共享缓存（地域优先复用它）：不重置会串场
+  resetWeatherShare();
   stubFetch();
 });
 
@@ -202,5 +205,69 @@ describe("关闭行为", () => {
       vi.advanceTimersByTime(10_000);
     });
     expect(dialogOpen()).toBe(false);
+  });
+});
+
+describe("访客地域：优先复用天气那次定位，取不到再回退离线库", () => {
+  /** 记录出站请求，用于断言"省掉了哪一次请求" */
+  function stubTrackingFetch(handlers: { weather: () => Response; location?: () => Response }) {
+    const seen: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        seen.push(url);
+        if (url.includes("/api/announcements/public")) return jsonResponse([]);
+        if (url.includes("/api/weather")) return handlers.weather();
+        return handlers.location ? handlers.location() : jsonResponse({ region: "" });
+      })
+    );
+    return seen;
+  }
+
+  it("天气返回了 region：直接用它，不再请求 /api/visitor/location", async () => {
+    const loader = mountLoader();
+    const seen = stubTrackingFetch({ weather: () => jsonResponse({ city: "深圳市", region: "广东省 深圳市" }) });
+
+    renderNotice();
+    removeLoader(loader);
+    await act(async () => {});
+    await act(async () => {});
+
+    expect(screen.getByText(/广东省 深圳市/)).toBeTruthy();
+    expect(seen.some((u) => u.includes("/api/visitor/location"))).toBe(false);
+    expect(seen.filter((u) => u.includes("/api/weather"))).toHaveLength(1);
+  });
+
+  it("天气没给 region（配了固定城市 / 未配 Key 等）：回退到离线库接口", async () => {
+    const loader = mountLoader();
+    const seen = stubTrackingFetch({
+      // 配了固定城市时天气没有 region，且 city 是站主的城市，不能拿来当地域
+      weather: () => jsonResponse({ city: "成都市" }),
+      location: () => jsonResponse({ region: "浙江省 杭州市" }),
+    });
+
+    renderNotice();
+    removeLoader(loader);
+    await act(async () => {});
+    await act(async () => {});
+
+    expect(screen.getByText(/浙江省 杭州市/)).toBeTruthy();
+    expect(seen.some((u) => u.includes("/api/visitor/location"))).toBe(true);
+    // 站主的城市不能被当成访客的地域展示出去
+    expect(screen.queryByText(/成都市/)).toBeNull();
+  });
+
+  it("两处都拿不到地域时，欢迎语只显示浏览器信息（不影响弹窗）", async () => {
+    const loader = mountLoader();
+    stubTrackingFetch({ weather: () => jsonResponse({}), location: () => jsonResponse({ region: "" }) });
+
+    renderNotice();
+    removeLoader(loader);
+    await act(async () => {});
+    await act(async () => {});
+
+    expect(dialogOpen()).toBe(true);
+    expect(screen.queryByText(/来自/)).toBeNull();
   });
 });

@@ -1240,6 +1240,517 @@
   }
 }
 
+/* ============================================
+   站点通知弹窗（欢迎 / 公告）
+   - 材质与站内卡片同源：纯黑玻璃 + 白字。首页壁纸不随明暗主题变化，卡片语言
+     也刻意不翻转（见 :root 中 --scrollbar-thumb 的同类注记），所以弹窗**不做**浅色版，
+     否则会变成整页唯一的浅色块，与周围的深色玻璃断裂。
+   - 「适配主题」= 全部读站内令牌：--card-alpha / --glass-blur（后台两个滑杆）、
+     --accent-color（强调色）、--radius-xl / --shadow-5（圆角与投影）。改后台配色，弹窗跟着变。
+   - 底色比 .card-glass 再实 0.34：弹窗要压住壁纸花纹，正文才读得清（同 .social-qr-card 的思路）。
+   ============================================ */
+@layer components {
+  /* 遮罩铺满视口：首页是「页面不滚动 + 容器内滚动」的单屏外壳，只有 fixed 才不被裁掉 */
+  .notice-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 85;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+  }
+  .notice-backdrop {
+    position: absolute;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.42);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+  }
+  .notice-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 28rem;
+    /* 双重上限：矮屏靠 vh 兜住，高屏不让它长得像一篇文档 */
+    max-height: min(70vh, 34rem);
+    max-height: min(70dvh, 34rem);
+    overflow: hidden;
+    border-radius: var(--radius-xl);
+    background-color: rgba(0, 0, 0, calc(var(--card-alpha, 0.35) + 0.34));
+    backdrop-filter: blur(calc(var(--glass-blur, 16px) + 6px)) saturate(140%);
+    -webkit-backdrop-filter: blur(calc(var(--glass-blur, 16px) + 6px)) saturate(140%);
+    /* --shadow-5 自带顶部 1px 内高光：省掉一圈白色描边，材质才与站内卡片一致 */
+    box-shadow: var(--shadow-5);
+  }
+  /* 顶部强调色发丝线：只做一次强调，两端衰减到透明，不做通栏实线 */
+  .notice-hairline {
+    position: absolute;
+    inset-inline: 0;
+    top: 0;
+    height: 2px;
+    pointer-events: none;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in srgb, var(--accent-color, #7dd3fc) 70%, transparent) 50%,
+      transparent 100%
+    );
+  }
+  .notice-head {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .notice-head-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: var(--radius-lg);
+    /* 16%：认得出是强调色，又不与底部主按钮抢焦点（原先 22% 三处抢色） */
+    background-color: color-mix(in srgb, var(--accent-color, #7dd3fc) 16%, transparent);
+    color: var(--accent-color, #7dd3fc);
+  }
+  .notice-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: rgba(255, 255, 255, 0.95);
+  }
+  .notice-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    padding: 0.4rem;
+    border: 0;
+    border-radius: var(--radius-lg);
+    background-color: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.6);
+    cursor: pointer;
+    transition: background-color 0.2s ease, color 0.2s ease, transform 0.15s ease;
+  }
+  .notice-close:hover {
+    background-color: rgba(255, 255, 255, 0.16);
+    color: #fff;
+  }
+  .notice-close:active {
+    transform: scale(0.94);
+  }
+  /* 内容区：欢迎语固定，公告列表独立滚动（内容多时都不遮挡底部按钮） */
+  .notice-body {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+  /* 欢迎语：一段正文，不给它图标 —— 头部已经有一个强调色图标块了，
+     再加一个同款色块就成了两块蓝色方块纵向排队，标题与内容分不出层级。
+     这里只留文字（左边缘与头部图标块对齐），强调色交给「头部图标 + 公告竖条 + 主按钮」三处。 */
+  .notice-welcome {
+    flex-shrink: 0;
+    padding: 0.95rem 1.25rem;
+  }
+  .notice-welcome:not(:last-child) {
+    padding-bottom: 0.85rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .notice-welcome-text {
+    font-size: 0.875rem;
+    line-height: 1.75;
+    color: rgba(255, 255, 255, 0.92);
+    overflow-wrap: break-word;
+  }
+  .notice-visitor {
+    margin-top: 0.25rem;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.5);
+  }
+  .notice-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0.85rem 1.25rem 1rem;
+    /* 底部渐隐：公告多到滚动时，最后一行是被「切」在页脚上的，
+       没有这个提示就像内容被截断了。滚动到尽头时只轻微淡化最后一行底边，可接受。 */
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), transparent 100%);
+  }
+  /* 公告条目：左侧一条强调竖条代替整圈描边，条目之间不再靠边框分隔 */
+  .notice-item {
+    position: relative;
+    padding: 0.7rem 0.55rem 0.7rem 0.85rem;
+    border-radius: var(--radius-lg);
+    background-color: rgba(255, 255, 255, 0.04);
+    transition: background-color 0.2s ease;
+  }
+  .notice-item:hover {
+    background-color: rgba(255, 255, 255, 0.07);
+  }
+  .notice-item::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.7rem;
+    bottom: 0.7rem;
+    width: 2px;
+    border-radius: 2px;
+    background-color: color-mix(in srgb, var(--accent-color, #7dd3fc) 55%, transparent);
+  }
+  .notice-item-head {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding-right: 0.25rem;
+  }
+  .notice-item-title {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+  }
+  .notice-pin {
+    flex-shrink: 0;
+    color: #fcd34d;
+  }
+  .notice-item-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    padding: 0.125rem;
+    border: 0;
+    border-radius: var(--radius-xs);
+    background: none;
+    color: rgba(255, 255, 255, 0.4);
+    cursor: pointer;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+  .notice-item-close:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.8);
+  }
+  .notice-item-text {
+    margin-top: 0.25rem;
+    font-size: 0.8125rem;
+    line-height: 1.7;
+    color: rgba(255, 255, 255, 0.7);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+  }
+  .notice-foot {
+    flex-shrink: 0;
+    padding: 0.95rem 1.25rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .notice-primary {
+    width: 100%;
+    /* 固定高度而非 padding 撑开：按钮在多行/移动端高度恒定 */
+    height: 2.5rem;
+    border: 0;
+    border-radius: var(--radius-lg);
+    font-size: 0.875rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: #0b1220;
+    cursor: pointer;
+    /* 全站唯一的实心强调色块：视线最终落点 */
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent-color, #7dd3fc) 82%, white) 0%,
+      var(--accent-color, #7dd3fc) 100%
+    );
+    box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--accent-color, #7dd3fc) 70%, transparent);
+    transition: filter 0.2s ease, transform 0.15s ease;
+  }
+  .notice-primary:hover {
+    filter: brightness(1.06);
+  }
+  .notice-primary:active {
+    transform: scale(0.99);
+  }
+  /* 键盘可达：三个可点元素共用同一圈强调色焦点环 */
+  .notice-close:focus-visible,
+  .notice-item-close:focus-visible,
+  .notice-primary:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent-color, #7dd3fc) 80%, transparent);
+    outline-offset: 2px;
+  }
+}
+
+/* ============================================
+   音乐侧栏（右下常驻圆钮 + 展开抽屉）
+   - 音乐控制从「右栏功能卡的一格」搬成右下角浮层：一言卡片不再是音乐面板的宿主。
+   - 为什么不做常驻竖栏：右侧没有余量 —— 内容容器 max-w-6xl(1152px) + md:px-6，
+     视口 1280px 时左右各只剩 64px，1024px 时只剩 24px，56px 的常驻竖栏会直接
+     压住时钟卡 / 导航卡，而右栏正是页面主体。收起态只占 40px 圆一点，不占布局。
+   - fixed 定位不受单屏外壳影响：<main> 上没有 transform / filter / backdrop-filter，
+     fixed 子元素依旧相对视口定位，也不计入 scrollHeight（「页面无滚动条」契约不受影响）。
+   - 层级 55 / 56 / 57：低于公告弹窗(85) 与音乐列表弹窗(200)，高于站内卡片(z-10)，
+     弹窗打开时侧栏被遮罩盖住，符合预期。
+   - 底色 / 模糊 / 圆角 / 投影全部读站内令牌，与卡片同源（同 .notice-card 的思路）。
+   ============================================ */
+@layer components {
+  .music-ball {
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 55;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    border-radius: 999px;
+    background-color: rgba(0, 0, 0, calc(var(--card-alpha, 0.35) + 0.25));
+    backdrop-filter: blur(var(--glass-blur, 16px)) saturate(140%);
+    -webkit-backdrop-filter: blur(var(--glass-blur, 16px)) saturate(140%);
+    box-shadow: var(--shadow-4);
+    color: rgba(255, 255, 255, 0.9);
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.2s ease;
+  }
+  .music-ball:hover {
+    transform: scale(1.06);
+    box-shadow: var(--shadow-5);
+  }
+  .music-ball:active {
+    transform: scale(0.94);
+  }
+  /* 正在播放：一圈强调色描边，一眼能看出「有声音在响」 */
+  .music-ball[data-playing="true"] {
+    box-shadow: var(--shadow-4),
+      0 0 0 2px color-mix(in srgb, var(--accent-color, #7dd3fc) 65%, transparent);
+  }
+  .music-ball-disc {
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 999px;
+    object-fit: cover;
+  }
+  .music-ball[data-playing="true"] .music-ball-disc {
+    animation: music-ball-spin 8s linear infinite;
+  }
+
+  .music-drawer-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 56;
+    background-color: rgba(0, 0, 0, 0.38);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    animation: fade 0.2s ease both;
+  }
+  .music-drawer {
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 57;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    /* 320px 抽屉：窄屏自动退到「视口宽 - 32px」，不做嵌套滚动 */
+    width: min(20rem, calc(100vw - 2rem));
+    padding: 1rem;
+    border-radius: var(--radius-xl);
+    background-color: rgba(0, 0, 0, calc(var(--card-alpha, 0.35) + 0.34));
+    backdrop-filter: blur(calc(var(--glass-blur, 16px) + 6px)) saturate(140%);
+    -webkit-backdrop-filter: blur(calc(var(--glass-blur, 16px) + 6px)) saturate(140%);
+    box-shadow: var(--shadow-5);
+    color: #fff;
+    animation: music-drawer-in 0.24s cubic-bezier(0.4, 0, 0.2, 1) both;
+  }
+  .music-drawer-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .music-drawer-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: rgba(255, 255, 255, 0.72);
+  }
+  .music-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    padding: 0.35rem;
+    border: 0;
+    border-radius: var(--radius-md);
+    background-color: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+  .music-icon-btn:hover {
+    background-color: rgba(255, 255, 255, 0.16);
+    color: #fff;
+  }
+  .music-drawer-track {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .music-drawer-cover {
+    width: 2.75rem;
+    height: 2.75rem;
+    flex-shrink: 0;
+    border-radius: var(--radius-md);
+    object-fit: cover;
+    background-color: rgba(255, 255, 255, 0.08);
+  }
+  .music-drawer-cover-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    flex-shrink: 0;
+    border-radius: var(--radius-md);
+    background-color: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.6);
+  }
+  .music-drawer-name {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.95);
+  }
+  .music-drawer-artist {
+    margin-top: 0.125rem;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.55);
+  }
+  .music-drawer-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+  /* 全站唯一的实心强调色圆形按钮：与通知弹窗的主按钮同一处理 */
+  .music-play-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background-color: color-mix(in srgb, var(--accent-color, #7dd3fc) 88%, transparent);
+    color: #0b1220;
+    cursor: pointer;
+    box-shadow: 0 8px 18px -8px color-mix(in srgb, var(--accent-color, #7dd3fc) 70%, transparent);
+    transition: filter 0.2s ease, transform 0.15s ease;
+  }
+  .music-play-btn:hover {
+    filter: brightness(1.06);
+  }
+  .music-play-btn:active {
+    transform: scale(0.96);
+  }
+  .music-play-btn:disabled,
+  .music-step-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .music-step-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: rgba(255, 255, 255, 0.75);
+    cursor: pointer;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+  .music-step-btn:hover:not(:disabled) {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: #fff;
+  }
+  .music-drawer-foot {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .music-drawer-list-btn {
+    /* 始终靠右：歌单为空时这一行只剩它一个，margin-left:auto 才不会让它贴左 */
+    margin-left: auto;
+    flex-shrink: 0;
+    padding: 0.35rem 0.6rem;
+    border: 0;
+    border-radius: var(--radius-md);
+    background-color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+  }
+  .music-drawer-list-btn:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+  }
+  .music-drawer-empty {
+    font-size: 0.75rem;
+    line-height: 1.6;
+    color: rgba(255, 255, 255, 0.55);
+  }
+  /* 键盘可达：三个可点元素共用同一圈强调色焦点环 */
+  .music-ball:focus-visible,
+  .music-icon-btn:focus-visible,
+  .music-play-btn:focus-visible,
+  .music-step-btn:focus-visible,
+  .music-drawer-list-btn:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent-color, #7dd3fc) 80%, transparent);
+    outline-offset: 2px;
+  }
+}
+
+@keyframes music-ball-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes music-drawer-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+/* 系统开启「减弱动态效果」时不做位移与自转 */
+@media (prefers-reduced-motion: reduce) {
+  .music-drawer {
+    animation: none;
+  }
+  .music-ball[data-playing="true"] .music-ball-disc {
+    animation: none;
+  }
+}
+
 /* ===== 进入动画（优化版：更自然的缓动曲线）===== */
 @keyframes fade {
   from {
@@ -1266,6 +1777,12 @@
 }
 .animate-notice-center {
   animation: notice-center 0.45s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+/* 系统开启「减弱动态效果」时不做位移/缩放，只保留淡入（无障碍） */
+@media (prefers-reduced-motion: reduce) {
+  .animate-notice-center {
+    animation: fade 0.2s ease both;
+  }
 }
 
 /* 页脚扫光效果（优化版：更柔和的节奏） */

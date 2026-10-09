@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Music2 } from "lucide-react";
 
 interface HitokotoData {
   text: string;
@@ -13,8 +12,6 @@ const FALLBACK: HitokotoData = { text: "这里应该显示一句话", from: "无
 interface Props {
   /** 一言类型（空=随机；a动画 b漫画 c游戏 d文学 e原创 f网络 g其他 h影视 i诗词 j网易云 k哲学 l抖机灵） */
   type?: string;
-  /** 打开音乐面板回调（提供后在卡片上显示"打开音乐"按钮，对齐 home 交互） */
-  onOpenMusic?: () => void;
 }
 
 /**
@@ -22,8 +19,12 @@ interface Props {
  * - 默认 .cards 样式：border-radius 6px, backdrop-blur(10px), hover scale(1.01), active scale(0.98)
  * - padding 20px（home），字号 1.1rem，来源右对齐 `-「 from 」`
  * - 3 行省略，点击换一句
+ *
+ * 卡片上原本还有一个「打开音乐」按钮（音乐面板与一言共用这一格）。音乐改到右下角的
+ * 音乐侧栏后按钮一并去掉 —— 卡片重新变成纯粹的一句话，内部不再嵌可聚焦元素，
+ * 也就不会再出现「焦点在内层按钮上按 Enter 却被外层当成换一句」那类冒泡问题。
  */
-export default function Hitokoto({ type = "", onOpenMusic }: Props) {
+export default function Hitokoto({ type = "" }: Props) {
   const [data, setData] = useState<HitokotoData>(FALLBACK);
   const [loading, setLoading] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -75,29 +76,11 @@ export default function Hitokoto({ type = "", onOpenMusic }: Props) {
       role="button"
       tabIndex={0}
       aria-label="点击换一句"
-      className="card-glass card-func group relative flex h-full w-full cursor-pointer flex-col justify-between p-5"
+      className="card-glass card-func flex h-full w-full cursor-pointer flex-col justify-between p-5"
       style={{ justifyContent: "space-between" }}
       title="点击换一句"
     >
-      {/* 打开音乐面板按钮：移动端常显，桌面端 hover 卡片时显示（对齐 home 交互） */}
-      {onOpenMusic && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpenMusic();
-          }}
-          // 键盘事件必须一并拦截：Enter/空格 会冒泡到外层 role="button" 的 onKeyDown，
-          // 被外层 preventDefault() 后按钮自身的激活行为不再触发，反而去「换一句」——
-          // 表现就是「按回车想开音乐，结果换了一句名言」。
-          onKeyDown={(e) => e.stopPropagation()}
-          className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-md bg-black/40 px-2 py-1 text-xs text-white/90 opacity-100 transition-opacity hover:bg-black/60 md:opacity-0 md:group-hover:opacity-100"
-          aria-label="打开音乐播放器"
-        >
-          <Music2 className="h-3.5 w-3.5" />
-          打开音乐
-        </button>
-      )}
+      {/* 打开音乐面板按钮：已随音乐侧栏一并移除（音乐入口改到右下角常驻圆钮） */}
       <p
         className={`w-full break-words text-[15px] leading-loose transition-opacity duration-300 md:text-lg md:leading-loose ${
           loading ? "opacity-50" : "opacity-100"

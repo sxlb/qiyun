@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import ClockWeatherCapsule from "@/components/home/ClockWeatherCapsule";
+import { resetWeatherShare } from "@/lib/weatherClient";
 
 /**
  * 时钟天气卡片里风向风力的「可见性」。
@@ -30,6 +31,9 @@ function stubWeather(payload: Record<string, unknown>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 天气取数走模块级共享缓存（供问候弹窗复用同一次请求）：不重置会串场，
+  // 后一个用例会直接拿到前一个用例的结果，桩函数根本不被调用
+  resetWeatherShare();
 });
 
 afterEach(() => {

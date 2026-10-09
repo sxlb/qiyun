@@ -512,158 +512,6 @@ function PanelSettings() {
   );
 }
 
-/* ==================== 控制面板（对齐 home Music.vue） ==================== */
-/**
- * 内嵌卡片控制面板（与一言共用同一个功能卡格，保持站内玻璃卡片外观，
- * 不跟随音乐列表弹窗的三套风格）。
- *
- * 两套布局按视口断点切换，共用同一份状态与操作：
- * - ≥880px：与时钟卡并排，行高由时钟卡决定（约 200px），沿用纵向三段布局把空间铺满
- * - <880px：这一格独占一行，改用紧凑布局压到 90px 以内，与一言卡片等高 ——
- *   否则「一言 ↔ 音乐」切换时行高会变化，把下方卡片整体推移
- */
-function MusicPanel() {
-  const m = useMusic();
-  const [collapsed, setCollapsed] = useState(false);
-  const track = m.currentTrack;
-  const volume = (
-    <VolumeSlider volume={m.volume} muted={m.muted} onChange={m.changeVolume} onToggleMuted={m.toggleMuted} />
-  );
-  const openList = () => m.setBoxOpen(true);
-  const backToHitokoto = () => m.setPanelOpen(false);
-
-  return (
-    <div
-      className={`card-glass card-func music-dark-scope h-full overflow-hidden transition-[width] duration-300 ${
-        collapsed ? "w-16" : "w-full"
-      }`}
-    >
-      {collapsed ? (
-        <div className="flex h-full flex-col items-center justify-between gap-2 p-3">
-          <button type="button" onClick={() => setCollapsed(false)} className={`h-10 w-10 overflow-hidden rounded-full bg-white/10 ${m.isPlaying ? "animate-spin" : ""}`} style={{ animationDuration: "8s" }} aria-label="展开音乐播放器">
-            {m.currentTrack?.cover ? (
-              // unoptimized：封面来自任意第三方图床，next/image 的优化器需要预先配置远程域名白名单；
-              // unoptimized 会直接短路默认 loader（不触发该校验），与站内其他远程图一致
-              <Image src={m.currentTrack.cover} alt="" width={40} height={40} unoptimized className="h-full w-full object-cover" />
-            ) : (
-              <Music2 className="m-auto h-5 w-5" />
-            )}
-          </button>
-          <button type="button" onClick={m.togglePlay} disabled={!m.playlist.length} aria-label={m.isPlaying ? "暂停" : "播放"} className="rounded-full bg-white/20 p-2">
-            {m.isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-          </button>
-          <button type="button" onClick={() => setCollapsed(false)} className="max-h-20 overflow-hidden text-xs [writing-mode:vertical-rl] text-white/80">
-            {m.currentTrack?.name || "音乐"}
-          </button>
-        </div>
-      ) : (
-        <>
-          {/* 紧凑布局（<880px）：一行曲目 + 一行控制，整体约 84px，与一言卡片齐平 */}
-          <div className="flex h-full flex-col justify-center gap-1 p-3 min-[880px]:hidden">
-            <div className="flex min-w-0 items-center gap-2">
-              <button
-                type="button"
-                onClick={m.togglePlay}
-                disabled={!m.playlist.length}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/20 transition-colors hover:bg-white/30 disabled:opacity-40"
-                title={m.isPlaying ? "暂停" : "播放"}
-                aria-label={m.isPlaying ? "暂停" : "播放"}
-              >
-                {m.isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-              </button>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm leading-tight text-white/90">{track?.name || "未选择歌曲"}</div>
-                <div className="truncate text-[11px] leading-tight text-white/55">{track?.artist || "打开音乐列表挑选"}</div>
-              </div>
-              <button
-                type="button"
-                onClick={m.playPrev}
-                disabled={!m.playlist.length}
-                className="shrink-0 p-1.5 text-white/70 transition-colors hover:text-white disabled:opacity-40"
-                title="上一首"
-                aria-label="上一首"
-              >
-                <SkipBack className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                onClick={m.playNext}
-                disabled={!m.playlist.length}
-                className="shrink-0 p-1.5 text-white/70 transition-colors hover:text-white disabled:opacity-40"
-                title="下一首"
-                aria-label="下一首"
-              >
-                <SkipForward className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              {volume}
-              <div className="flex shrink-0 items-center gap-1">
-                <button type="button" onClick={openList} className="rounded-md bg-white/10 px-2 py-0.5 text-[11px] text-white/80 transition-colors hover:bg-white/20">
-                  音乐列表
-                </button>
-                <button type="button" onClick={backToHitokoto} className="rounded-md bg-white/10 px-2 py-0.5 text-[11px] text-white/80 transition-colors hover:bg-white/20">
-                  回到一言
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* 宽布局（≥880px）：与原来一致，纵向三段铺满整格 */}
-          <div className="hidden h-full flex-col justify-between p-3 min-[880px]:flex">
-            <div className="flex items-center justify-between text-xs">
-              <button onClick={openList} className="rounded-md bg-white/10 px-2.5 py-1 text-white/80 transition-colors hover:bg-white/20">
-                音乐列表
-              </button>
-              <button onClick={backToHitokoto} className="rounded-md bg-white/10 px-2.5 py-1 text-white/80 transition-colors hover:bg-white/20">
-                回到一言
-              </button>
-            </div>
-
-            <div className="flex items-center justify-evenly">
-              <button
-                onClick={m.playPrev}
-                disabled={!m.playlist.length}
-                className="p-2 text-white/70 transition-colors hover:text-white disabled:opacity-40"
-                title="上一首"
-                aria-label="上一首"
-              >
-                <SkipBack className="h-5 w-5" />
-              </button>
-              <button
-                onClick={m.togglePlay}
-                disabled={!m.playlist.length}
-                className="rounded-full bg-white/20 p-3 transition-colors hover:bg-white/30 disabled:opacity-40"
-                title={m.isPlaying ? "暂停" : "播放"}
-                aria-label={m.isPlaying ? "暂停" : "播放"}
-              >
-                {m.isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
-              </button>
-              <button
-                onClick={m.playNext}
-                disabled={!m.playlist.length}
-                className="p-2 text-white/70 transition-colors hover:text-white disabled:opacity-40"
-                title="下一首"
-                aria-label="下一首"
-              >
-                <SkipForward className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="truncate px-2 text-center text-sm text-white/80">
-                {track ? `${track.name} - ${track.artist}` : "未选择歌曲"}
-              </div>
-              <div className="flex justify-center">{volume}</div>
-            </div>
-            <button type="button" onClick={() => setCollapsed(true)} className="mt-2 text-center text-[11px] text-white/50 hover:text-white">收起</button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
 /* ==================== 音乐列表弹窗 ==================== */
 /**
  * 居中弹窗，三套风格共用同一套骨架。功能按用途拆进独立分区，不再糊成一整块：
@@ -825,14 +673,164 @@ function MusicModal() {
   );
 }
 
-/* ==================== 功能卡：音乐控制面板 / 一言 切换（对齐 home） ==================== */
-/** 挂载于右侧功能卡组左格：控制面板开启时显示 MusicPanel，否则显示一言（hover 可打开音乐） */
+/* ==================== 功能卡：一言（不再与音乐面板互换） ==================== */
+/**
+ * 挂载于右侧功能卡组左格：现在只渲染一言。
+ *
+ * 音乐控制已搬到右下角的音乐侧栏（`MusicSidebar`）—— 原来这一格会在
+ * 「一言 ↔ 音乐控制面板」之间互换，为了切换时不推移下方卡片，音乐面板被迫压到
+ * 84px 高，窄屏下信息挤成一团；同时右栏也再没有余量放常驻侧栏。
+ * 改成一个不占布局的右下角浮层后，这两个约束同时消失。
+ */
 export function MusicCard({ hitokotoType = "" }: { hitokotoType?: string }) {
+  return <Hitokoto type={hitokotoType} />;
+}
+
+/* ==================== 音乐侧栏（右下常驻圆钮 + 展开抽屉） ==================== */
+/**
+ * 常驻右下角的音乐控制浮层：收起 = 40px 圆钮，展开 = 320px 抽屉。
+ *
+ * 为什么是浮层而不是常驻竖栏：内容容器 max-w-6xl(1152px) + md:px-6，
+ * 视口 1280px 时左右各只剩 64px 余量，1024px 时只剩 24px —— 56px 的常驻竖栏
+ * 必然压住时钟卡 / 导航卡，而右栏正是页面主体。收起态只占 40px，不占布局、不遮挡。
+ *
+ * 抽屉里只放「一眼要看的信息 + 最常用的三个操作」：封面 / 曲名 / 上下首 / 播放暂停 / 音量，
+ * 歌单、歌词、面板设置这些重内容继续留在音乐列表弹窗里（`MusicModal`），点「音乐列表」进入。
+ * 这样侧栏不必重复实现弹窗已有的能力，也就不存在两处逻辑漂移。
+ */
+export function MusicSidebar() {
   const m = useMusic();
-  return m.panelOpen ? (
-    <MusicPanel />
-  ) : (
-    <Hitokoto type={hitokotoType} onOpenMusic={() => m.setPanelOpen(true)} />
+  const track = m.currentTrack;
+  const noData = !track && m.playlist.length === 0;
+
+  if (!m.panelOpen) {
+    return (
+      <button
+        type="button"
+        className="music-ball music-dark-scope"
+        data-playing={m.isPlaying ? "true" : "false"}
+        onClick={() => m.setPanelOpen(true)}
+        title="音乐控制"
+        aria-label="展开音乐控制"
+        aria-expanded={false}
+      >
+        {track?.cover ? (
+          // unoptimized：封面来自任意第三方图床，next/image 优化器需要远程域名白名单，
+          // unoptimized 直接短路默认 loader（与站内其他远程图一致）
+          <Image
+            src={track.cover}
+            alt=""
+            width={24}
+            height={24}
+            unoptimized
+            className="music-ball-disc"
+          />
+        ) : (
+          <Music2 className="h-4 w-4" />
+        )}
+      </button>
+    );
+  }
+
+  return (
+    <>
+      {/* 遮罩：点空白处收起（抽屉的通用预期）。层级 56 低于音乐列表弹窗(200) */}
+      <div className="music-drawer-scrim" onClick={() => m.setPanelOpen(false)} aria-hidden />
+      <section className="music-drawer music-dark-scope" aria-label="音乐控制">
+        <div className="music-drawer-head">
+          <span className="music-drawer-title">正在播放</span>
+          <button
+            type="button"
+            className="music-icon-btn"
+            onClick={() => m.setPanelOpen(false)}
+            title="收起"
+            aria-label="收起音乐控制"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {noData && (
+          <p className="music-drawer-empty">
+            尚未配置音乐歌单，请在后台音乐设置中填写接口地址和歌单 ID。
+          </p>
+        )}
+
+        {!noData && (
+          <>
+            <div className="music-drawer-track">
+              {track?.cover ? (
+                <Image
+                  src={track.cover}
+                  alt=""
+                  width={44}
+                  height={44}
+                  unoptimized
+                  className="music-drawer-cover"
+                />
+              ) : (
+                <span className="music-drawer-cover-fallback">
+                  <Music2 className="h-5 w-5" />
+                </span>
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="music-drawer-name truncate">{track?.name || "选择一首歌曲"}</div>
+                <div className="music-drawer-artist truncate">{track?.artist || "—"}</div>
+              </div>
+            </div>
+
+            <div className="music-drawer-controls">
+              <button
+                type="button"
+                className="music-step-btn"
+                onClick={m.playPrev}
+                disabled={!m.playlist.length}
+                title="上一首"
+                aria-label="上一首"
+              >
+                <SkipBack className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                className="music-play-btn"
+                onClick={m.togglePlay}
+                disabled={!m.playlist.length}
+                title={m.isPlaying ? "暂停" : "播放"}
+                aria-label={m.isPlaying ? "暂停" : "播放"}
+              >
+                {m.isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+              </button>
+              <button
+                type="button"
+                className="music-step-btn"
+                onClick={m.playNext}
+                disabled={!m.playlist.length}
+                title="下一首"
+                aria-label="下一首"
+              >
+                <SkipForward className="h-5 w-5" />
+              </button>
+            </div>
+
+          </>
+        )}
+
+        {/* 音乐列表入口常驻：歌单为空 / 加载失败时也要能进弹窗看提示、进设置 */}
+        <div className="music-drawer-foot">
+          {!noData && (
+            <VolumeSlider
+              volume={m.volume}
+              muted={m.muted}
+              onChange={m.changeVolume}
+              onToggleMuted={m.toggleMuted}
+            />
+          )}
+          <button type="button" className="music-drawer-list-btn" onClick={() => m.setBoxOpen(true)}>
+            音乐列表
+          </button>
+        </div>
+      </section>
+    </>
   );
 }
 
@@ -1136,6 +1134,8 @@ export default function MusicProvider({
         onPause={() => setIsPlaying(false)}
       />
       {boxOpen && <MusicModal />}
+      {/* 音乐侧栏常驻右下角：放在 Provider 内直接读上下文，不需要页面再挂一个入口 */}
+      <MusicSidebar />
       {children}
     </MusicContext.Provider>
   );
