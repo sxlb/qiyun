@@ -4,6 +4,7 @@ import { memo, useCallback, createContext, useContext, useEffect, useRef, useSta
 import Image from "next/image";
 import {
   ArrowLeft,
+  ChevronLeft,
   Play,
   Pause,
   SkipBack,
@@ -707,27 +708,33 @@ export function MusicSidebar() {
     return (
       <button
         type="button"
-        className="music-ball music-dark-scope"
+        className="music-handle music-dark-scope"
         data-playing={m.isPlaying ? "true" : "false"}
         onClick={() => m.setPanelOpen(true)}
-        title="音乐控制"
+        title={track ? `音乐控制 · ${track.name}` : "音乐控制"}
         aria-label="展开音乐控制"
         aria-expanded={false}
       >
+        {/* 方向提示：抽屉向左展开，箭头指左（对齐参考项目把手上的方向箭头） */}
+        <ChevronLeft className="music-handle-cue h-4 w-4" />
         {track?.cover ? (
           // unoptimized：封面来自任意第三方图床，next/image 优化器需要远程域名白名单，
           // unoptimized 直接短路默认 loader（与站内其他远程图一致）
           <Image
             src={track.cover}
             alt=""
-            width={24}
-            height={24}
+            width={30}
+            height={30}
             unoptimized
-            className="music-ball-disc"
+            className="music-handle-disc"
           />
         ) : (
-          <Music2 className="h-4 w-4" />
+          <span className="music-handle-icon">
+            <Music2 className="h-4 w-4" />
+          </span>
         )}
+        {/* 竖排曲名：把手除了「是个入口」，还常驻显示正在放什么 */}
+        <span className="music-handle-text">{track?.name || "音乐"}</span>
       </button>
     );
   }

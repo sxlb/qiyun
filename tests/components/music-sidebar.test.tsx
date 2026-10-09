@@ -38,7 +38,16 @@ describe("音乐侧栏：收起 / 展开", () => {
     expect(screen.queryByText("正在播放")).toBeNull();
   });
 
-  it("点圆钮后抽屉出现（含标题与歌单未配置提示）", async () => {
+  it("收起态是竖直把手：带方向箭头与竖排曲名，不是容易被忽略的小圆点", () => {
+    setup();
+    const handle = screen.getByLabelText("展开音乐控制");
+    expect(handle.className).toContain("music-handle");
+    // 未配置歌单时显示兜底文案「音乐」—— 把手不靠图标单独支撑可辨识度
+    expect(handle.textContent).toContain("音乐");
+    expect(handle.querySelector("svg")).toBeTruthy();
+  });
+
+  it("点把手后抽屉出现（含标题与歌单未配置提示）", async () => {
     setup();
     await act(async () => {
       fireEvent.click(screen.getByLabelText("展开音乐控制"));
@@ -50,7 +59,7 @@ describe("音乐侧栏：收起 / 展开", () => {
     expect(screen.queryByLabelText("展开音乐控制")).toBeNull();
   });
 
-  it("点右上角 × 收起抽屉，回到圆钮", async () => {
+  it("点右上角 × 收起抽屉，回到把手", async () => {
     setup();
     await act(async () => {
       fireEvent.click(screen.getByLabelText("展开音乐控制"));
