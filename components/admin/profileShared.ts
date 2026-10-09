@@ -242,6 +242,18 @@ export function setCachedProfile(p: Partial<ProfileShape>) {
   cachedProfile = { ...INITIAL_PROFILE, ...p };
 }
 
+/**
+ * 清掉共享配置缓存。
+ *
+ * 面板之间共享同一份配置是刻意的（切 tab 不重复 GET /api/profile），但它是模块级状态：
+ * 同一个测试文件里多次渲染面板时，第二个用例会直接拿到上一个用例缓存下来的那份配置，
+ * 于是「服务端返回了不同值」这件事根本不会被读出来。测试用。
+ */
+export function resetProfileCache(): void {
+  cachedProfile = null;
+  inflightProfile = null;
+}
+
 /** 是否已有内存缓存：面板初始 loading 据此置 false，切换面板时零闪烁 */
 export function hasCachedProfile(): boolean {
   return cachedProfile !== null;
