@@ -414,17 +414,20 @@ export function useAudioPlayer({
     // 在这里取消只会让开发模式下多出一条 net::ERR_ABORTED。
   }, [loadPlaylist]);
 
-  // ===== 自动播放（后台「音乐设置」开关）=====
+  // ===== 自动播放（访客偏好「设置 → 播放 → 自动播放」，默认关闭）=====
   // 歌单加载完成后触发一次；浏览器拦截自动播放（未交互页面）时 play() 会 reject，
   // 由下方播放 effect 统一复位 isPlaying，UI 回到未播放态，不产生"假播放"。
+  //
+  // 必须等 prefsReady：偏好是挂载后才从 localStorage 读出来的，不等就会出现
+  // 「访客明明关着自动播放，却因为读盘前跑了一轮默认值而响了一声」。
   const autoplayTriedRef = useRef(false);
   useEffect(() => {
-    if (!autoplay || autoplayTriedRef.current) return;
+    if (!prefsReady || !autoplay || autoplayTriedRef.current) return;
     if (playlist.length === 0 || currentTrack) return;
     autoplayTriedRef.current = true;
     setCurrentTrack(playlist[0]);
     setIsPlaying(true);
-  }, [autoplay, playlist, currentTrack, setIsPlaying]);
+  }, [prefsReady, autoplay, playlist, currentTrack, setIsPlaying]);
 
   // ===== 音量 / 静音持久化 =====
   // 上次的非零音量：音量为 0 时点「取消静音」用它恢复，避免恢复成 0 依旧无声

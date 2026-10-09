@@ -1510,17 +1510,29 @@
    - 底色 / 模糊 / 圆角 / 投影全部读站内令牌，与卡片同源（同 .notice-card 的思路）。
    ============================================ */
 @layer components {
+  /* 把手位置全部走 transform（--handle-x / --handle-y 由组件按停靠侧与拖动实时写入）：
+     合成层动画、不触发布局；拖动中把 transition 关掉即为「跟手」，
+     松手时改回过渡，贴合两侧就是一条平滑的位移动画。
+     未挂载（SSR / 首帧）时用下面两个默认值兜底 = 默认左侧贴底，不会先闪在左上角。
+     高度写死：几何要可预测（拖动夹取、默认位置、左右镜像都依赖它），
+     内容只有箭头 + 封面两件，垂直居中即可。 */
   .music-handle {
     position: fixed;
-    right: 1rem;
-    bottom: 1rem;
+    left: 0;
+    top: 0;
     z-index: 55;
+    --handle-inset: 1rem;
+    --handle-x: var(--handle-inset);
+    --handle-y: calc(100vh - var(--handle-inset) - 6.125rem);
+    --handle-y: calc(100dvh - var(--handle-inset) - 6.125rem);
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.55rem;
+    justify-content: center;
+    gap: 0.75rem;
     width: 2.75rem;
-    padding: 0.65rem 0 0.75rem;
+    height: 6.125rem;
+    padding: 0;
     border: 0;
     border-radius: 999px;
     background-color: rgba(0, 0, 0, calc(var(--card-alpha, 0.35) + 0.28));
@@ -1528,46 +1540,71 @@
     -webkit-backdrop-filter: blur(var(--glass-blur, 16px)) saturate(140%);
     box-shadow: var(--shadow-4);
     color: rgba(255, 255, 255, 0.92);
-    cursor: pointer;
+    cursor: grab;
     overflow: hidden;
-    transition: transform 0.18s ease, box-shadow 0.25s ease;
+    user-select: none;
+    -webkit-user-select: none;
+    /* 触摸拖动时不要滚动页面（拖把手是「按住移动」，不是「滑动翻页」） */
+    touch-action: none;
+    transform: translate3d(var(--handle-x), var(--handle-y), 0) scale(var(--handle-scale, 1));
+    transition: transform 0.3s cubic-bezier(0.22, 0.61, 0.36, 1), box-shadow 0.25s ease;
   }
   /* 贴屏一侧的强调色把手纹：呼应参考项目那条整根主题色的贴边标签，
-     但不整根上色 —— 壁纸首页上整根实色会盖过内容 */
+     但不整根上色 —— 壁纸首页上整根实色会盖过内容。停靠侧换了，纹也要跟着换到贴屏那一侧。 */
   .music-handle::after {
     content: "";
     position: absolute;
-    right: 0.26rem;
     top: 0.7rem;
     bottom: 0.7rem;
     width: 3px;
     border-radius: 2px;
     background-color: color-mix(in srgb, var(--accent-color, #7dd3fc) 85%, transparent);
   }
+  .music-handle[data-side="left"]::after {
+    left: 0.26rem;
+    right: auto;
+  }
+  .music-handle[data-side="right"]::after {
+    right: 0.26rem;
+    left: auto;
+  }
   .music-handle:hover {
-    transform: translateY(-2px);
+    --handle-scale: 1.05;
     box-shadow: var(--shadow-5);
   }
   .music-handle:active {
-    transform: translateY(0) scale(0.97);
+    --handle-scale: 0.97;
+  }
+  /* 拖动中：抬起感（放大一档 + 强调色描边）并关掉过渡（跟手） */
+  .music-handle[data-dragging="true"] {
+    transition: none;
+    cursor: grabbing;
+    --handle-scale: 1.06;
+    box-shadow: var(--shadow-5),
+      0 0 0 2px color-mix(in srgb, var(--accent-color, #7dd3fc) 45%, transparent);
   }
   /* 正在播放：一圈强调色描边，一眼能看出「有声音在响」 */
   .music-handle[data-playing="true"] {
     box-shadow: var(--shadow-4),
       0 0 0 2px color-mix(in srgb, var(--accent-color, #7dd3fc) 55%, transparent);
   }
-  /* 方向提示：抽屉向左展开 */
+  /* 方向提示：箭头始终指向抽屉展开的方向。默认右侧停靠（抽屉往左开）用左箭头，
+     左侧停靠时镜像 180° 变成往右指。 */
   .music-handle-cue {
     flex-shrink: 0;
     color: color-mix(in srgb, var(--accent-color, #7dd3fc) 85%, transparent);
+    transition: transform 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  .music-handle[data-side="left"] .music-handle-cue {
+    transform: rotate(180deg);
   }
   .music-handle-icon {
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    width: 1.875rem;
-    height: 1.875rem;
+    width: 2.375rem;
+    height: 2.375rem;
     border-radius: 999px;
     background-color: rgba(255, 255, 255, 0.1);
     color: rgba(255, 255, 255, 0.75);
@@ -1576,8 +1613,8 @@
      写成「[data-playing] 时才挂 animation」会让暂停后再播放每次从 0° 重转一圈
      （对齐站内既有写法 .mp-disc-sheen.is-paused，也是参考项目 --animation-music-cover 的做法）。 */
   .music-handle-disc {
-    width: 1.875rem;
-    height: 1.875rem;
+    width: 2.375rem;
+    height: 2.375rem;
     flex-shrink: 0;
     border-radius: 999px;
     object-fit: cover;
@@ -1596,6 +1633,11 @@
     backdrop-filter: blur(2px);
     -webkit-backdrop-filter: blur(2px);
     animation: fade 0.2s ease both;
+  }
+  /* 抽屉跟着把手停靠在同一边：点哪一侧的把手就从哪一侧滑出来 */
+  .music-drawer[data-side="left"] {
+    left: 1rem;
+    right: auto;
   }
   .music-drawer {
     position: fixed;

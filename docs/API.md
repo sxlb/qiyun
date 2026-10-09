@@ -1685,7 +1685,7 @@ Cookie 头中会设置 `qiyun-uv=1`（httpOnly, sameSite=lax, maxAge=365 天）�
 | `songApi` | String | "" | 音乐 API 基地址 |
 | `songServer` | String | "netease" | 音乐服务器 |
 | `songId` | String | "" | 歌单 ID |
-| `musicAutoplay` | Boolean | false | 音乐自动播放开关 |
+| `musicAutoplay` | Boolean | false | 音乐自动播放的**站点初值**：访客在播放器「设置 → 播放 → 自动播放」里显式设过就以访客为准（该开关本机默认关闭） |
 | `siteUrl` | String | "" | 站点 URL |
 | `siteIcp` | String | "" | ICP 备案号 |
 | `siteMps` | String | "" | 公安备案号 |

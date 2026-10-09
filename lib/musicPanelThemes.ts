@@ -176,6 +176,15 @@ export const TRACK_COVER_KEY = "music-player-track-cover";
 export const HOTKEYS_KEY = "music-player-hotkeys";
 /** 系统媒体控制（锁屏 / 耳机按键） */
 export const MEDIA_SESSION_KEY = "music-player-media-session";
+/** 自动播放：歌单加载完成后尝试自动播放 */
+export const AUTOPLAY_KEY = "music-player-autoplay";
+
+/* —— 音乐侧栏把手的位置：与播放行为无关，但它也属于「本机偏好」的一部分，
+   一并放进 ALL_MUSIC_LOCAL_KEYS，「恢复默认设置」才能把它复位成默认左侧 —— */
+/** 把手停靠侧（left / right） */
+export const HANDLE_SIDE_KEY = "music-handle-side";
+/** 把手距视口底部的距离（px） */
+export const HANDLE_BOTTOM_KEY = "music-handle-bottom";
 
 /* —— 播放行为类键：由 useAudioPlayer 读写（音量 / 静音 / 进度 / 上次曲目） —— */
 /** 上一次的音量 */
@@ -254,6 +263,14 @@ export interface MusicPanelPrefs {
   hotkeys: boolean;
   /** 系统媒体控制：锁屏与耳机按键 */
   mediaSession: boolean;
+  /**
+   * 自动播放：歌单加载完成后尝试自动播放。
+   *
+   * 默认**关闭** —— 页面一打开就出声是最容易被投诉的行为，必须由访客显式打开。
+   * 后台「音乐设置」里的自动播放开关不只是被替代：它是本项在访客从未设置过时的**初值**
+   * （见 parseMusicPanelPrefs 的 overrides），避免老部署里已开的站点被静默关掉。
+   */
+  autoplay: boolean;
 }
 
 export const DEFAULT_MUSIC_PANEL_PREFS: MusicPanelPrefs = {
@@ -274,6 +291,8 @@ export const DEFAULT_MUSIC_PANEL_PREFS: MusicPanelPrefs = {
   keepPlaying: true,
   hotkeys: true,
   mediaSession: true,
+  // 默认关闭：自动出声必须由访客自己打开
+  autoplay: false,
 };
 
 /** 面板不透明度的可调下限：再低就看不清面板里的文字了 */
@@ -296,6 +315,7 @@ export const MUSIC_PANEL_BOOL_KEYS: Record<MusicPanelBoolPref, string> = {
   keepPlaying: KEEP_PLAYING_KEY,
   hotkeys: HOTKEYS_KEY,
   mediaSession: MEDIA_SESSION_KEY,
+  autoplay: AUTOPLAY_KEY,
 };
 
 /** 非布尔偏好的落盘键（面板风格另有自己的键，见 MUSIC_PANEL_STYLE_KEY） */
@@ -314,6 +334,8 @@ export const ALL_MUSIC_LOCAL_KEYS: string[] = [
   MUSIC_PANEL_STYLE_KEY,
   ...Object.values(MUSIC_PANEL_BOOL_KEYS),
   ...Object.values(MUSIC_PANEL_VALUE_KEYS),
+  HANDLE_SIDE_KEY,
+  HANDLE_BOTTOM_KEY,
   AUDIO_VOLUME_KEY,
   AUDIO_MUTED_KEY,
   AUDIO_PROGRESS_KEY,
@@ -385,8 +407,16 @@ export function formatBoolPref(value: boolean): string {
 /** 逐键读出的裸值（localStorage 只存字符串，null 表示未设置过） */
 export type MusicPanelPrefsRaw = Partial<Record<keyof MusicPanelPrefs, string | null>>;
 
-/** 把 localStorage 里逐键读取的裸值收敛成完整偏好对象（缺键一律取默认值） */
-export function parseMusicPanelPrefs(raw: MusicPanelPrefsRaw): MusicPanelPrefs {
+/**
+ * 把 localStorage 里逐键读取的裸值收敛成完整偏好对象（缺键一律取默认值）。
+ *
+ * overrides 用于「某项的默认值来自站点配置」这一种情形：目前只有自动播放 ——
+ * 后台已开启自动播放的站点，访客没动过开关时应当仍是开启，不能被本机默认值静默关掉。
+ */
+export function parseMusicPanelPrefs(
+  raw: MusicPanelPrefsRaw,
+  overrides?: Partial<MusicPanelPrefs>
+): MusicPanelPrefs {
   const d = DEFAULT_MUSIC_PANEL_PREFS;
   return {
     topLyrics: parseBoolPref(raw.topLyrics, d.topLyrics),
@@ -403,6 +433,7 @@ export function parseMusicPanelPrefs(raw: MusicPanelPrefsRaw): MusicPanelPrefs {
     keepPlaying: parseBoolPref(raw.keepPlaying, d.keepPlaying),
     hotkeys: parseBoolPref(raw.hotkeys, d.hotkeys),
     mediaSession: parseBoolPref(raw.mediaSession, d.mediaSession),
+    autoplay: parseBoolPref(raw.autoplay, overrides?.autoplay ?? d.autoplay),
   };
 }
 
@@ -413,7 +444,10 @@ export function parseMusicPanelPrefs(raw: MusicPanelPrefsRaw): MusicPanelPrefs {
  * MUSIC_PANEL_BOOL_KEYS / MUSIC_PANEL_VALUE_KEYS 与 parseMusicPanelPrefs，
  * 读取端不用改，也就不会漏读（漏读的症状是「设置完刷新就还原」，很难查）。
  */
-export function readMusicPanelPrefs(storage: Storage): MusicPanelPrefs {
+export function readMusicPanelPrefs(
+  storage: Storage,
+  overrides?: Partial<MusicPanelPrefs>
+): MusicPanelPrefs {
   const raw: MusicPanelPrefsRaw = {};
   for (const field of Object.keys(MUSIC_PANEL_BOOL_KEYS) as MusicPanelBoolPref[]) {
     raw[field] = storage.getItem(MUSIC_PANEL_BOOL_KEYS[field]);
@@ -422,5 +456,48 @@ export function readMusicPanelPrefs(storage: Storage): MusicPanelPrefs {
   raw.volume = storage.getItem(MUSIC_PANEL_VALUE_KEYS.volume);
   raw.panelOpacity = storage.getItem(MUSIC_PANEL_VALUE_KEYS.panelOpacity);
   raw.lyricAlign = storage.getItem(MUSIC_PANEL_VALUE_KEYS.lyricAlign);
-  return parseMusicPanelPrefs(raw);
+  return parseMusicPanelPrefs(raw, overrides);
+}
+
+/* ==================== 音乐侧栏把手的位置 ==================== */
+
+/** 把手停靠侧：左或右（不支持居中 —— 贴边的把手才有「贴合两侧」可言） */
+export type HandleSide = "left" | "right";
+
+export interface HandlePlacement {
+  side: HandleSide;
+  /** 距视口底部的 px（拖动后保持不变，只有水平方向吸附到两侧） */
+  bottom: number;
+}
+
+/** 默认左侧贴合，距底部 16px（与站内其他浮层的 1rem 内缩一致） */
+export const DEFAULT_HANDLE_PLACEMENT: HandlePlacement = { side: "left", bottom: 16 };
+
+/** 收敛停靠侧：只认字符串 "right"，其余（null / 空串 / 脏值）一律左侧 */
+export function parseHandleSide(value: string | null | undefined): HandleSide {
+  return value === "right" ? "right" : "left";
+}
+
+/** 收敛底部距离：非数字 / 负数 / 空串一律回落 fallback（不把它当成 0，否则会贴到最底） */
+export function parseHandleBottom(
+  value: string | null | undefined,
+  fallback: number = DEFAULT_HANDLE_PLACEMENT.bottom
+): number {
+  if (value === null || value === undefined || value.trim() === "") return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : fallback;
+}
+
+/** 读取把手位置（localStorage 不可用时由调用方兜住异常并回落默认） */
+export function readHandlePlacement(storage: Storage): HandlePlacement {
+  return {
+    side: parseHandleSide(storage.getItem(HANDLE_SIDE_KEY)),
+    bottom: parseHandleBottom(storage.getItem(HANDLE_BOTTOM_KEY)),
+  };
+}
+
+/** 写入把手位置 */
+export function writeHandlePlacement(storage: Storage, placement: HandlePlacement): void {
+  storage.setItem(HANDLE_SIDE_KEY, placement.side);
+  storage.setItem(HANDLE_BOTTOM_KEY, String(Math.round(placement.bottom)));
 }

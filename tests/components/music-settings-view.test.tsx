@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
-import MusicProvider from "@/components/home/MusicPlayer";
+import MusicProvider, { AUTO_COLLAPSE_MS } from "@/components/home/MusicPlayer";
 
 /**
  * 音乐列表面板里的「设置视图」。
@@ -22,6 +22,11 @@ function setup() {
       <div />
     </MusicProvider>
   );
+  // 音乐侧栏在加载后会默认展开一次、3 秒后自动收起。本文件测的是音乐列表弹窗，
+  // 先把这个自动收起跑完，免得侧栏的「尚未配置歌单」提示与弹窗里的那份重名。
+  act(() => {
+    vi.advanceTimersByTime(AUTO_COLLAPSE_MS + 50);
+  });
   act(() => {
     window.dispatchEvent(new Event("toggle-music-player"));
   });
@@ -35,11 +40,12 @@ function switchTab(label: string) {
   fireEvent.click(screen.getByRole("tab", { name: label }));
 }
 
-/** 三个分组分别应包含的设置项（覆盖全部 15 项，等于把信息架构钉在这里） */
+/** 三个分组分别应包含的设置项（覆盖全部 16 项，等于把信息架构钉在这里） */
 const GROUP_ITEMS: Record<string, string[]> = {
   外观: ["面板风格", "面板不透明度", "面板内显示曲目", "歌单显示封面"],
   歌词: ["悬浮歌词字号", "歌词对齐", "顶部常驻歌词", "面板内显示歌词", "歌词聚焦（非当前行模糊）"],
   播放: [
+    "自动播放",
     "初始音量",
     "记住播放模式",
     "续播上次曲目",
@@ -51,10 +57,14 @@ const GROUP_ITEMS: Record<string, string[]> = {
 
 beforeEach(() => {
   localStorage.clear();
+  // 只替换与本文件相关的两个定时器（侧栏的自动收起），Date / rAF 等保持真实，
+  // 避免影响 React 的调度
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -121,7 +131,7 @@ describe("设置视图：分组归位", () => {
     ]);
   });
 
-  it("每组只展示自己那几项，且全部 15 项都能被找到", () => {
+  it("每组只展示自己那几项，且全部 16 项都能被找到", () => {
     setup();
     openSettings();
 
@@ -140,7 +150,7 @@ describe("设置视图：分组归位", () => {
         }
       }
     }
-    expect(seen.size).toBe(15);
+    expect(seen.size).toBe(16);
   });
 
   it("「恢复默认设置」在任何分组下都可见", () => {
@@ -167,6 +177,20 @@ describe("设置视图：改动即时生效（本机偏好）", () => {
 
     expect(screen.getByLabelText("记住播放模式").getAttribute("aria-checked")).toBe("false");
     expect(localStorage.getItem("music-player-remember-mode")).toBe("0");
+  });
+
+  it("「自动播放」默认关闭，打开后落盘（避免页面一打开就出声）", () => {
+    setup();
+    openSettings();
+    switchTab("播放");
+
+    const row = screen.getByLabelText("自动播放");
+    expect(row.getAttribute("aria-checked")).toBe("false");
+
+    fireEvent.click(row);
+
+    expect(screen.getByLabelText("自动播放").getAttribute("aria-checked")).toBe("true");
+    expect(localStorage.getItem("music-player-autoplay")).toBe("1");
   });
 
   it("切组不会重置已改过的偏好", () => {

@@ -49,6 +49,10 @@ import {
   FOLLOW_SITE,
   MIN_PANEL_OPACITY,
   DEFAULT_MUSIC_PANEL_PREFS,
+  DEFAULT_HANDLE_PLACEMENT,
+  readHandlePlacement,
+  writeHandlePlacement,
+  type HandlePlacement,
   type LyricAlignPref,
   type LyricSizeLevel,
   type MusicPanelBoolPref,
@@ -323,6 +327,9 @@ const SETTINGS_SWITCHES: Record<SettingsTab, { key: MusicPanelBoolPref; label: s
     { key: "lyricBlur", label: "歌词聚焦（非当前行模糊）" },
   ],
   play: [
+    // 自动播放放第一位：它是最容易惹人烦的一项（页面一打开就出声），
+    // 放最前便于找到并关掉；默认关闭，需访客显式打开。
+    { key: "autoplay", label: "自动播放" },
     { key: "rememberPlayMode", label: "记住播放模式" },
     { key: "resumeLastTrack", label: "续播上次曲目" },
     { key: "keepPlaying", label: "关闭弹窗后继续播放" },
@@ -687,35 +694,230 @@ export function MusicCard({ hitokotoType = "" }: { hitokotoType?: string }) {
   return <Hitokoto type={hitokotoType} />;
 }
 
-/* ==================== 音乐侧栏（右下常驻圆钮 + 展开抽屉） ==================== */
+/* ==================== 音乐侧栏（可拖动的竖直把手 + 展开抽屉） ==================== */
 /**
- * 常驻右下角的音乐控制浮层：收起 = 40px 圆钮，展开 = 320px 抽屉。
+ * 常驻屏幕一侧的音乐控制浮层：收起 = 44×98 竖直把手，展开 = 320px 抽屉。
  *
  * 为什么是浮层而不是常驻竖栏：内容容器 max-w-6xl(1152px) + md:px-6，
- * 视口 1280px 时左右各只剩 64px 余量，1024px 时只剩 24px —— 56px 的常驻竖栏
- * 必然压住时钟卡 / 导航卡，而右栏正是页面主体。收起态只占 40px，不占布局、不遮挡。
+ * 视口 1280px 时左右各只剩 64px 余量，1024px 时只剩 24px —— 全高竖栏必然压住
+ * 时钟卡 / 导航卡，而右栏正是页面主体。把手做成有边界的胶囊，不占布局、不遮挡。
+ *
+ * 停靠位置（默认左侧）+ 垂直位置都记在本机：按住把手可拖到任意位置，
+ * 松手后水平方向自动贴合到最近的一侧（垂直位置保持），下次访问沿用。
+ * 位置用 transform 表达（见 globals.css 的 .music-handle），贴合是一条合成层动画。
  *
  * 抽屉里只放「一眼要看的信息 + 最常用的三个操作」：封面 / 曲名 / 上下首 / 播放暂停 / 音量，
  * 歌单、歌词、面板设置这些重内容继续留在音乐列表弹窗里（`MusicModal`），点「音乐列表」进入。
  * 这样侧栏不必重复实现弹窗已有的能力，也就不存在两处逻辑漂移。
  */
+
+/** 把手与视口边缘的内缩（与 CSS 的 --handle-inset 一致） */
+const HANDLE_INSET = 16;
+/** 把手尺寸的兜底值（与 CSS 的 2.75rem × 6.125rem 一致）；挂载后会实测校正 */
+const HANDLE_DEFAULT_SIZE = { w: 44, h: 98 };
+/** 位移超过这个距离才算「拖动」，否则按点击处理（打开抽屉） */
+const DRAG_THRESHOLD_PX = 4;
+/** 加载后自动收起把手的延时 */
+export const AUTO_COLLAPSE_MS = 3000;
+
 export function MusicSidebar() {
   const m = useMusic();
+  const { setPanelOpen } = m;
   const track = m.currentTrack;
   const noData = !track && m.playlist.length === 0;
 
+  const handleRef = useRef<HTMLButtonElement | null>(null);
+  /** 停靠位置（左右 + 距底）：默认左侧，拖动后落盘 */
+  const [placement, setPlacement] = useState<HandlePlacement>(DEFAULT_HANDLE_PLACEMENT);
+  /** 把手实测尺寸（拖动夹取与停靠位置都要用） */
+  const [size, setSize] = useState(HANDLE_DEFAULT_SIZE);
+  /** 视口尺寸：停靠位置依赖它，窗口变化要重算 */
+  const [viewport, setViewport] = useState<{ w: number; h: number } | null>(null);
+  /** 拖动中的实时位置（视口坐标下的左上角）；null = 未拖动，用停靠位置 */
+  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  /**
+   * 拖动中的权威标记。
+   *
+   * 必须用 ref 而不是直接用 dragging 这个 state：pointerdown 与紧随其后的第一个
+   * pointermove 可能落在同一批渲染里，此时 move 的回调闭包读到的 dragging 还是 false，
+   * 于是「拖得越快越容易整段拖不动」。state 只用于渲染（跟手样式）。
+   */
+  const draggingRef = useRef(false);
+  /** 拖动位移的权威值：pointerup 与最后一次 pointermove 可能同帧，读 state 会拿到旧值 */
+  const dragPosRef = useRef<{ x: number; y: number } | null>(null);
+  const dragOriginRef = useRef({ px: 0, py: 0, x: 0, y: 0 });
+  /** 本次交互是否已超过拖动阈值：超了就不再当成点击 */
+  const movedRef = useRef(false);
+  /** 访客是否已经动过手：动过就不再自动收起（不打断他） */
+  const interactedRef = useRef(false);
+
+  // 读取本机记录的停靠位置。服务端渲染读不到 localStorage，挂载后再读，
+  // 首帧用默认值（左侧贴底），因此不会出现 hydration 不一致。
+  useEffect(() => {
+    try {
+      setPlacement(readHandlePlacement(window.localStorage));
+    } catch {
+      // 隐私模式等场景读不到：保持默认左侧
+    }
+  }, []);
+
+  // 视口尺寸：停靠位置与拖动夹取都依赖它
+  useEffect(() => {
+    const update = () => setViewport({ w: window.innerWidth, h: window.innerHeight });
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  // 实测把手尺寸：抽屉打开时把手不在 DOM 里量不到，所以每次收起后再量一次。
+  // 实测的意义在于 rem 与实际字号不一致时（用户改过浏览器默认字号）位置仍准确。
+  useEffect(() => {
+    if (m.panelOpen) return;
+    const el = handleRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) setSize({ w: rect.width, h: rect.height });
+  }, [m.panelOpen]);
+
+  /**
+   * 加载后默认展开一次，3 秒后自动收起 —— 让访客看见这个入口，然后自己让开。
+   * 访客在这 3 秒内动过手就不再自动收起，避免「刚打开就被收走」。
+   */
+  useEffect(() => {
+    setPanelOpen(true);
+    const timer = window.setTimeout(() => {
+      if (!interactedRef.current) setPanelOpen(false);
+    }, AUTO_COLLAPSE_MS);
+    return () => window.clearTimeout(timer);
+  }, [setPanelOpen]);
+
+  /** 把位置夹在视口内（留出 HANDLE_INSET 的边距） */
+  function clampPos(x: number, y: number) {
+    const vw = viewport?.w ?? window.innerWidth;
+    const vh = viewport?.h ?? window.innerHeight;
+    const maxX = Math.max(HANDLE_INSET, vw - size.w - HANDLE_INSET);
+    const maxY = Math.max(HANDLE_INSET, vh - size.h - HANDLE_INSET);
+    return {
+      x: Math.min(Math.max(x, HANDLE_INSET), maxX),
+      y: Math.min(Math.max(y, HANDLE_INSET), maxY),
+    };
+  }
+
+  function onPointerDown(e: React.PointerEvent<HTMLButtonElement>) {
+    // 只认主键（触屏的 pointerType 不是 mouse，直接放行）
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    const el = handleRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    sizeRefMeasure(rect.width, rect.height);
+    movedRef.current = false;
+    dragOriginRef.current = { px: e.clientX, py: e.clientY, x: rect.left, y: rect.top };
+    dragPosRef.current = { x: rect.left, y: rect.top };
+    // 捕获指针：拖出把手范围甚至拖出窗口也继续收到 move / up。
+    // 包在 try 里：合成事件（测试 / 自动化）传进来的 pointerId 在浏览器里并不存在，
+    // setPointerCapture 会抛 NotFoundError，不能因此把整个按下流程打断。
+    try {
+      el.setPointerCapture?.(e.pointerId);
+    } catch {
+      // 捕获失败只是「拖出元素后收不到 move」，不影响本次拖动
+    }
+    draggingRef.current = true;
+    setDragging(true);
+    setDragPos({ x: rect.left, y: rect.top });
+  }
+
+  function sizeRefMeasure(w: number, h: number) {
+    if (w > 0 && h > 0 && (w !== size.w || h !== size.h)) setSize({ w, h });
+  }
+
+  function onPointerMove(e: React.PointerEvent<HTMLButtonElement>) {
+    if (!draggingRef.current) return;
+    const origin = dragOriginRef.current;
+    const dx = e.clientX - origin.px;
+    const dy = e.clientY - origin.py;
+    if (!movedRef.current && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+    movedRef.current = true;
+    const next = clampPos(origin.x + dx, origin.y + dy);
+    dragPosRef.current = next;
+    setDragPos(next);
+  }
+
+  function endDrag(e: React.PointerEvent<HTMLButtonElement>) {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    // 先复位状态再做收尾动作：releasePointerCapture 在「指针已不在捕获中」时
+    // 会抛 NotFoundError（浏览器实测），若把它排在前面，异常会中断整个收尾 ——
+    // 表现是把手卡在拖动态再也收不回来。
+    setDragging(false);
+    try {
+      handleRef.current?.releasePointerCapture?.(e.pointerId);
+    } catch {
+      // 指针已被释放：无需处理
+    }
+    const pos = dragPosRef.current;
+    dragPosRef.current = null;
+    setDragPos(null);
+    // 没真正拖动：交给 onClick 打开抽屉
+    if (!movedRef.current || !pos) return;
+    const vw = viewport?.w ?? window.innerWidth;
+    const vh = viewport?.h ?? window.innerHeight;
+    const next: HandlePlacement = {
+      // 吸附到最近的一侧，垂直位置保持松手时的位置
+      side: pos.x + size.w / 2 < vw / 2 ? "left" : "right",
+      bottom: Math.max(HANDLE_INSET, Math.round(vh - pos.y - size.h)),
+    };
+    interactedRef.current = true;
+    setPlacement(next);
+    try {
+      writeHandlePlacement(window.localStorage, next);
+    } catch {
+      // 写不进去也不影响本次会话内的位置
+    }
+  }
+
+  function onHandleClick() {
+    // 拖动结束后的那次 click 不该顺手打开抽屉（movedRef 在 pointerdown 时已复位）
+    if (movedRef.current) return;
+    interactedRef.current = true;
+    setPanelOpen(true);
+  }
+
   if (!m.panelOpen) {
+    // 停靠位置：左侧贴左、右侧贴右；垂直位置由 bottom 换算成左上角坐标
+    const rest = {
+      x: placement.side === "left" ? HANDLE_INSET : Math.max(HANDLE_INSET, (viewport?.w ?? 0) - size.w - HANDLE_INSET),
+      y: Math.max(HANDLE_INSET, (viewport?.h ?? 0) - placement.bottom - size.h),
+    };
+    const pos = dragPos ?? rest;
     return (
       <button
+        ref={handleRef}
         type="button"
         className="music-handle music-dark-scope"
+        data-side={placement.side}
         data-playing={m.isPlaying ? "true" : "false"}
-        onClick={() => m.setPanelOpen(true)}
-        title={track ? `音乐控制 · ${track.name}` : "音乐控制"}
+        data-dragging={dragging ? "true" : "false"}
+        // 位置走 CSS 变量 → transform（见 globals.css）；视口未知时省略，
+        // 让 CSS 的兜底值顶一帧，避免先闪在左上角
+        style={
+          viewport
+            ? ({
+                "--handle-x": `${pos.x}px`,
+                "--handle-y": `${pos.y}px`,
+              } as CSSProperties)
+            : undefined
+        }
+        onClick={onHandleClick}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        title={track ? `音乐控制 · ${track.name}（可拖动）` : "音乐控制（可拖动）"}
         aria-label="展开音乐控制"
         aria-expanded={false}
       >
-        {/* 方向提示：抽屉向左展开，箭头指左（对齐参考项目把手上的方向箭头） */}
+        {/* 方向提示：箭头指向抽屉展开的方向（左侧停靠时由 CSS 镜像 180°） */}
         <ChevronLeft className="music-handle-cue h-4 w-4" />
         {track?.cover ? (
           // unoptimized：封面来自任意第三方图床，next/image 优化器需要远程域名白名单，
@@ -723,8 +925,8 @@ export function MusicSidebar() {
           <Image
             src={track.cover}
             alt=""
-            width={30}
-            height={30}
+            width={38}
+            height={38}
             unoptimized
             className="music-handle-disc"
           />
@@ -741,7 +943,7 @@ export function MusicSidebar() {
     <>
       {/* 遮罩：点空白处收起（抽屉的通用预期）。层级 56 低于音乐列表弹窗(200) */}
       <div className="music-drawer-scrim" onClick={() => m.setPanelOpen(false)} aria-hidden />
-      <section className="music-drawer music-dark-scope" aria-label="音乐控制">
+      <section className="music-drawer music-dark-scope" data-side={placement.side} aria-label="音乐控制">
         <div className="music-drawer-head">
           <span className="music-drawer-title">正在播放</span>
           <button
@@ -855,6 +1057,13 @@ export default function MusicProvider({
   const [localStyle, setLocalStyle] = useState<string | null>(null);
   const [prefs, setPrefs] = useState<MusicPanelPrefs>(DEFAULT_MUSIC_PANEL_PREFS);
   /**
+   * 后台配置的自动播放（站点级）。它不再直接驱动播放，而是当访客从没动过
+   * 「自动播放」开关时的**初值** —— 否则老部署里已开自动播放的站点会被本机默认值静默关掉。
+   * 用 ref 存：读偏好只在挂载时跑一次，而 props 每次渲染都是新对象，
+   * 直接引用会让 effect 的依赖检查报缺失依赖。
+   */
+  const siteAutoplayRef = useRef(props.autoplay ?? false);
+  /**
    * 偏好是否已载入完成。
    *
    * 必须显式传给 useAudioPlayer：它要在挂载时用偏好里的初始音量 / 播放模式 / 续播曲目
@@ -886,7 +1095,7 @@ export default function MusicProvider({
     lyricIndex,
     audioEl,
     setAudioEl,
-  } = useAudioPlayer({ ...props, prefs, prefsReady });
+  } = useAudioPlayer({ ...props, autoplay: prefs.autoplay, prefs, prefsReady });
 
   const [panelOpen, setPanelOpen] = useState(false);
   const [boxOpen, setBoxOpen] = useState(false);
@@ -897,7 +1106,7 @@ export default function MusicProvider({
       const ls = window.localStorage;
       setLocalStyle(ls.getItem(MUSIC_PANEL_STYLE_KEY));
       // 键名表在 lib/musicPanelThemes 里，新增偏好项不必改这里（改漏的症状是「设置完刷新就还原」）
-      setPrefs(readMusicPanelPrefs(ls));
+      setPrefs(readMusicPanelPrefs(ls, { autoplay: siteAutoplayRef.current }));
     } catch {
       // 隐私模式等场景下 localStorage 不可用：保持站点默认与默认偏好
     } finally {

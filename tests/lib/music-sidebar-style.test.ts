@@ -2,16 +2,18 @@ import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 
 /**
- * 音乐侧栏的「可辨识 + 不越层」契约。
+ * 音乐侧栏的「可辨识 + 可拖动 + 不越层」契约。
  *
  * 背景：音乐控制原本内嵌在右栏功能卡的一格里（与一言互换）。内容容器是
  * max-w-6xl(1152px) + md:px-6，视口 1280px 时左右各只剩 64px、1024px 时只剩 24px ——
  * 常驻全高竖栏会压住时钟卡 / 导航卡。所以侧栏必须满足：
  * 1. 收起态是**有边界的竖直把手**（不是全高竖栏，也不是容易被忽略的小圆点）；
- * 2. 把手自带可见提示：方向箭头 + 竖排曲名（用户反馈「圆点太容易被忽略」）；
- * 3. 浮层用 fixed：<main> 是 h-dvh 的滚动容器，只有 fixed 才不被它裁掉、也不计入 scrollHeight；
- * 4. 层级低于公告弹窗与音乐列表弹窗，弹窗打开时被遮罩盖住而不是压在上面；
- * 5. 玻璃质感读站内令牌，不自己写死一套配色。
+ * 2. 把手自带可见提示：方向箭头 + 贴屏强调色把手纹；
+ * 3. 位置用 transform 表达（拖动跟手、松手贴合是一条合成层动画，不触发布局）；
+ * 4. 停靠侧左右可镜像（默认左侧：把手纹贴左、箭头指向抽屉展开方向）；
+ * 5. 浮层用 fixed：<main> 是 h-dvh 的滚动容器，只有 fixed 才不被它裁掉、也不计入 scrollHeight；
+ * 6. 层级低于公告弹窗与音乐列表弹窗，弹窗打开时被遮罩盖住而不是压在上面；
+ * 7. 玻璃质感读站内令牌，不自己写死一套配色。
  */
 const ROOT = new URL("../../", import.meta.url);
 const css = readFileSync(new URL("app/globals.css", ROOT), "utf8").replace(
@@ -36,20 +38,38 @@ function zIndexOf(selector: string): number {
 }
 
 describe("音乐侧栏：收起态是一枚竖直把手", () => {
-  it("把手贴右下角且是胶囊形，竖直排布", () => {
+  it("把手是 44px 宽的胶囊，竖直排布、可抓取", () => {
     const body = ruleBody(".music-handle");
     expect(body).toMatch(/position:\s*fixed/);
-    expect(body).toMatch(/right:\s*1rem/);
-    expect(body).toMatch(/bottom:\s*1rem/);
-    // 44px 宽：够放封面 + 竖排文字，也够手指点
     expect(body).toMatch(/width:\s*2\.75rem/);
     expect(body).toMatch(/border-radius:\s*999px/);
     expect(body).toMatch(/flex-direction:\s*column/);
+    expect(body).toMatch(/cursor:\s*grab/);
+    // 触摸拖动不要变成滚页
+    expect(body).toMatch(/touch-action:\s*none/);
   });
 
-  it("不是全高竖栏：高度随内容自适应，没写死 height", () => {
-    // 全高竖栏会压住右栏的时钟卡 / 导航卡；写死 height 是「退回竖栏」的第一步
-    expect(ruleBody(".music-handle")).not.toMatch(/(^|;)\s*height:\s*\d/);
+  it("不是全高竖栏：高度是一个有边界的固定值，而不是占满视口", () => {
+    const body = ruleBody(".music-handle");
+    expect(body).toMatch(/height:\s*6\.125rem/);
+    expect(body, "全高竖栏会压住右栏的时钟卡 / 导航卡").not.toMatch(/height:\s*(100%|100vh|100dvh|auto)/);
+  });
+
+  it("位置用 transform 表达（合成层动画、不触发布局），并有默认兜底", () => {
+    const body = ruleBody(".music-handle");
+    expect(body).toMatch(/transform:\s*translate3d\(var\(--handle-x/);
+    // 未挂载时（SSR / 首帧）要有默认值：左侧贴底，不能先闪到左上角
+    expect(body).toMatch(/--handle-x:\s*var\(--handle-inset\)/);
+    expect(body).toMatch(/--handle-y:\s*calc\(100dvh - var\(--handle-inset\) - 6\.125rem\)/);
+    expect(body).toMatch(/left:\s*0/);
+    expect(body).toMatch(/top:\s*0/);
+  });
+
+  it("拖动中关掉过渡（跟手）并给出抬起感", () => {
+    const body = ruleBody('.music-handle[data-dragging="true"]');
+    expect(body).toMatch(/transition:\s*none/);
+    expect(body).toMatch(/cursor:\s*grabbing/);
+    expect(body).toMatch(/--handle-scale:\s*1\.06/);
   });
 
   it("把手自带可见提示：方向箭头 + 贴屏强调色把手纹（避免又变回「容易被忽略」的形态）", () => {
@@ -62,15 +82,24 @@ describe("音乐侧栏：收起态是一枚竖直把手", () => {
     // 曲名改由 title 悬浮提示与展开后的抽屉承担；把手一旦重新长出文字，高度与遮挡都会回来
     expect(css).not.toContain(".music-handle-text");
     expect(component).not.toContain("music-handle-text");
-    // 曲名仍要在悬浮提示里，不能连信息一起丢掉
-    expect(component).toMatch(/title=\{track \? `音乐控制 · \$\{track\.name\}` : "音乐控制"\}/);
+    // 曲名仍要在悬浮提示里，还要带上「可拖动」的暗示，否则没人知道能拖
+    expect(component).toMatch(/title=\{track \? `音乐控制 · \$\{track\.name\}（可拖动）` : "音乐控制（可拖动）"\}/);
   });
 
-  it("贴屏一侧有强调色把手纹（呼应参考项目的贴边标签）", () => {
-    const body = ruleBody(".music-handle::after");
-    expect(body).toMatch(/var\(--accent-color/);
+  it("贴屏一侧有强调色把手纹，并随停靠侧镜像", () => {
+    const stripe = ruleBody(".music-handle::after");
+    expect(stripe).toMatch(/var\(--accent-color/);
     // 3px 而不是 2px：2px 在真实缩放下几乎看不见，等于没有这条提示
-    expect(body).toMatch(/width:\s*3px/);
+    expect(stripe).toMatch(/width:\s*3px/);
+    expect(ruleBody('.music-handle[data-side="left"]::after')).toMatch(/left:\s*0\.26rem/);
+    expect(ruleBody('.music-handle[data-side="right"]::after')).toMatch(/right:\s*0\.26rem/);
+  });
+
+  it("箭头始终指向抽屉展开的方向：左侧停靠时镜像 180°", () => {
+    const cue = ruleBody('.music-handle[data-side="left"] .music-handle-cue');
+    expect(cue).toMatch(/transform:\s*rotate\(180deg\)/);
+    // 组件里必须真的带 data-side，否则镜像规则不会生效
+    expect(component).toContain("data-side={placement.side}");
   });
 });
 
@@ -82,6 +111,11 @@ describe("音乐侧栏：不占布局", () => {
 
   it("抽屉宽度自适应窄屏，不做横向溢出", () => {
     expect(ruleBody(".music-drawer")).toMatch(/width:\s*min\(20rem,\s*calc\(100vw - 2rem\)\)/);
+  });
+
+  it("抽屉跟着把手停靠在同一侧", () => {
+    expect(ruleBody('.music-drawer[data-side="left"]')).toMatch(/left:\s*1rem/);
+    expect(ruleBody('.music-drawer[data-side="left"]')).toMatch(/right:\s*auto/);
   });
 });
 
