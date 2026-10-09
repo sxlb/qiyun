@@ -4,11 +4,17 @@ import { NextRequest } from "next/server";
 /**
  * 天气接口的 `region` 字段（供前台欢迎通知复用访客地域，省掉一次请求）。
  *
- * 关键不变式：**region 只在「确实拿到访客自己的公网 IP」且「定位来自腾讯 IP 库」时才出现**。
- * 两个条件缺一不可：
+ * 关键不变式：**region 要同时满足三个条件才出现**：
+ * 1. 确实拿到访客自己的公网 IP（`locIp` 非空）；
+ * 2. 定位来自腾讯位置服务的 IP 库（境内精度最高；高德的 IP 定位常把地级市归到省会）；
+ * 3. 定位至少到市级（腾讯对部分机房/异常 IP 只返回省份，标签会退化成一个省份名）。
+ *
+ * 三个条件缺一不可：
  * - 拿不到访客 IP 时，定位会退化成按**服务器出口 IP** 定位，那是服务器的城市，
  *   展示给访客就是错的（而且看起来像个真实城市，比"未知"更容易误导）；
- * - 高德的 IP 定位常把地级市归到省会，拿它当地域标签比本地离线库更不准。
+ * - 高德的 IP 定位拿当地域标签比本地离线库更不准；
+ * - 只到省级的标签既不准也没意义（实测 114.114.114.114 → 江西省）。
+ *
  * 任一不满足就必须不返回 region，让前台退回 /api/visitor/location（ip2region）。
  * 凡是天气真正落到「站主配置的固定城市」的路径同样不得返回 —— 那是站主的位置。
  */
@@ -26,6 +32,16 @@ function jsonResponse(body: unknown): Response {
 
 /** 本次用例期间的实际出站请求，用来断言「有没有真的去定位」 */
 let calls: string[] = [];
+
+/**
+ * 腾讯 IP 定位的 ad_info。默认是直辖市（省市同名）；
+ * 另有用例专门覆盖「只给到省份」（city / district 皆空）这种精度不足的返回。
+ */
+let tencentAdInfo: { adcode: number; province: string; city: string; district?: string } = {
+  adcode: 110000,
+  province: "北京市",
+  city: "北京市",
+};
 
 function stubApis() {
   calls = [];
@@ -45,8 +61,7 @@ function stubApis() {
         });
       }
       if (url.includes("apis.map.qq.com/ws/location/v1/ip")) {
-        // 直辖市：province 与 city 同名
-        return jsonResponse({ status: 0, result: { ad_info: { adcode: 110000, province: "北京市", city: "北京市" } } });
+        return jsonResponse({ status: 0, result: { ad_info: tencentAdInfo } });
       }
       if (url.includes("apis.map.qq.com/ws/weather/v1/")) {
         return jsonResponse({
@@ -85,6 +100,7 @@ const decodedCalls = () => calls.map((u) => decodeURIComponent(u));
 beforeEach(() => {
   vi.clearAllMocks();
   env.ip = "203.0.113.45";
+  tencentAdInfo = { adcode: 110000, province: "北京市", city: "北京市" };
   stubApis();
 });
 
@@ -125,6 +141,22 @@ describe("天气接口 · 访客地域字段", () => {
     expect(body.city).toBe("北京市");
     // province=北京市 / city=北京市 → 只留一个，不是"北京市 北京市"
     expect(body.region).toBe("北京市");
+  });
+
+  it("腾讯只给到省级（city/district 皆空）时不返回 region —— 标签会退化成一个省份名", async () => {
+    // 实测：114.114.114.114 → province=江西省，city 与 district 均为空。
+    // 此时标签本身就是个省份名，既不准也没意义（还会顺带让上游天气查询"查询无结果"），
+    // 应当不产出 region，让前台退回本地离线库。
+    // 用这个真实 IP 也顺带避开天气结果缓存：缓存键含访客 IP，换 IP 才真的走一遍定位
+    env.ip = "114.114.114.114";
+    tencentAdInfo = { adcode: 360000, province: "江西省", city: "" };
+    profileMock.mockResolvedValue(baseProfile({ txWeatherKey: "t", txWeatherSk: "s" }));
+
+    const { status, body } = await getWeather();
+
+    expect(status).toBe(200);
+    expect(body.city).toBe("江西省"); // 展示名仍逐级回退到省份，保证有名字可显示
+    expect(body.region, "只到省级的定位不能当地域标签").toBeUndefined();
   });
 
   it("拿不到访客公网 IP（私网/代理没转发）时不得返回 region —— 否则显示的是服务器所在城市", async () => {

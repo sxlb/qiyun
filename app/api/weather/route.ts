@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { getClientIp } from "@/lib/server";
 import { pickLocatableIp, resolveAmapCityQuery, buildTencentParams, parseTencentRealtime } from "@/lib/weather";
 import { composeRegionLabel } from "@/lib/region-label";
+import { buildAmapParams } from "@/lib/amap";
 
 export const dynamic = "force-dynamic";
 
@@ -41,13 +42,15 @@ interface WeatherResult {
   /**
    * 访客地域标签（如"广东省 深圳市"）。
    *
-   * 只在**两个条件同时满足**时才带上：
+   * 只在**三个条件同时满足**时才带上：
    * 1. 这次定位用的是访客自己的公网 IP（locIp 非空）—— 拿不到访客 IP 时会退化成
    *    「按服务器出口 IP 定位」，那地方是服务器的城市，展示给访客就是错的；
    * 2. 定位来自腾讯位置服务的 IP 库 —— 它是这几条链路里精度最高的（境内可到区县）。
-   *    高德的 IP 定位刻意不用作访客地域：它常把地级市归到省会，拿它当地域标签反而更不准。
+   *    高德的 IP 定位刻意不用作访客地域：它常把地级市归到省会，拿它当地域标签反而更不准；
+   * 3. 定位至少到市级 —— 腾讯对部分机房/异常 IP 只返回省份（city/district 皆空），
+   *    那时的标签就是个省份名，当地域标签没有意义。
    *
-   * 两个条件任一不满足就不返回 `region`，前台欢迎通知会退回本地离线库
+   * 三个条件任一不满足就不返回 `region`，前台欢迎通知会退回本地离线库
    * （/api/visitor/location，ip2region）。这正是「宁可粗一点，也不能显示错的」的取舍。
    *
    * 反过来，凡是天气查询真正落到「站主配置的固定城市」的路径（高德/腾讯免费版/混合模式配了城市），
@@ -96,30 +99,8 @@ function sanitizeIp(ip: string): string {
 /**
  * 腾讯位置服务 WebServiceAPI 的签名与响应解析见 lib/tencent.ts
  * （其中「请求路径必须参与签名」是最容易踩的坑，已单独抽出并加回归测试）。
+ * 高德的数字签名见 lib/amap.ts（同样抽出：健康检查漏签名曾导致误报）。
  */
-
-/**
- * 高德 Web 服务 API 数字签名（官方规范）：
- * sig = MD5(参数按名升序排序的 "k=v&k=v" 拼接串 + 私钥)
- * - 参与签名的参数包含 key，不含 sig 本身
- * - 值不做 URL 编码（请求时再编码，与官方「＋号正常计算 sig」一致）；私钥直接拼接（无 & 前缀）
- * - MD5 输出小写 hex
- */
-function amapSign(params: Record<string, string>, secret: string): string {
-  const query = Object.keys(params)
-    .sort()
-    .map((k) => `${k}=${params[k]}`)
-    .join("&");
-  return createHash("md5").update(`${query}${secret}`, "utf8").digest("hex");
-}
-
-/** 组装高德请求参数（含可选签名） */
-function buildAmapParams(base: Record<string, string>, secret: string): URLSearchParams {
-  const sp = new URLSearchParams();
-  for (const [k, v] of Object.entries(base)) sp.set(k, v);
-  if (secret) sp.set("sig", amapSign(base, secret));
-  return sp;
-}
 
 // ===== 天气结果缓存（5 分钟 TTL）=====
 // 目的：高德 / 腾讯等外部数据源响应慢且不稳定，
@@ -364,8 +345,11 @@ async function tencentIpLocate(
   const city = ad.city || ad.district || ad.province || "未知地区";
   // 地域标签是「省 + 更细一级」，与上面展示名的回退口径不同（展示名可能直接落到省份上），
   // 所以单独组合；省市同名（直辖市）由 composeRegionLabel 去重。
-  // 限定必须带着访客自己的 IP：locIp 为空时这次定位的是服务器自己，它的省市不能当成访客地域。
-  const region = locIp ? composeRegionLabel(ad.province, ad.city || ad.district) : "";
+  // 三个条件全满足才给标签：带着访客自己的 IP（locIp）、且定位至少到市级。
+  // 腾讯对部分机房/异常 IP 只给到省份（实测 114.114.114.114 → province=江西省、city 与
+  // district 均为空），那时标签本身就是个省份名，既不准也没意义，退回本地离线库更好。
+  const finer = ad.city || ad.district || "";
+  const region = locIp && finer ? composeRegionLabel(ad.province, finer) : "";
   return { adcode, city, region };
 }
 
