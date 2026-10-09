@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
-import MusicProvider, { AUTO_COLLAPSE_MS } from "@/components/home/MusicPlayer";
+import MusicProvider, {
+  AUTO_COLLAPSE_MS,
+  NOTICE_POLL_MS,
+  NOTICE_REVEAL_SETTLE_MS,
+} from "@/components/home/MusicPlayer";
 import { HANDLE_SIDE_KEY, HANDLE_BOTTOM_KEY } from "@/lib/musicPanelThemes";
 
 /**
@@ -9,7 +13,7 @@ import { HANDLE_SIDE_KEY, HANDLE_BOTTOM_KEY } from "@/lib/musicPanelThemes";
  *
  * 收起 / 展开的手感与位置都在 CSS（见 tests/lib/music-sidebar-style.test.ts），
  * 这里锁行为：
- * 1. 加载后默认展开一次，3 秒后自动收起；用户自己动过手就不再收走；
+ * 1. 只在本会话**首次**访问时做一次展开示范，且倒计时从「欢迎通知离场」之后才开始；
  * 2. 单击把手打开抽屉（单击与拖动必须能区分开）；
  * 3. 停靠位置默认左侧，拖动后吸附到最近的一侧并落盘，下次访问沿用；
  * 4. 把手不承担信息位；
@@ -24,15 +28,23 @@ function setup() {
   );
 }
 
-/** 跑过自动收起窗口，回到「只有把手」的稳定态 */
+/** 跑过「等一拍判定 → 3 秒倒计时」，回到「只有把手」的稳定态 */
 function settleAutoCollapse() {
   act(() => {
-    vi.advanceTimersByTime(AUTO_COLLAPSE_MS + 50);
+    vi.advanceTimersByTime(NOTICE_REVEAL_SETTLE_MS + AUTO_COLLAPSE_MS + 50);
   });
 }
 
 const drawerOpen = () => screen.queryByText("正在播放") !== null;
 const handle = () => screen.queryByLabelText("展开音乐控制");
+
+/** 造一块欢迎通知的遮罩（与 AnnouncementNotification 的根节点同名） */
+function mountNoticeScrim(): HTMLElement {
+  const scrim = document.createElement("div");
+  scrim.className = "notice-scrim";
+  document.body.appendChild(scrim);
+  return scrim;
+}
 
 /** jsdom 没有布局：给把手一个合理的矩形（默认左侧贴底），拖动数学才成立 */
 function mockHandleRect() {
@@ -51,7 +63,9 @@ function mockHandleRect() {
 
 beforeEach(() => {
   localStorage.clear();
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  // 「展开示范」的标记记在 sessionStorage：不清会让后面每个用例都跳过开头那段
+  sessionStorage.clear();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
   // 歌单接口返回空数组：抽屉走「尚未配置歌单」分支，不依赖任何网络数据
   vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
 });
@@ -60,13 +74,45 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  document.querySelectorAll(".notice-scrim").forEach((el) => el.remove());
 });
 
-describe("音乐侧栏：加载后自动展开、随后收起", () => {
+describe("音乐侧栏：只首次访问展开一次，且等通知离场后才计时", () => {
   it("挂载即展开，过了自动收起窗口后只留把手", () => {
     setup();
-    expect(drawerOpen(), "加载后应当默认展开一次，让人看见这个入口").toBe(true);
+    expect(drawerOpen(), "首次访问应当展开一次，让人看见这个入口").toBe(true);
     expect(handle()).toBeNull();
+
+    settleAutoCollapse();
+    expect(drawerOpen()).toBe(false);
+    expect(handle()).toBeTruthy();
+  });
+
+  it("同一个标签页里再来一次就不再展开（只示范一次）", () => {
+    sessionStorage.setItem("music-sidebar-intro-shown", "1");
+    setup();
+
+    expect(drawerOpen(), "本会话已经示范过，不该再自动展开").toBe(false);
+    expect(handle()).toBeTruthy();
+  });
+
+  it("欢迎通知还挡着时不开始倒计时，通知关掉后才开始算", () => {
+    const scrim = mountNoticeScrim();
+    setup();
+    expect(drawerOpen()).toBe(true);
+
+    // 通知还在：过了 3 秒也不该收（否则抽屉会在弹窗还开着的时候自己收走）
+    act(() => {
+      vi.advanceTimersByTime(AUTO_COLLAPSE_MS + 1000);
+    });
+    expect(drawerOpen(), "通知还挡着，不该开始倒计时").toBe(true);
+
+    // 关掉通知 → 轮询发现它走了 → 才开始 3 秒倒计时
+    scrim.remove();
+    act(() => {
+      vi.advanceTimersByTime(NOTICE_POLL_MS + 50);
+    });
+    expect(drawerOpen(), "刚关掉通知，倒计时才刚开始").toBe(true);
 
     settleAutoCollapse();
     expect(drawerOpen()).toBe(false);

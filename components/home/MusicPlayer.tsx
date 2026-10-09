@@ -717,8 +717,55 @@ const HANDLE_INSET = 16;
 const HANDLE_DEFAULT_SIZE = { w: 44, h: 98 };
 /** 位移超过这个距离才算「拖动」，否则按点击处理（打开抽屉） */
 const DRAG_THRESHOLD_PX = 4;
-/** 加载后自动收起把手的延时 */
+/** 展开示范的停留时长：过了这一刻就自动收起 */
 export const AUTO_COLLAPSE_MS = 3000;
+/**
+ * 等待欢迎通知离场的轮询间隔。
+ *
+ * 通知什么时候被关是它自己的事，侧栏不该为此替它定义事件、也不该和它共享状态 ——
+ * 直接用「屏幕上还有没有那块遮罩」来判断最省事、也最不容易被通知的改动带偏。
+ * 只有通知确实在屏上时才会轮询，且一关掉立刻停止，代价可以忽略。
+ * （导出仅为本文件的测试用，不是对外 API）
+ */
+export const NOTICE_POLL_MS = 400;
+/**
+ * 欢迎通知遮罩的类名（`AnnouncementNotification` 的根节点）。
+ * 改这里的名字必须同步改通知组件 —— tests/lib/music-sidebar-style.test.ts 有跨文件断言兜着。
+ */
+const NOTICE_SCRIM_SELECTOR = ".notice-scrim";
+/** 「展开示范已做过」的标记：只记本会话，同一个标签页刷新不再打扰（新标签页算新会话） */
+const SIDEBAR_INTRO_KEY = "music-sidebar-intro-shown";
+/**
+ * 加载动画收起后、再去判断「有没有通知」之前先等的那一下。
+ *
+ * 通知是在同一个事件（loading-screen-removed）里被唤出的，React 的提交与这里的检查
+ * 同处一个任务；不等一拍就查 DOM，会查到「通知还没插进来」，于是把有通知误判成没通知。
+ */
+export const NOTICE_REVEAL_SETTLE_MS = 250;
+/**
+ * 等加载动画收起的兜底时长：与欢迎通知自己的兜底同刻（它也是超过这个时间就直接弹出）。
+ * 正常情况下 loading-screen-removed 会先到，这一条只是防止事件丢失后侧栏永远不动作。
+ */
+const NOTICE_REVEAL_FALLBACK_MS = 3000;
+
+/** 本次访问是否还需要做一次展开示范（只读，不写） */
+function readIntroPending(): boolean {
+  try {
+    return window.sessionStorage.getItem(SIDEBAR_INTRO_KEY) !== "1";
+  } catch {
+    // 隐私模式读不到：照常示范一次，宁可多展示也不要功能看起来不存在
+    return true;
+  }
+}
+
+/** 记下「示范已做过」 */
+function markIntroShown(): void {
+  try {
+    window.sessionStorage.setItem(SIDEBAR_INTRO_KEY, "1");
+  } catch {
+    // 写不进去只影响「刷新后是否再示范一次」
+  }
+}
 
 export function MusicSidebar() {
   const m = useMusic();
@@ -781,15 +828,78 @@ export function MusicSidebar() {
   }, [m.panelOpen]);
 
   /**
-   * 加载后默认展开一次，3 秒后自动收起 —— 让访客看见这个入口，然后自己让开。
-   * 访客在这 3 秒内动过手就不再自动收起，避免「刚打开就被收走」。
+   * 本次访问是否需要做一次「展开示范」。
+   *
+   * 只在这里读一次（延迟初始化）：读与写必须分开 —— 若在渲染/副作用里「读不到就立刻写标记」，
+   * 开发模式下 StrictMode 会把 effect 跑两遍，第二遍就读到自己刚写下的标记，
+   * 于是「展开后没有倒计时」，抽屉会一直挂着不收。
+   */
+  const introPendingRef = useRef<boolean | null>(null);
+  if (introPendingRef.current === null) introPendingRef.current = readIntroPending();
+
+  /**
+   * 首次进入（本会话第一次）时做一次「展开示范」：先展开让人看见入口，随后自动收起。
+   *
+   * 倒计时的起点是**欢迎通知离场之后**，不是挂载那一刻：两者同时占屏会让页面被两层遮罩
+   * 叠暗，而且抽屉会在弹窗还开着的时候自己收走，看起来像闪了一下。
    */
   useEffect(() => {
+    if (!introPendingRef.current) return;
+    markIntroShown();
     setPanelOpen(true);
-    const timer = window.setTimeout(() => {
-      if (!interactedRef.current) setPanelOpen(false);
-    }, AUTO_COLLAPSE_MS);
-    return () => window.clearTimeout(timer);
+
+    let collapseTimer = 0;
+    let settleTimer = 0;
+    let pollTimer = 0;
+    let revealFallbackTimer = 0;
+    let judged = false;
+
+    const armCollapse = () => {
+      collapseTimer = window.setTimeout(() => {
+        if (!interactedRef.current) setPanelOpen(false);
+      }, AUTO_COLLAPSE_MS);
+    };
+    const noticeGone = () => !document.querySelector(NOTICE_SCRIM_SELECTOR);
+    const onNoticeGone = () => {
+      window.clearInterval(pollTimer);
+      armCollapse();
+    };
+    /** 等一拍让通知的插入提交完，再判定屏上有没有通知 */
+    const judge = () => {
+      settleTimer = window.setTimeout(() => {
+        if (noticeGone()) {
+          armCollapse();
+          return;
+        }
+        // 通知正挡着：等它被关掉，再从那一刻开始算 3 秒
+        pollTimer = window.setInterval(() => {
+          if (noticeGone()) onNoticeGone();
+        }, NOTICE_POLL_MS);
+      }, NOTICE_REVEAL_SETTLE_MS);
+    };
+    const onLoaderGone = () => {
+      if (judged) return;
+      judged = true;
+      judge();
+    };
+
+    // 与欢迎通知的唤出时机对齐：它同样等「加载动画收起」，或超时后兜底弹出。
+    // 不在这一步对齐，侧栏会在通知还没弹出来时就把「没有通知」当真，提前开始倒计时 ——
+    // 表现就是「通知还开着，抽屉已经自己收走了」。
+    if (!document.getElementById("loader-wrapper")) {
+      onLoaderGone();
+    } else {
+      window.addEventListener("loading-screen-removed", onLoaderGone, { once: true });
+      revealFallbackTimer = window.setTimeout(onLoaderGone, NOTICE_REVEAL_FALLBACK_MS);
+    }
+
+    return () => {
+      window.clearTimeout(collapseTimer);
+      window.clearTimeout(settleTimer);
+      window.clearTimeout(revealFallbackTimer);
+      window.clearInterval(pollTimer);
+      window.removeEventListener("loading-screen-removed", onLoaderGone);
+    };
   }, [setPanelOpen]);
 
   /** 把位置夹在视口内（留出 HANDLE_INSET 的边距） */

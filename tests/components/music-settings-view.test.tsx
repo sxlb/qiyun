@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
-import MusicProvider, { AUTO_COLLAPSE_MS } from "@/components/home/MusicPlayer";
+import MusicProvider, { AUTO_COLLAPSE_MS, NOTICE_REVEAL_SETTLE_MS } from "@/components/home/MusicPlayer";
 
 /**
  * 音乐列表面板里的「设置视图」。
@@ -22,10 +22,10 @@ function setup() {
       <div />
     </MusicProvider>
   );
-  // 音乐侧栏在加载后会默认展开一次、3 秒后自动收起。本文件测的是音乐列表弹窗，
-  // 先把这个自动收起跑完，免得侧栏的「尚未配置歌单」提示与弹窗里的那份重名。
+  // 音乐侧栏在首次访问时会展开示范一次，随后自动收起。本文件测的是音乐列表弹窗，
+  // 先把这个示范跑完，免得侧栏的「尚未配置歌单」提示与弹窗里的那份重名。
   act(() => {
-    vi.advanceTimersByTime(AUTO_COLLAPSE_MS + 50);
+    vi.advanceTimersByTime(NOTICE_REVEAL_SETTLE_MS + AUTO_COLLAPSE_MS + 50);
   });
   act(() => {
     window.dispatchEvent(new Event("toggle-music-player"));
@@ -57,9 +57,11 @@ const GROUP_ITEMS: Record<string, string[]> = {
 
 beforeEach(() => {
   localStorage.clear();
-  // 只替换与本文件相关的两个定时器（侧栏的自动收起），Date / rAF 等保持真实，
+  // 侧栏的「展开示范」标记记在 sessionStorage：不清会让用例之间互相影响
+  sessionStorage.clear();
+  // 只替换与本文件相关的定时器（侧栏的示范与收起的判定），Date / rAF 等保持真实，
   // 避免影响 React 的调度
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
   vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
 });
 

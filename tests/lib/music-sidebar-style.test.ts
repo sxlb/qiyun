@@ -103,6 +103,29 @@ describe("音乐侧栏：收起态是一枚竖直把手", () => {
   });
 });
 
+describe("音乐侧栏：与欢迎通知的时序约定", () => {
+  it("按通知遮罩是否在屏上来判断「能不能开始计时」，类名两边必须一致", () => {
+    const notice = readFileSync(new URL("components/home/AnnouncementNotification.tsx", ROOT), "utf8");
+    // 侧栏拿这个选择器判断通知在不在屏上：改名只改一边就会静默失效（倒计时再也等不到通知）
+    expect(component).toContain('".notice-scrim"');
+    expect(notice).toContain("notice-scrim");
+  });
+
+  it("展开示范只做一次：标记记在 sessionStorage（同一标签页刷新不再打扰）", () => {
+    expect(component).toContain("sessionStorage");
+    expect(component).toContain("music-sidebar-intro-shown");
+  });
+
+  it("与通知的唤出时机对齐（都等加载动画收起，都保留 3 秒兜底）", () => {
+    const notice = readFileSync(new URL("components/home/AnnouncementNotification.tsx", ROOT), "utf8");
+    // 不对齐就会出现「通知还没弹出来，侧栏已经判定没有通知并开始倒计时」
+    for (const marker of ["loading-screen-removed", "loader-wrapper"]) {
+      expect(component, `侧栏缺少与通知对齐的 ${marker}`).toContain(marker);
+      expect(notice, `通知侧缺少 ${marker}`).toContain(marker);
+    }
+  });
+});
+
 describe("音乐侧栏：不占布局", () => {
   it("抽屉与遮罩都是 fixed（<main> 是滚动容器，只有 fixed 不被裁）", () => {
     expect(ruleBody(".music-drawer")).toMatch(/position:\s*fixed/);
