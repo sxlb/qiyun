@@ -225,6 +225,8 @@ export async function getHomeData(
   welcomeEnabled: boolean;
   welcomeIndex: number;
   welcomeMessages: string;
+  /** 浏览器精确定位开关（默认关闭）：开启后前台请求 geolocation 授权，天气与地域标签按设备坐标产出 */
+  preciseLocation: boolean;
 
   // ===== 高级配置 =====
   accentColor: string;
@@ -284,6 +286,15 @@ export async function getHomeData(
 
   const { finalAvatar, avatarShapeClass, avatarStyle } = avatarResult;
 
+  // 精确定位只有在「按访客定位」且配了可做逆地理编码的 Key 时才真正生效：
+  // - 配置固定城市时接口不返回访客地域（见 app/api/weather/route.ts），开关无从产生收益；
+  // - 没有任何 Key 时逆地理编码根本发不出去（免费版腾讯天气只吃城市名）。
+  // 不满足就下发 false，避免前台白弹一次授权框却什么也换不到。
+  const preciseLocation =
+    (profile?.preciseLocation ?? false) &&
+    !(profile?.weatherCity || "").trim() &&
+    Boolean((profile?.amapKey || "").trim() || (profile?.txWeatherKey || "").trim());
+
   return {
     // 基础
     nickname: rawNickname,
@@ -341,6 +352,7 @@ export async function getHomeData(
     welcomeEnabled: profile?.welcomeEnabled ?? true,
     welcomeIndex: profile?.welcomeIndex ?? 0,
     welcomeMessages: profile?.welcomeMessages || JSON.stringify(DEFAULT_WELCOME_MESSAGES),
+    preciseLocation,
 
     // 高级
     accentColor: profile?.accentColor || "",

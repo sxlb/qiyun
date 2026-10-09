@@ -21,8 +21,17 @@ function formSnapshot(v: {
   txWeatherKey: string;
   txWeatherSk: string;
   weatherCity: string;
+  preciseLocation: boolean;
 }): string {
-  return [v.provider, v.amapKey, v.amapSecretKey, v.txWeatherKey, v.txWeatherSk, v.weatherCity].join("\u0000");
+  return [
+    v.provider,
+    v.amapKey,
+    v.amapSecretKey,
+    v.txWeatherKey,
+    v.txWeatherSk,
+    v.weatherCity,
+    v.preciseLocation ? "1" : "0",
+  ].join("\u0000");
 }
 
 const PROVIDERS: { id: Provider; name: string; desc: string; icon: typeof Cloud }[] = [
@@ -44,6 +53,8 @@ export default function WeatherPanel() {
   const [txWeatherKey, setTxWeatherKey] = useState("");
   const [txWeatherSk, setTxWeatherSk] = useState("");
   const [weatherCity, setWeatherCity] = useState("");
+  /** 浏览器精确定位开关：仅对「按访客定位」的场景生效（填写了城市则以城市为准） */
+  const [preciseLocation, setPreciseLocation] = useState(false);
   const [showAmapKey, setShowAmapKey] = useState(false);
   const [showAmapSk, setShowAmapSk] = useState(false);
   const [showTxKey, setShowTxKey] = useState(false);
@@ -56,7 +67,7 @@ export default function WeatherPanel() {
   const baselineRef = useRef<string>("");
 
   /** 当前表单快照 */
-  const snapshot = formSnapshot({ provider, amapKey, amapSecretKey, txWeatherKey, txWeatherSk, weatherCity });
+  const snapshot = formSnapshot({ provider, amapKey, amapSecretKey, txWeatherKey, txWeatherSk, weatherCity, preciseLocation });
 
   useEffect(() => {
     if (loading) return;
@@ -83,6 +94,7 @@ export default function WeatherPanel() {
             txWeatherKey: (data.txWeatherKey as string) || "",
             txWeatherSk: (data.txWeatherSk as string) || "",
             weatherCity: (data.weatherCity as string) || "",
+            preciseLocation: data.preciseLocation === true,
           };
           setProvider(loaded.provider);
           setAmapKey(loaded.amapKey);
@@ -90,6 +102,7 @@ export default function WeatherPanel() {
           setTxWeatherKey(loaded.txWeatherKey);
           setTxWeatherSk(loaded.txWeatherSk);
           setWeatherCity(loaded.weatherCity);
+          setPreciseLocation(loaded.preciseLocation);
           // 记录基线：此后与快照比对即可判断是否有未保存改动
           baselineRef.current = formSnapshot(loaded);
         } else {
@@ -158,6 +171,7 @@ export default function WeatherPanel() {
         txWeatherKey: txWeatherKey.trim(),
         txWeatherSk: txWeatherSk.trim(),
         weatherCity: weatherCity.trim(),
+        preciseLocation,
       };
       const res = await fetch("/api/profile", {
         method: "PUT",
@@ -176,6 +190,7 @@ export default function WeatherPanel() {
           txWeatherKey,
           txWeatherSk,
           weatherCity,
+          preciseLocation,
         });
         setDirty(false);
         return true;
@@ -433,6 +448,36 @@ export default function WeatherPanel() {
             </p>
           </div>
         )}
+
+        {/* 访客定位：仅影响「按访客定位」的场景（填写了固定城市则以城市为准） */}
+        <div className="space-y-1.5">
+          <Label className="text-xs font-medium text-muted-foreground">访客定位</Label>
+          <label
+            className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-input bg-background/50 px-3 py-2.5 transition-colors hover:bg-muted/30"
+            htmlFor="preciseLocation"
+          >
+            <span className="flex flex-col gap-0.5">
+              <span className="text-sm font-medium">浏览器精确定位</span>
+              <span className="text-xs text-muted-foreground leading-relaxed">
+                首次访问时请求定位授权，天气与地域标签按设备坐标产出（可精确到区），
+                不受运营商 IP 登记地影响；拒绝授权或定位失败时自动回退 IP 定位
+              </span>
+            </span>
+            <input
+              id="preciseLocation"
+              type="checkbox"
+              name="preciseLocation"
+              checked={preciseLocation}
+              onChange={(e) => setPreciseLocation(e.target.checked)}
+              className="h-4 w-4 shrink-0 accent-primary"
+            />
+          </label>
+          {weatherCity.trim() && (
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              已填写固定城市，访客统一看到该城市天气，本开关不会生效
+            </p>
+          )}
+        </div>
 
         <Button onClick={save} disabled={saving} className="w-full gap-1.5">
           {saving ? (

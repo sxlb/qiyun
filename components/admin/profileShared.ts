@@ -77,6 +77,8 @@ export interface ProfileShape {
   txWeatherKey: string;
   txWeatherSk: string;
   weatherCity: string;
+  /** 浏览器精确定位开关（默认关闭）：开启后前台请求 geolocation 授权，天气与地域标签按设备坐标产出 */
+  preciseLocation: boolean;
   // 外部服务地址（后台「外部服务」面板读写；空串表示使用内置默认值，见 lib/external-api.ts）
   wallpaperLandscapeApi: string;
   wallpaperLandscapeApiMobile: string;
@@ -161,6 +163,7 @@ export const INITIAL_PROFILE: ProfileShape = {
   txWeatherKey: "",
   txWeatherSk: "",
   weatherCity: "",
+  preciseLocation: false,
   // 外部服务地址：留空即使用内置默认（表单以 placeholder 展示默认值），便于上游失效时快速换源
   wallpaperLandscapeApi: "",
   wallpaperLandscapeApiMobile: "",

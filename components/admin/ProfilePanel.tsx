@@ -98,6 +98,8 @@ interface Profile {
   txWeatherKey: string;
   txWeatherSk: string;
   weatherCity: string;
+  /** 浏览器精确定位开关（本面板不渲染，仅保持整表形状与 profileShared 一致） */
+  preciseLocation: boolean;
 }
 
 const INITIAL: Profile = {
@@ -165,6 +167,7 @@ const INITIAL: Profile = {
   txWeatherKey: "",
   txWeatherSk: "",
   weatherCity: "",
+  preciseLocation: false,
 };
 
 const TIME_FORMATS = [

@@ -153,6 +153,9 @@ export const profileSchema = z.object({
     .max(64, "城市名最长 64 字符")
     .optional()
     .default(""),
+  // 浏览器精确定位开关：开启后前台请求 geolocation 授权，用设备坐标逆地理编码，
+  // 天气与地域标签都据此产出（能绕开「运营商 IP 登记地 ≠ 设备实际位置」）
+  preciseLocation: z.boolean().optional().default(false),
   // 壁纸配置：种类 + 定时切换间隔
   coverType: z
     .enum(["bing", "landscape", "anime", "custom"], {

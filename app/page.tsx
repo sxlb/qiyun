@@ -169,6 +169,7 @@ export default async function Home() {
           siteName={d.nickname}
           welcomeMessages={d.welcomeMessages}
           welcomeIndex={d.welcomeIndex}
+          preciseLocation={d.preciseLocation}
         />
 
         {/* 命令面板：Ctrl/Cmd+K 或 「/」唤起，搜索网站/友链快捷跳转（受后台开关控制） */}
@@ -268,6 +269,7 @@ export default async function Home() {
                         timeFormat={d.timeFormat}
                         showSeconds={d.showSeconds}
                         dateFormat={d.dateFormat}
+                        preciseLocation={d.preciseLocation}
                       />
                     </div>
                   </div>

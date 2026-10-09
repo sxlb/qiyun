@@ -21,6 +21,10 @@ model Profile {
   amapKey              String   @default("")
   amapSecretKey        String   @default("") // 高德私钥（数字签名用，key 开启签名时必填，未开启可留空）
   weatherCity          String   @default("")
+  // 浏览器精确定位开关：开启后前台会请求 geolocation 授权，用设备坐标做逆地理编码，
+  // 天气与地域标签都据此产出 —— 这是唯一能绕开「运营商 IP 登记地 ≠ 设备实际位置」的手段。
+  // 默认关闭：授权框会打断首次访问，应由站主确认后主动开启。
+  preciseLocation      Boolean  @default(false)
   txWeatherKey         String   @default("")
   txWeatherSk          String   @default("") // 腾讯位置服务密钥（数字签名用，key 开启签名时必填）
   coverType            String   @default("bing")
