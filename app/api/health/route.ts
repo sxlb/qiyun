@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireSession, error } from "@/lib/server";
 import { fillTemplate, joinUrl, pickExternalApis, resolveExternalApi } from "@/lib/external-api";
+import { buildAmapParams, describeAmapError } from "@/lib/amap";
 
 export const dynamic = "force-dynamic";
 
@@ -81,22 +82,32 @@ async function probe(id: string, name: string, desc: string, url: string, method
   return status;
 }
 
-/** 高德探测：需校验业务返回 status==="1"（HTTP 恒为 200） */
-async function probeAmap(amapKey: string, city: string): Promise<ServiceStatus> {
-  const searchParams = new URLSearchParams({ key: amapKey, city: city || "210000", extensions: "base" });
-  const target = `https://restapi.amap.com/v3/weather/weatherInfo?${searchParams.toString()}`;
+/**
+ * 高德探测：需校验业务返回 status==="1"（HTTP 恒为 200）。
+ *
+ * 必须带签名：高德 Key 开了数字签名后，不带 sig 的请求会返回 INVALID_USER_SIGNATURE，
+ * 而 HTTP 依然是 200 —— 早期版本这里只传了 key，于是所有开了签名的站点都被误报成
+ * 「Key 无效或权限不足」。签名与错误文案统一走 lib/amap.ts，避免再次各写一套。
+ */
+async function probeAmap(amapKey: string, amapSecret: string, city: string): Promise<ServiceStatus> {
+  const base = { key: amapKey, city: city || "210000", extensions: "base" };
+  const target = `https://restapi.amap.com/v3/weather/weatherInfo?${buildAmapParams(base, amapSecret).toString()}`;
   const result = await probeFetch(target);
   const bizOk = result.body && typeof result.body === "object" && (result.body as { status?: string }).status === "1";
-  // 展示用 URL 剥离 key 参数，避免高德签名 Key 随健康响应明文下发/在页面展示
+  // 展示用 URL 剥离 key / sig 参数，避免密钥随健康响应明文下发或在页面展示
   const displayUrl = `https://restapi.amap.com/v3/weather/weatherInfo?city=${encodeURIComponent(city || "210000")}&extensions=base`;
   return {
     id: "amap",
     name: "高德地图天气",
-    desc: "需在天气设置中配置 Key",
+    desc: "需在天气设置中配置 Key（Key 开启数字签名时还需填私钥）",
     url: displayUrl,
     status: result.ok && bizOk ? "ok" : "fail",
     latency: result.latency,
-    error: result.ok && !bizOk ? "Key 无效或权限不足" : result.status ? `HTTP ${result.status}` : "连接失败或超时",
+    error: result.ok && !bizOk
+      ? describeAmapError(result.body) || "Key 无效或权限不足"
+      : result.status
+        ? `HTTP ${result.status}`
+        : "连接失败或超时",
   };
 }
 
@@ -119,6 +130,7 @@ export async function GET(request: NextRequest) {
   // 数据库异常时回退 null —— 全部按内置默认地址探测，不影响健康检查可用性。
   const profile = await prisma.profile.findFirst({ orderBy: { id: "asc" } }).catch(() => null);
   const amapKey = profile?.amapKey || "";
+  const amapSecretKey = profile?.amapSecretKey || "";
   const weatherCity = profile?.weatherCity || "";
 
   // 探测清单的地址一律取自后台「外部服务」配置（未配置则用内置默认），
@@ -155,7 +167,7 @@ export async function GET(request: NextRequest) {
 
   // 条件探测：仅当后台已配置对应项
   if (amapKey) {
-    probes.push(probeAmap(amapKey, weatherCity));
+    probes.push(probeAmap(amapKey, amapSecretKey, weatherCity));
   }
   if (weatherCity) {
     probes.push(
