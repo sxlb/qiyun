@@ -38,13 +38,15 @@ describe("音乐侧栏：收起 / 展开", () => {
     expect(screen.queryByText("正在播放")).toBeNull();
   });
 
-  it("收起态是竖直把手：带方向箭头与竖排曲名，不是容易被忽略的小圆点", () => {
+  it("收起态是竖直把手：带方向箭头，且不承担信息位（不留常驻曲名）", () => {
     setup();
     const handle = screen.getByLabelText("展开音乐控制");
     expect(handle.className).toContain("music-handle");
-    // 未配置歌单时显示兜底文案「音乐」—— 把手不靠图标单独支撑可辨识度
-    expect(handle.textContent).toContain("音乐");
+    // 方向箭头在（可辨识度靠形态 + 箭头 + 把手纹，不靠文字）
     expect(handle.querySelector("svg")).toBeTruthy();
+    // 不渲染任何常驻文字：曲名只留在 title 悬浮提示里
+    expect(handle.textContent?.trim()).toBe("");
+    expect(handle.getAttribute("title")).toBe("音乐控制");
   });
 
   it("点把手后抽屉出现（含标题与歌单未配置提示）", async () => {

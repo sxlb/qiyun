@@ -52,12 +52,18 @@ describe("音乐侧栏：收起态是一枚竖直把手", () => {
     expect(ruleBody(".music-handle")).not.toMatch(/(^|;)\s*height:\s*\d/);
   });
 
-  it("把手自带可见提示：方向箭头 + 竖排曲名（避免又变回「容易被忽略」的形态）", () => {
-    expect(ruleBody(".music-handle-text")).toMatch(/writing-mode:\s*vertical-rl/);
+  it("把手自带可见提示：方向箭头 + 贴屏强调色把手纹（避免又变回「容易被忽略」的形态）", () => {
     expect(ruleBody(".music-handle-cue")).toMatch(/var\(--accent-color/);
-    // 组件里必须真的渲染这两个元素，否则契约只是空文
+    // 组件里必须真的渲染箭头，否则契约只是空文
     expect(component).toContain("music-handle-cue");
-    expect(component).toContain("music-handle-text");
+  });
+
+  it("把手不承担信息位：不带常驻曲名文字（需求明确只留把手）", () => {
+    // 曲名改由 title 悬浮提示与展开后的抽屉承担；把手一旦重新长出文字，高度与遮挡都会回来
+    expect(css).not.toContain(".music-handle-text");
+    expect(component).not.toContain("music-handle-text");
+    // 曲名仍要在悬浮提示里，不能连信息一起丢掉
+    expect(component).toMatch(/title=\{track \? `音乐控制 · \$\{track\.name\}` : "音乐控制"\}/);
   });
 
   it("贴屏一侧有强调色把手纹（呼应参考项目的贴边标签）", () => {

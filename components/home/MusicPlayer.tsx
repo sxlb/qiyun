@@ -733,8 +733,6 @@ export function MusicSidebar() {
             <Music2 className="h-4 w-4" />
           </span>
         )}
-        {/* 竖排曲名：把手除了「是个入口」，还常驻显示正在放什么 */}
-        <span className="music-handle-text">{track?.name || "音乐"}</span>
       </button>
     );
   }

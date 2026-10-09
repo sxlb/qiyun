@@ -1495,8 +1495,9 @@
    音乐侧栏（右下竖直把手 + 展开抽屉）
    - 音乐控制从「右栏功能卡的一格」搬成右下角浮层：一言卡片不再是音乐面板的宿主。
    - 收起态是**竖直把手**而不是小圆点（参考 xf-music-player 的贴边把手思路）：
-     40px 圆点太依赖「用户知道它在那儿」，实际很容易被忽略。把手面积大、有竖排曲名、
-     还有方向箭头，一眼能看见 —— 顺带把「正在放什么」也变成常驻信息位。
+     40px 圆点太依赖「用户知道它在那儿」，实际很容易被忽略。把手面积大、带方向箭头，
+     贴屏一侧还有一条强调色把手纹，一眼能看见。
+   - 把手**不承担信息位**：不显示曲名，只做入口（曲名留在 title 悬浮提示与展开后的抽屉里）。
    - 为什么不做整根全高的贴边竖栏：右侧没有余量 —— 内容容器 max-w-6xl(1152px) + md:px-6，
      视口 1280px 时左右各只剩 64px，1024px 时只剩 24px；全高竖栏会压住时钟卡 / 导航卡。
      把手做成有边界的胶囊（宽 44px、高随内容自适应），既醒目又不侵占主栏。
@@ -1519,7 +1520,7 @@
     align-items: center;
     gap: 0.55rem;
     width: 2.75rem;
-    padding: 0.7rem 0 0.85rem;
+    padding: 0.65rem 0 0.75rem;
     border: 0;
     border-radius: 999px;
     background-color: rgba(0, 0, 0, calc(var(--card-alpha, 0.35) + 0.28));
@@ -1585,18 +1586,6 @@
   }
   .music-handle[data-playing="true"] .music-handle-disc {
     animation-play-state: running;
-  }
-  /* 竖排曲名：把手「更容易被看见」的关键 —— 它同时是入口和「正在放什么」 */
-  .music-handle-text {
-    writing-mode: vertical-rl;
-    font-size: 0.75rem;
-    line-height: 1.1;
-    letter-spacing: 0.1em;
-    color: rgba(255, 255, 255, 0.8);
-    max-height: 5.5rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .music-drawer-scrim {
