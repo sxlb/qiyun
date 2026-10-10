@@ -91,6 +91,13 @@ interface MusicContextValue {
   currentTime: number;
   loading: boolean;
   error: string;
+  /**
+   * 自动播放被浏览器策略拦截、正等待首次用户交互续播。
+   *
+   * 用于给访客一个可照做的提示（音乐把手上的呼吸圈），否则"开关开着却没声音"
+   * 会被当成功能坏了。移动端浏览器在用户交互前一律拒绝出声，这是策略而非故障。
+   */
+  autoplayBlocked: boolean;
   playNext: () => void;
   playPrev: () => void;
   selectTrack: (t: Track) => void;
@@ -1041,6 +1048,8 @@ export function MusicSidebar() {
         data-side={placement.side}
         data-playing={m.isPlaying ? "true" : "false"}
         data-dragging={dragging ? "true" : "false"}
+        // 自动播放被拦截时给把手挂一个呼吸圈（见 globals.css）：提示"点一下就能出声"
+        data-autoplay-blocked={m.autoplayBlocked ? "true" : "false"}
         // 位置走 CSS 变量 → transform（见 globals.css）；视口未知时省略，
         // 让 CSS 的兜底值顶一帧，避免先闪在左上角
         style={
@@ -1056,8 +1065,14 @@ export function MusicSidebar() {
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
-        title={track ? `音乐控制 · ${track.name}（可拖动）` : "音乐控制（可拖动）"}
-        aria-label="展开音乐控制"
+        title={
+          m.autoplayBlocked
+            ? "浏览器已阻止自动播放，点击页面任意处即可开始播放"
+            : track
+              ? `音乐控制 · ${track.name}（可拖动）`
+              : "音乐控制（可拖动）"
+        }
+        aria-label={m.autoplayBlocked ? "展开音乐控制（点击页面任意处开始播放）" : "展开音乐控制"}
         aria-expanded={false}
       >
         {/* 方向提示：箭头指向抽屉展开的方向（左侧停靠时由 CSS 镜像 180°） */}
@@ -1107,6 +1122,13 @@ export function MusicSidebar() {
         {noData && (
           <p className="music-drawer-empty">
             尚未配置音乐歌单，请在后台音乐设置中填写接口地址和歌单 ID。
+          </p>
+        )}
+
+        {/* 自动播放被浏览器拦截：抽屉常驻可见时这里是最容易被读到的提示位 */}
+        {!noData && m.autoplayBlocked && (
+          <p className="music-drawer-note" role="status">
+            浏览器已阻止自动播放，点击页面任意处即可开始播放
           </p>
         )}
 
@@ -1240,6 +1262,7 @@ export default function MusicProvider({
     currentTime,
     loading,
     error,
+    autoplayBlocked,
     playNext,
     playPrev,
     selectTrack,
@@ -1465,6 +1488,7 @@ export default function MusicProvider({
     currentTime,
     loading,
     error,
+    autoplayBlocked,
     playNext,
     playPrev,
     selectTrack,

@@ -82,6 +82,23 @@ describe("音乐侧栏：收起态是一枚竖直把手", () => {
     expect(body).toMatch(/--handle-scale:\s*1\.06/);
   });
 
+  it("自动播放被拦截时给出可照做的提示：把手呼吸圈 + 抽屉文案", () => {
+    const body = ruleBody('.music-handle[data-autoplay-blocked="true"]');
+    expect(body).toMatch(/animation:\s*music-handle-wait/);
+    // 只动 box-shadow、不碰 transform：把手位置由 transform 控制，动画碰它会与拖动打架
+    expect(body).not.toMatch(/transform/);
+    expect(css).toMatch(/@keyframes music-handle-wait/);
+    // 减弱动态效果下退成静态描边，而不是让光圈一直闪
+    expect(css).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.music-handle\[data-autoplay-blocked="true"\]\s*\{[^}]*animation:\s*none/
+    );
+    // 组件侧必须真的绑上这个属性，否则 CSS 契约只是空文
+    expect(component).toContain('data-autoplay-blocked={m.autoplayBlocked ? "true" : "false"}');
+    // 抽屉是常驻可见时的落点：光晕之外还要有一句读得懂的文字
+    expect(ruleBody(".music-drawer-note")).toMatch(/var\(--accent-color/);
+    expect(component).toContain("浏览器已阻止自动播放，点击页面任意处即可开始播放");
+  });
+
   it("把手自带可见提示：方向箭头 + 贴屏强调色把手纹（避免又变回「容易被忽略」的形态）", () => {
     expect(ruleBody(".music-handle-cue")).toMatch(/var\(--accent-color/);
     // 组件里必须真的渲染箭头，否则契约只是空文
@@ -92,8 +109,11 @@ describe("音乐侧栏：收起态是一枚竖直把手", () => {
     // 曲名改由 title 悬浮提示与展开后的抽屉承担；把手一旦重新长出文字，高度与遮挡都会回来
     expect(css).not.toContain(".music-handle-text");
     expect(component).not.toContain("music-handle-text");
-    // 曲名仍要在悬浮提示里，还要带上「可拖动」的暗示，否则没人知道能拖
-    expect(component).toMatch(/title=\{track \? `音乐控制 · \$\{track\.name\}（可拖动）` : "音乐控制（可拖动）"\}/);
+    // 曲名仍要在悬浮提示里，还要带上「可拖动」的暗示，否则没人知道能拖。
+    // title 现在是三分支（自动播放被拦截时优先提示"点一下就开始播放"），
+    // 因此只断言与曲名相关的两个分支都存在，不去锁整行表达式。
+    expect(component).toMatch(/`音乐控制 · \$\{track\.name\}（可拖动）`/);
+    expect(component).toContain('"音乐控制（可拖动）"');
   });
 
   it("贴屏一侧有强调色把手纹，并随停靠侧镜像", () => {

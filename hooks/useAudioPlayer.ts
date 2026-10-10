@@ -253,6 +253,20 @@ export function formatTime(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
+/**
+ * 是否为「自动播放被浏览器策略拦截」的错误。
+ *
+ * Chrome / Edge / Safari / Firefox 在用户尚未与页面交互时，都以 `NotAllowedError`
+ * 拒绝 `play()`；其它错误（解码失败、音源 404、连接中断等）不属于此列 ——
+ * 那些重试也没有意义，不该挂上"等交互自动播放"的兜底。
+ *
+ * 不用 `instanceof Error`：部分环境的拒绝值是无原型链的 DOMException 或普通对象，
+ * 只按 `name` 判定最稳。
+ */
+function isAutoplayBlockedError(e: unknown): boolean {
+  return !!e && typeof e === "object" && (e as { name?: unknown }).name === "NotAllowedError";
+}
+
 export interface UseAudioPlayerProps {
   /** 歌单 API 地址（三种方案任选其一）：
    *  1. NeteaseMiniPlayer v3 / NeteaseCloudMusicApi 基地址（自动走 track/all + song/url/v1）
@@ -310,6 +324,14 @@ export function useAudioPlayer({
   const [currentTime, setCurrentTime] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  /**
+   * 自动播放被浏览器策略拦截、正等待首次用户交互续播。
+   *
+   * 移动端（Edge / Safari 等）在「用户尚未与页面交互」时一律拒绝 `play()`：
+   * 开关明确开着却一声不响，访客只会以为功能坏了。被拦截时置起这个标记，
+   * 由下方的兜底 effect 在第一次点击 / 触摸 / 按键时自动开始播放。
+   */
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
 
   // 音频元素挂载状态（由 UI 中的 <audio> ref 回调同步）
   const [audioEl, setAudioEl] = useState<HTMLAudioElement | null>(null);
@@ -421,13 +443,43 @@ export function useAudioPlayer({
   // 必须等 prefsReady：偏好是挂载后才从 localStorage 读出来的，不等就会出现
   // 「访客明明关着自动播放，却因为读盘前跑了一轮默认值而响了一声」。
   const autoplayTriedRef = useRef(false);
+  /**
+   * 本次「播放意图」是否由自动播放触发。
+   *
+   * 播放被拒时要区分两种情形：自动播放被策略拦截（值得兜底重试）与用户主动点播放失败
+   * （多半是音频源问题，重试没有意义）。这个 ref 就是那次归因的依据，用后即清。
+   */
+  const autoplayOriginRef = useRef(false);
   useEffect(() => {
     if (!prefsReady || !autoplay || autoplayTriedRef.current) return;
     if (playlist.length === 0 || currentTrack) return;
     autoplayTriedRef.current = true;
+    autoplayOriginRef.current = true;
     setCurrentTrack(playlist[0]);
     setIsPlaying(true);
   }, [prefsReady, autoplay, playlist, currentTrack, setIsPlaying]);
+
+  // ===== 自动播放被拦截后的兜底：首次用户交互时自动续播 =====
+  // 浏览器要求「用户已与文档交互」才允许出声，因此这里不做任何越权尝试，
+  // 只是等到第一次点击 / 触摸 / 按键（浏览器认可的交互）再把播放意图兑现。
+  // 没有这层兜底，被拦截后就永久停在「静音 + 按钮显示未播放」，访客只会以为开关坏了。
+  useEffect(() => {
+    if (!autoplayBlocked) return;
+    let done = false;
+    const resume = () => {
+      // pointerdown 与其后的 click 属于同一次交互，只认第一个
+      if (done) return;
+      done = true;
+      setAutoplayBlocked(false);
+      // 交互已发生，这次 play() 不会被拦截；仍走播放 effect，
+      // 保持「isPlaying 是唯一播放状态源」，也就不存在两处状态打架
+      setIsPlaying(true);
+    };
+    // capture 阶段监听：touchstart 在冒泡前被页面其它逻辑拦下的情况并不少见
+    const types: (keyof WindowEventMap)[] = ["pointerdown", "touchstart", "keydown", "click"];
+    types.forEach((t) => window.addEventListener(t, resume, { capture: true, once: true }));
+    return () => types.forEach((t) => window.removeEventListener(t, resume, { capture: true }));
+  }, [autoplayBlocked, setIsPlaying]);
 
   // ===== 音量 / 静音持久化 =====
   // 上次的非零音量：音量为 0 时点「取消静音」用它恢复，避免恢复成 0 依旧无声
@@ -679,9 +731,17 @@ export function useAudioPlayer({
     const audio = audioEl;
     if (!audio || !currentTrack) return;
     if (isPlaying) {
-      audio.play().catch(() => {
-        // 自动播放可能被浏览器阻止（如切歌/后台开关自动播放时）：
-        // 复位为未播放态，避免按钮显示"暂停"却无声的假播放状态
+      audio.play().catch((e: unknown) => {
+        // 自动播放被策略拦截：不复位成"放弃"，而是标记为待交互续播（见上方兜底 effect），
+        // 既避免"按钮显示暂停却无声"的假播放态，又不让访客永远等不到声音
+        if (autoplayOriginRef.current && isAutoplayBlockedError(e)) {
+          autoplayOriginRef.current = false;
+          setIsPlaying(false);
+          setAutoplayBlocked(true);
+          return;
+        }
+        // 其余情况（用户主动点播放失败 / 音频源问题）：复位为未播放态，保持原有行为
+        autoplayOriginRef.current = false;
         if (process.env.NODE_ENV === "development") console.warn("[MusicPlayer] 自动播放被阻止");
         setIsPlaying(false);
       });
@@ -730,6 +790,8 @@ export function useAudioPlayer({
 
   const togglePlay = useCallback(() => {
     const { playlist: list, currentTrack: track } = stateRef.current;
+    // 访客自己动手了：无论这次是播还是停，"等待交互续播"的兜底都已无意义，撤掉标记
+    setAutoplayBlocked(false);
     if (!track && list.length > 0) {
       // 首次播放：设置当前歌曲，由播放 effect 触发
       setCurrentTrack(list[0]);
@@ -745,6 +807,7 @@ export function useAudioPlayer({
 
   const selectTrack = useCallback((track: Track) => {
     errorCountRef.current = 0;
+    setAutoplayBlocked(false);
     setCurrentTrack(track);
     setIsPlaying(true);
   }, []);
@@ -808,6 +871,7 @@ export function useAudioPlayer({
     currentTime,
     loading,
     error,
+    autoplayBlocked,
     playNext,
     playPrev,
     selectTrack,

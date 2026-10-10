@@ -1631,6 +1631,12 @@
     box-shadow: var(--shadow-4),
       0 0 0 2px color-mix(in srgb, var(--accent-color, #7dd3fc) 55%, transparent);
   }
+  /* 自动播放被浏览器策略拦截、等待首次交互续播：一圈呼吸的强调色光晕。
+     与「正在播放」的实色描边刻意区分（那是有声音，这是还没出声），
+     提示访客「点一下页面就开始」，否则开关开着却没声音只会被当成坏了。 */
+  .music-handle[data-autoplay-blocked="true"] {
+    animation: music-handle-wait 2s ease-in-out infinite;
+  }
   /* 方向提示：箭头始终指向抽屉展开的方向。默认右侧停靠（抽屉往左开）用左箭头，
      左侧停靠时镜像 180° 变成往右指。 */
   .music-handle-cue {
@@ -1840,6 +1846,16 @@
     line-height: 1.6;
     color: rgba(255, 255, 255, 0.55);
   }
+  /* 自动播放被拦截的提示：比普通说明更醒目一档（用强调色），因为它是「要你动手」而不是「告知现状」 */
+  .music-drawer-note {
+    margin: 0;
+    padding: 0.4rem 0.6rem;
+    border-radius: var(--radius-sm);
+    background-color: color-mix(in srgb, var(--accent-color, #7dd3fc) 14%, transparent);
+    font-size: 0.75rem;
+    line-height: 1.6;
+    color: color-mix(in srgb, var(--accent-color, #7dd3fc) 88%, white);
+  }
   /* 键盘可达：四个可点元素共用同一圈强调色焦点环 */
   .music-handle:focus-visible,
   .music-icon-btn:focus-visible,
@@ -1854,6 +1870,18 @@
 @keyframes music-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+/* 等待首次交互的呼吸光晕：只动 box-shadow，不碰 transform —— 把手位置由 transform 控制 */
+@keyframes music-handle-wait {
+  0%,
+  100% {
+    box-shadow: var(--shadow-4),
+      0 0 0 2px color-mix(in srgb, var(--accent-color, #7dd3fc) 34%, transparent);
+  }
+  50% {
+    box-shadow: var(--shadow-5),
+      0 0 0 7px color-mix(in srgb, var(--accent-color, #7dd3fc) 0%, transparent);
   }
 }
 @keyframes music-drawer-in {
@@ -1873,6 +1901,12 @@
   }
   .music-handle[data-playing="true"] .music-handle-disc {
     animation: none;
+  }
+  /* 呼吸光晕改为静态描边：仍能提示"待播放"，但不闪动 */
+  .music-handle[data-autoplay-blocked="true"] {
+    animation: none;
+    box-shadow: var(--shadow-4),
+      0 0 0 2px color-mix(in srgb, var(--accent-color, #7dd3fc) 45%, transparent);
   }
 }
 
