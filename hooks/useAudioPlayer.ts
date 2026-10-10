@@ -367,6 +367,11 @@ export function useAudioPlayer({
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   audioElRef.current = audioEl;
 
+  // isPlaying 的镜像：下面「回到前台恢复播放」的监听只在挂载时绑定一次，
+  // 需要在回调里读到最新的播放意图（而不是闭包捕获的初始值）。
+  const isPlayingRef = useRef(false);
+  isPlayingRef.current = isPlaying;
+
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(PROGRESS_KEY) || "{}");
@@ -749,6 +754,34 @@ export function useAudioPlayer({
       audio.pause();
     }
   }, [audioEl, isPlaying, currentTrack]);
+
+  /**
+   * 回到前台时恢复播放。
+   *
+   * 页面切到后台一段时间后，浏览器/系统会自行暂停 <audio>（移动端省电、锁屏、
+   * Edge 效率模式等），组件侧只收到一个 pause 事件。若把它当成「用户暂停」，
+   * 访客切出去再回来就再也听不到声音 —— 这正是「切出当前网页后音乐就停了」的成因。
+   * 因此 MusicPlayer 的 onPause 只在页面可见时才改写 isPlaying；这里负责在重新可见时
+   * 按播放意图把音频拉起来（play 成功后 <audio> 的 play 事件会把状态同步回 true）。
+   */
+  useEffect(() => {
+    const resumeIfNeeded = () => {
+      if (document.visibilityState !== "visible") return;
+      const audio = audioElRef.current;
+      // 只在「意图仍是播放、但音频确实停着」时介入，不做任何主动暂停或切歌
+      if (!audio || !isPlayingRef.current || !audio.paused) return;
+      audio.play().catch(() => {
+        /* 音源失效等情况下保持暂停态，不打扰访客 */
+      });
+    };
+    document.addEventListener("visibilitychange", resumeIfNeeded);
+    // bfcache 恢复（前进/后退）不会触发 visibilitychange，单独补一个入口
+    window.addEventListener("pageshow", resumeIfNeeded);
+    return () => {
+      document.removeEventListener("visibilitychange", resumeIfNeeded);
+      window.removeEventListener("pageshow", resumeIfNeeded);
+    };
+  }, []);
 
   // 切换曲目：src 变化后浏览器自动开始加载，无需显式 load()
   // （显式 load() 会中断播放 effect 中已发起的 play()，导致切歌/首次播放无声）

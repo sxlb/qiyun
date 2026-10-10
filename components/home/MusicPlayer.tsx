@@ -1472,6 +1472,19 @@ export default function MusicProvider({
     }
   }, [audioEl, currentTime, duration, prefs.mediaSession]);
 
+  // Media Session：把播放/暂停状态同步给系统 UI（锁屏、通知栏、耳机按键）。
+  // 系统据此显示正确的按钮，也更容易把这个页面识别成「正在播放的媒体」，
+  // 减少被后台省电策略直接暂停的概率。
+  useEffect(() => {
+    if (!prefs.mediaSession) return;
+    if (!("mediaSession" in navigator)) return;
+    try {
+      navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
+    } catch {
+      /* 个别浏览器不支持写入该属性，忽略即可 */
+    }
+  }, [isPlaying, prefs.mediaSession]);
+
   const value: MusicContextValue = {
     isPlaying,
     togglePlay,
@@ -1526,7 +1539,14 @@ export default function MusicProvider({
         ref={audioRefCallback}
         src={currentTrack?.url}
         onPlay={() => setIsPlaying(true)}
-        onPause={() => setIsPlaying(false)}
+        onPause={() => {
+          // 页面不可见时收到的暂停，通常来自浏览器/系统的后台策略（移动端省电、
+          // 锁屏、Edge 效率模式），而不是访客的意图。此时保留播放态，回到前台会自动拉起
+          // —— 若在这里一律置为暂停，访客切出去再回来就再也不会响（表现为「音乐莫名停了」）。
+          // 访客主动暂停、以及系统媒体控件的暂停都会先经过 togglePlay，状态仍能正确落到 false。
+          if (document.hidden) return;
+          setIsPlaying(false);
+        }}
       />
       {boxOpen && <MusicModal />}
       {/* 音乐侧栏常驻右下角：放在 Provider 内直接读上下文，不需要页面再挂一个入口 */}
