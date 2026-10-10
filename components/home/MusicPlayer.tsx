@@ -28,6 +28,7 @@ import {
   type LyricLine,
   type UseAudioPlayerProps,
   type PlayMode,
+  type PlaylistStatus,
 } from "@/hooks/useAudioPlayer";
 import {
   resolveMusicPanelStyle,
@@ -73,6 +74,24 @@ const PLAY_MODE_META: Record<PlayMode, { label: string; Icon: LucideIcon }> = {
 
 /* ==================== 播放器上下文 ==================== */
 
+/**
+ * 歌单为空时的提示文案（面板与抽屉共用，避免两处措辞各改一半）。
+ *
+ * 区分「未配置」与「配置了却拉不到」是这次修复的重点：此前两种情况共用同一句
+ * 「尚未配置音乐歌单」，于是接口地址不适用、歌单为空、曲目全无版权这些情况
+ * 全被误报成「没配置」—— 站主照着提示去填，也不知道到底该改哪一项。
+ * 加载中返回 null（不提示），避免刚进页面闪一下。
+ */
+function emptyHintFor(status: PlaylistStatus): string | null {
+  if (status === "unconfigured") {
+    return "尚未配置音乐歌单，请在后台音乐设置中填写接口地址和歌单 ID。";
+  }
+  if (status === "empty") {
+    return "拉取不到歌单，请检查后台音乐设置里的 API 地址与歌单 ID 是否正确、歌单是否有可播放的歌曲。";
+  }
+  return null;
+}
+
 interface MusicContextValue {
   // 播放核心（来自 useAudioPlayer）
   isPlaying: boolean;
@@ -81,6 +100,8 @@ interface MusicContextValue {
   pause: () => void;
   currentTrack: Track | null;
   playlist: Track[];
+  /** 歌单加载状态：前台据此区分「未配置」与「配置了却拉不到歌单」 */
+  playlistStatus: PlaylistStatus;
   playMode: PlayMode;
   cyclePlayMode: () => void;
   volume: number;
@@ -567,7 +588,7 @@ function MusicModal() {
     if (!m.isPlaying) window.dispatchEvent(new Event("music-player-close"));
   };
   const index = m.playlist.findIndex((t) => t.id === m.currentTrack?.id);
-  const noData = !m.currentTrack && m.playlist.length === 0;
+  const emptyHint = emptyHintFor(m.playlistStatus);
   const ModeIcon = PLAY_MODE_META[m.playMode].Icon;
   // 面板观感变量：不透明度（color-mix 只降底色 alpha）与歌词对齐覆盖
   // （「跟随风格」时不注入，把对齐交给 .mp[data-style] 自己的 --mp-lyric-align）
@@ -634,9 +655,7 @@ function MusicModal() {
         ) : (
           <>
             {m.error && <div className="mp-note mp-error">{m.error}</div>}
-            {noData && (
-              <div className="mp-note mp-empty">尚未配置音乐歌单，请在后台音乐设置中填写接口地址和歌单 ID。</div>
-            )}
+            {emptyHint && <div className="mp-note mp-empty">{emptyHint}</div>}
 
         {/* 分区一：当前播放（唱片 + 曲目信息 + 传输控制 + 进度 + 音量/播放模式） */}
         <section className="mp-section mp-section-stage">
@@ -796,6 +815,7 @@ export function MusicSidebar() {
   const { setPanelOpen, setPanelModal, sidebarDefault } = m;
   const track = m.currentTrack;
   const noData = !track && m.playlist.length === 0;
+  const emptyHint = emptyHintFor(m.playlistStatus);
 
   const handleRef = useRef<HTMLButtonElement | null>(null);
   /** 停靠位置（左右 + 距底）：默认左侧，拖动后落盘 */
@@ -1119,11 +1139,7 @@ export function MusicSidebar() {
           </button>
         </div>
 
-        {noData && (
-          <p className="music-drawer-empty">
-            尚未配置音乐歌单，请在后台音乐设置中填写接口地址和歌单 ID。
-          </p>
-        )}
+        {emptyHint && <p className="music-drawer-empty">{emptyHint}</p>}
 
         {/* 自动播放被浏览器拦截：抽屉常驻可见时这里是最容易被读到的提示位 */}
         {!noData && m.autoplayBlocked && (
@@ -1252,6 +1268,7 @@ export default function MusicProvider({
     togglePlay,
     currentTrack,
     playlist,
+    playlistStatus,
     playMode,
     cyclePlayMode,
     volume,
@@ -1491,6 +1508,7 @@ export default function MusicProvider({
     pause,
     currentTrack,
     playlist,
+    playlistStatus,
     playMode,
     cyclePlayMode,
     volume,

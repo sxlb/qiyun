@@ -204,6 +204,10 @@ export const profileSchema = z.object({
     .max(64, "歌单 ID 过长")
     .optional()
     .default("3778678"),
+  // 音乐账户 Cookie（可选）：填站主自己的会员登录态，服务端取歌单与播放地址时带上，
+  // VIP / 无版权曲目也能播。上限放宽到 8KB —— 从浏览器复制出来的整串 cookie 常在 1KB 上下。
+  songCookieNetease: z.string().max(8192, "网易云 Cookie 过长").optional().default(""),
+  songCookieTencent: z.string().max(8192, "QQ 音乐 Cookie 过长").optional().default(""),
   // 音乐自动播放：开启后前台歌单加载完成即尝试自动播放（浏览器可能拦截，拦截时静默放弃）
   musicAutoplay: z.boolean().optional().default(false),
   // 页脚配置

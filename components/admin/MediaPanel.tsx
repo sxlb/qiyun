@@ -18,7 +18,7 @@ import {
   ChevronRight,
   HardDrive,
 } from "lucide-react";
-import { PanelHeader, EmptyState } from "./panel";
+import { PanelHeader, EmptyState, AddRowButton } from "./panel";
 import { useDataFetcher } from "./useDataFetcher";
 import { groupCachedWallpapers, cacheTagLabel, type WallpaperCacheTag } from "@/lib/wallpaperTags";
 import { gridThumbAttrs } from "@/lib/mediaThumb";
@@ -314,7 +314,7 @@ export default function MediaPanel() {
             加载中...
           </div>
         ) : items.length === 0 ? (
-          <EmptyState icon={<ImageIcon className="h-5 w-5" />} title="暂无媒体" hint="点击右上角「上传图片」添加，或切换类型筛选" />
+          <EmptyState icon={<ImageIcon className="h-5 w-5" />} title="暂无媒体" hint="点击「上传图片」添加，或切换类型筛选" />
         ) : (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {items.map((item) => (
@@ -413,6 +413,15 @@ export default function MediaPanel() {
             </div>
           </div>
         )}
+
+        {/* 列表底部再放一个上传入口：一页图片较多时不必滚回顶部 */}
+        <div className="mt-3">
+          <AddRowButton
+            label="上传图片"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+          />
+        </div>
 
         {/* 壁纸缓存分区：数据源是 data/wallpapers 的 manifest，不是 ImageAsset —— 缓存会被
             自动裁剪，登记进媒体库会留下「记录还在、文件已被删」的死链接，故独立展示 */}

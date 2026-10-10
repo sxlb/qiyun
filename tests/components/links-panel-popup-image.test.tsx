@@ -61,13 +61,15 @@ async function renderPanel({ showTip, items = [] }: { showTip: boolean; items?: 
       />
     </GlobalSaveProvider>
   );
-  await screen.findByRole("button", { name: /添加链接/ });
+  // 顶部与列表底部各有一个添加入口（后者是后加的），等任一个出现即可
+  await screen.findAllByRole("button", { name: /添加链接/ });
   return calls;
 }
 
-/** 新增一行并展开（展开态下才有全部字段） */
+/** 新增一行并展开（展开态下才有全部字段）。两个添加入口行为一致，固定取顶部那个 */
 async function addRow(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("button", { name: /添加链接/ }));
+  const [topAdd] = screen.getAllByRole("button", { name: /添加链接/ });
+  await user.click(topAdd);
   await screen.findByLabelText("名称");
 }
 

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Plus } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 
 /**
@@ -134,5 +134,35 @@ export function SubTitle({ children }: { children: ReactNode }) {
       </h4>
       <div className="h-px flex-1 bg-border/60" />
     </div>
+  );
+}
+
+/**
+ * 列表末尾的「添加」入口。
+ *
+ * 各面板原本只在右上角放添加入口，条目一多就得先滚回顶部才能接着加 —— 列表越长越别扭，
+ * 手机上尤其明显。这里在列表尾部再提供一个能力相同的入口；顶部那个保留，
+ * 因为在顶部时没必要先滚到底。
+ */
+export function AddRowButton({
+  label,
+  onClick,
+  disabled,
+}: {
+  /** 按钮文案，与顶部入口保持一致（如「添加技能」） */
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-border py-2.5 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:bg-muted/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <Plus className="h-4 w-4" aria-hidden />
+      {label}
+    </button>
   );
 }

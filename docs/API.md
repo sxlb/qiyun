@@ -1751,6 +1751,8 @@ Cookie 头中会设置 `qiyun-uv=1`（httpOnly, sameSite=lax, maxAge=365 天）�
 | `songApi` | String | "" | 音乐 API 基地址 |
 | `songServer` | String | "netease" | 音乐服务器 |
 | `songId` | String | "" | 歌单 ID |
+| `songCookieNetease` | String | "" | 网易云账户 Cookie（可选）：服务端取播放地址时透传，用会员权限播 VIP 曲目。敏感字段，操作日志只记「已配置/未配置」 |
+| `songCookieTencent` | String | "" | QQ 音乐账户 Cookie（可选）：QQ 音乐官方接口必须带，否则取不到任何播放地址（第三方源如 Meting 不需要）。同样按敏感字段处理 |
 | `musicAutoplay` | Boolean | false | 音乐自动播放的**站点初值**：访客在播放器「设置 → 播放 → 自动播放」里显式设过就以访客为准（该开关本机默认关闭） |
 | `musicSidebarDefault` | String | "demo" | 音乐侧栏进门时的默认状态：`demo` 首次访问展开示范一次、通知离场后 3 秒收起 / `expand` 默认展开并保持（**不铺满屏遮罩**，不挡页面操作）/ `collapse` 默认收起、只留贴边把手 |
 | `siteUrl` | String | "" | 站点 URL |

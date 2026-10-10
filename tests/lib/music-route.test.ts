@@ -264,3 +264,371 @@ describe("音乐接口 SSRF 防护", () => {
     expect(await res.json()).toEqual([]);
   });
 });
+
+/**
+ * 网易云官方 API 直连（music.163.com/api）。
+ *
+ * 背景：后台「选择 API 源」里有「网易云官方 API（直连）」这一项，但官方接口的路径
+ * 与开源 NeteaseCloudMusicApi 完全不同（官方没有 /playlist/track/all 与 /song/url/v1），
+ * 此前会被拼成不存在的地址，歌单恒为空 —— 前台于是提示「尚未配置音乐歌单」，
+ * 而站主明明已经配置过了。
+ *
+ * 这里锁住官方分支的三步链路（歌单 → 歌曲信息 → 播放地址）、字段组装，
+ * 以及「无版权曲目跳过」与「不再回退到开源路径」两条行为。
+ */
+describe("网易云官方 API 直连", () => {
+  const fetchMock = vi.fn();
+
+  const DETAIL = { playlist: { trackIds: [{ id: 101 }, { id: 102 }, { id: 103 }] } };
+  const SONGS = {
+    songs: [
+      { id: 101, name: "免费歌", ar: [{ name: "歌手A" }], al: { picUrl: "https://cdn/101.jpg" } },
+      { id: 102, name: "VIP歌", ar: [{ name: "歌手B" }], al: { picUrl: "https://cdn/102.jpg" } },
+      { id: 103, name: "另一首", ar: [{ name: "歌手C" }], al: { picUrl: "https://cdn/103.jpg" } },
+    ],
+  };
+  // 官方对 VIP / 无版权曲目返回 url: null（不是报错，跳过即可）
+  const URLS = {
+    data: [
+      { id: 101, url: "https://cdn/101.mp3" },
+      { id: 102, url: null },
+      { id: 103, url: "https://cdn/103.mp3" },
+    ],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+    // music.163.com 必须解析到公网 IP 才会被 SSRF 校验放行
+    vi.spyOn(dns.promises, "lookup").mockResolvedValue([
+      { address: "93.184.216.34", family: 4 },
+    ] as never);
+  });
+
+  /** 按官方端点分发响应 */
+  function stubOfficial(): void {
+    fetchMock.mockImplementation((url: string) => {
+      const u = new URL(url);
+      if (u.pathname.endsWith("/v6/playlist/detail")) {
+        return Promise.resolve(new Response(JSON.stringify(DETAIL), { status: 200 }));
+      }
+      if (u.pathname.endsWith("/song/detail")) {
+        return Promise.resolve(new Response(JSON.stringify(SONGS), { status: 200 }));
+      }
+      if (u.pathname.endsWith("/song/enhance/player/url")) {
+        return Promise.resolve(new Response(JSON.stringify(URLS), { status: 200 }));
+      }
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    });
+  }
+
+  it("按官方路径取歌单与播放地址，无版权曲目跳过", async () => {
+    stubOfficial();
+
+    const res = await GET(
+      makeRequest("?api=https://music.163.com/api&server=netease&type=playlist&id=3778678")
+    );
+
+    expect(await res.json()).toEqual([
+      {
+        id: "101",
+        name: "免费歌",
+        artist: "歌手A",
+        url: "https://cdn/101.mp3",
+        cover: "https://cdn/101.jpg",
+        lrc: "https://music.163.com/api/song/lyric?id=101&lv=1&kv=1&tv=-1",
+      },
+      {
+        id: "103",
+        name: "另一首",
+        artist: "歌手C",
+        url: "https://cdn/103.mp3",
+        cover: "https://cdn/103.jpg",
+        lrc: "https://music.163.com/api/song/lyric?id=103&lv=1&kv=1&tv=-1",
+      },
+    ]);
+  });
+
+  it("命中官方主机后不再尝试开源实现的两条路径（它们对官方域名必然 404）", async () => {
+    stubOfficial();
+
+    await GET(makeRequest("?api=https://music.163.com/api&server=netease&type=playlist&id=1"));
+
+    const paths = fetchMock.mock.calls.map((c) => new URL(c[0] as string).pathname);
+    expect(paths.some((p) => p.includes("/playlist/track/all"))).toBe(false);
+    expect(paths.some((p) => p.includes("/song/url"))).toBe(false);
+  });
+
+  it("只填 https://music.163.com（不带 /api）也能拼出正确路径", async () => {
+    stubOfficial();
+
+    await GET(makeRequest("?api=https://music.163.com&server=netease&type=playlist&id=1"));
+
+    const first = new URL(fetchMock.mock.calls[0][0] as string);
+    expect(first.pathname).toBe("/api/v6/playlist/detail");
+  });
+
+  it("歌单不存在（官方返回业务错误对象）返回空列表", async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ code: 404, message: "接口未找到！" }), { status: 200 })
+      )
+    );
+
+    const res = await GET(
+      makeRequest("?api=https://music.163.com/api&server=netease&type=playlist&id=999")
+    );
+
+    expect(await res.json()).toEqual([]);
+  });
+
+  it("歌曲信息接口失败时仍能播放，歌名兜底而不是整单丢弃", async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const u = new URL(url);
+      if (u.pathname.endsWith("/v6/playlist/detail")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ playlist: { trackIds: [{ id: 7 }] } }), { status: 200 })
+        );
+      }
+      if (u.pathname.endsWith("/song/detail")) {
+        return Promise.resolve(new Response("boom", { status: 500 }));
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ data: [{ id: 7, url: "https://cdn/7.mp3" }] }), {
+          status: 200,
+        })
+      );
+    });
+
+    const res = await GET(
+      makeRequest("?api=https://music.163.com/api&server=netease&type=playlist&id=1")
+    );
+    const body = await res.json();
+
+    expect(body).toHaveLength(1);
+    expect(body[0]).toMatchObject({
+      id: "7",
+      name: "未知歌曲",
+      artist: "未知歌手",
+      url: "https://cdn/7.mp3",
+    });
+  });
+});
+
+/**
+ * 账户 Cookie 透传与 QQ 音乐官方直连。
+ *
+ * QQ 音乐与网易云的关键差别：**未登录时官方不给任何播放地址**（结果码 104003），
+ * 只有带上站主的 Cookie 才取得到 purl。这里锁住 Cookie 的透传方式（请求头）、
+ * 从 Cookie 解析 uin、地址拼接，以及「不填 Cookie 就一首也播不了」这条真实行为。
+ */
+describe("音乐账户 Cookie 与 QQ 音乐直连", () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(dns.promises, "lookup").mockResolvedValue([
+      { address: "93.184.216.34", family: 4 },
+    ] as never);
+    const { prisma } = await import("@/lib/db");
+    (prisma.profile.findFirst as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue(null);
+  });
+
+  /** 让后台配置查询返回给定 profile */
+  async function withProfile(profile: Record<string, unknown>): Promise<void> {
+    const { prisma } = await import("@/lib/db");
+    (prisma.profile.findFirst as ReturnType<typeof vi.fn>).mockResolvedValueOnce(profile);
+  }
+
+  /** 取出某次上游请求带的 Cookie */
+  function cookieOf(call: unknown[]): string | undefined {
+    const init = call[1] as RequestInit | undefined;
+    return (init?.headers as Record<string, string> | undefined)?.Cookie;
+  }
+
+  it("网易云官方直连把账户 Cookie 透传给每一个上游请求", async () => {
+    await withProfile({
+      songApi: "https://music.163.com/api",
+      songCookieNetease: "MUSIC_U=abc123",
+    });
+    fetchMock.mockImplementation((url: string) => {
+      const u = new URL(url);
+      if (u.pathname.endsWith("/v6/playlist/detail")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ playlist: { trackIds: [{ id: 1 }] } }), { status: 200 })
+        );
+      }
+      if (u.pathname.endsWith("/song/enhance/player/url")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ data: [{ id: 1, url: "https://cdn/1.mp3" }] }), {
+            status: 200,
+          })
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ songs: [{ id: 1, name: "VIP 歌" }] }), { status: 200 })
+      );
+    });
+
+    const res = await GET(
+      makeRequest("?api=https://music.163.com/api&server=netease&type=playlist&id=1")
+    );
+    expect(await res.json()).toHaveLength(1);
+
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+    for (const call of fetchMock.mock.calls) {
+      expect(cookieOf(call)).toBe("MUSIC_U=abc123");
+    }
+  });
+
+  it("未配置 Cookie 时不带 Cookie 头（不凭空发凭据）", async () => {
+    await withProfile({ songApi: "https://music.163.com/api", songCookieNetease: "" });
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(new Response(JSON.stringify({ code: 404 }), { status: 200 }))
+    );
+
+    await GET(makeRequest("?api=https://music.163.com/api&server=netease&type=playlist&id=1"));
+
+    expect(fetchMock.mock.calls.some((c) => cookieOf(c))).toBe(false);
+  });
+
+  it("QQ 音乐官方链路：歌单 → vkey → 拼出完整播放地址，无版权的跳过", async () => {
+    await withProfile({
+      songApi: "https://y.qq.com",
+      songCookieTencent: "uin=12345; qm_keyst=xyz",
+    });
+
+    fetchMock.mockImplementation((url: string) => {
+      const u = new URL(url);
+      if (u.pathname.includes("fcg_ucc_getcdinfo_byids_cp")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              code: 0,
+              cdlist: [
+                {
+                  songlist: [
+                    { songmid: "AAA", songname: "QQ 歌一", singer: [{ name: "歌手Q" }], albummid: "ALB1" },
+                    { songmid: "BBB", songname: "QQ 歌二", singer: [{ name: "歌手W" }], albummid: "ALB2" },
+                  ],
+                },
+              ],
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      if (u.pathname.includes("musicu.fcg")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              req_0: {
+                code: 0,
+                data: {
+                  sip: ["http://dl.stream.qqmusic.qq.com/"],
+                  midurlinfo: [
+                    { songmid: "AAA", purl: "M500AAA.mp3?vkey=v1" },
+                    // 无版权 / 未授权：官方不给 purl
+                    { songmid: "BBB", purl: "" },
+                  ],
+                },
+              },
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    });
+
+    const res = await GET(
+      makeRequest("?api=https://y.qq.com&server=tencent&type=playlist&id=7011264340")
+    );
+
+    expect(await res.json()).toEqual([
+      {
+        id: "AAA",
+        name: "QQ 歌一",
+        artist: "歌手Q",
+        url: "http://dl.stream.qqmusic.qq.com/M500AAA.mp3?vkey=v1",
+        cover: "https://y.qq.com/music/photo_new/T002R300x300M000ALB1.jpg",
+        lrc: "",
+      },
+    ]);
+
+    // vkey 请求要带上从 Cookie 解析出的 uin，否则官方按未登录处理、purl 全空
+    const vkeyCall = fetchMock.mock.calls.find((c) => String(c[0]).includes("musicu.fcg"));
+    expect(vkeyCall, "未发出 vkey 请求").toBeDefined();
+    const data = new URL(String(vkeyCall![0])).searchParams.get("data") ?? "";
+    expect(JSON.parse(data).req_0.param.uin).toBe("12345");
+  });
+
+  it("QQ 音乐未填 Cookie 时一首也取不到（官方不给 purl）", async () => {
+    await withProfile({ songApi: "https://y.qq.com", songCookieTencent: "" });
+
+    fetchMock.mockImplementation((url: string) => {
+      const u = new URL(url);
+      if (u.pathname.includes("fcg_ucc_getcdinfo_byids_cp")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ code: 0, cdlist: [{ songlist: [{ songmid: "AAA", songname: "歌" }] }] }),
+            { status: 200 }
+          )
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            req_0: { code: 0, data: { sip: ["http://dl/"], midurlinfo: [{ songmid: "AAA", purl: "" }] } },
+          }),
+          { status: 200 }
+        )
+      );
+    });
+
+    const res = await GET(makeRequest("?api=https://y.qq.com&server=tencent&type=playlist&id=1"));
+
+    expect(await res.json()).toEqual([]);
+  });
+
+  it("歌单取不到时回退到榜单接口（disstid 为空再试 topid）", async () => {
+    await withProfile({ songApi: "https://y.qq.com", songCookieTencent: "uin=1; qm_keyst=k" });
+
+    fetchMock.mockImplementation((url: string) => {
+      const u = new URL(url);
+      if (u.pathname.includes("fcg_ucc_getcdinfo_byids_cp")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ code: 0, cdlist: [{ songlist: [] }] }), { status: 200 })
+        );
+      }
+      if (u.pathname.includes("fcg_v8_toplist_cp")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              code: 0,
+              songlist: [{ data: { songmid: "TOP1", songname: "榜首歌", singer: [{ name: "榜霸" }] } }],
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            req_0: { code: 0, data: { sip: ["http://dl/"], midurlinfo: [{ songmid: "TOP1", purl: "top.mp3" }] } },
+          }),
+          { status: 200 }
+        )
+      );
+    });
+
+    const res = await GET(makeRequest("?api=https://y.qq.com&server=tencent&type=playlist&id=26"));
+    const body = await res.json();
+
+    expect(body).toHaveLength(1);
+    expect(body[0]).toMatchObject({ id: "TOP1", name: "榜首歌", url: "http://dl/top.mp3" });
+  });
+});

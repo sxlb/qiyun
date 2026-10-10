@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { Plus, Trash2, Pencil, ChevronUp, ChevronDown, Pin, Loader2, Megaphone } from "lucide-react";
-import { PanelHeader, EmptyState, PanelLoading } from "./panel";
+import { PanelHeader, EmptyState, PanelLoading, AddRowButton } from "./panel";
 import { useListCrud } from "./useListCrud";
 
 /** 公告：服务端字段 + 前端本地唯一标识（新增行在保存前使用，服务端不持久化） */
@@ -120,7 +120,7 @@ export default function AnnouncementPanel() {
           }
         />
         {items.length === 0 && (
-          <EmptyState icon={<Megaphone className="h-5 w-5" />} title="暂无公告" hint="点击右上角「新增公告」发布第一条" />
+          <EmptyState icon={<Megaphone className="h-5 w-5" />} title="暂无公告" hint="点击「新增公告」发布第一条" />
         )}
         {items.map((item, index) => (
           <AnnouncementRow
@@ -135,6 +135,8 @@ export default function AnnouncementPanel() {
             onUpdate={(field, value) => update(index, field, value)}
           />
         ))}
+        {/* 列表底部再放一个添加入口：条目多时不必滚回顶部 */}
+        <AddRowButton label="新增公告" onClick={() => addItem()} />
         {items.length > 0 && (
           <div className="flex justify-end border-t pt-3">
             <Button

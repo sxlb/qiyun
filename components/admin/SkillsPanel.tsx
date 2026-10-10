@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Plus, Trash2, Loader2, GripVertical, Sparkles } from "lucide-react";
-import { PanelHeader, EmptyState, PanelLoading } from "./panel";
+import { PanelHeader, EmptyState, PanelLoading, AddRowButton } from "./panel";
 import { useListCrud } from "./useListCrud";
 import MediaPicker from "./MediaPicker";
 
@@ -53,7 +53,7 @@ export default function SkillsPanel() {
           }
         />
         {items.length === 0 && (
-          <EmptyState icon={<Sparkles className="h-5 w-5" />} title="暂无技能，点击右上角「添加技能」创建" />
+          <EmptyState icon={<Sparkles className="h-5 w-5" />} title="暂无技能，点击「添加技能」创建" />
         )}
         {items.map((it, i) => (
           <div key={it.id ?? it.clientId ?? i} className="group relative rounded-xl border bg-card p-3 pl-12 transition-all hover:border-primary/30 hover:shadow-sm">
@@ -92,6 +92,8 @@ export default function SkillsPanel() {
             </div>
           </div>
         ))}
+        {/* 列表底部再放一个添加入口：条目多时不必滚回顶部 */}
+        <AddRowButton label="添加技能" onClick={() => addItem()} />
         <Button onClick={save} disabled={saving} className={`w-full gap-1.5 ${dirty ? "ring-2 ring-primary/40" : ""}`}>
           {saving ? (<><Loader2 className="h-4 w-4 animate-spin" />保存中...</>) : dirty ? "● 有未保存的更改" : "保存技能"}
         </Button>

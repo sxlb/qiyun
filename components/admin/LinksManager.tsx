@@ -72,7 +72,7 @@ export default function LinksManager() {
         <div className={sub === "social" ? "" : "hidden"}>
           <LinksPanel
             apiPath="/api/social-links"
-            emptyText="暂无社交链接，点击右上角「添加链接」创建"
+            emptyText="暂无社交链接，点击「添加链接」创建"
             successMessage="社交链接保存成功"
             tabLabel="社交链接"
             showTip
@@ -87,7 +87,7 @@ export default function LinksManager() {
         <div className={sub === "site" ? "" : "hidden"}>
           <LinksPanel
             apiPath="/api/site-links"
-            emptyText="暂无网站链接，点击右上角「添加链接」创建"
+            emptyText="暂无网站链接，点击「添加链接」创建"
             successMessage="网站链接保存成功"
             tabLabel="网站链接"
             namePlaceholder="如 博客"

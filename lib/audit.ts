@@ -161,6 +161,10 @@ const PROFILE_FIELDS = Object.keys(profileSchema.shape);
 const SENSITIVE_PROFILE_FIELDS = new Set([
   "amapSecretKey",
   "txWeatherSk",
+  // 音乐账户 Cookie（等同于账号登录态）：日志里只记「已配置 / 未配置」，
+  // 真实值一旦落到 operationLog，任何能看审计日志的人都等于拿到了站主的会员账号
+  "songCookieNetease",
+  "songCookieTencent",
   // HTML/脚本类长内容（admin 录入）：变更日志只记"已配置/未配置"，
   // 避免把完整统计代码、head 脚本或页脚 HTML 全文（可达上万字符）写入 operationLog detail
   "analyticsScript",

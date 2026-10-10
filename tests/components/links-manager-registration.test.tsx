@@ -79,9 +79,14 @@ async function renderManager(): Promise<LoggedCall[]> {
       <GlobalSaveFab />
     </GlobalSaveProvider>
   );
-  // 等首个子面板加载完成（加载态结束后才出现「添加链接」）
-  await screen.findByRole("button", { name: /添加链接/ });
+  // 等首个子面板加载完成（加载态结束后才出现「添加链接」；顶部的与列表底部各一个）
+  await screen.findAllByRole("button", { name: /添加链接/ });
   return calls;
+}
+
+/** 顶部添加入口：列表底部还有一个同文案的，按文案查询会命中两个，故固定取第一个 */
+function topAddButton(): HTMLElement {
+  return screen.getAllByRole("button", { name: /添加链接/ })[0];
 }
 
 describe("链接面板的全局保存注册", () => {
@@ -92,7 +97,7 @@ describe("链接面板的全局保存注册", () => {
     await renderManager();
     expect(fab()).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: /添加链接/ }));
+    await user.click(topAddButton());
 
     await waitFor(() => expect(fab()).not.toBeNull());
     expect(fabCount()).toBe("1");
@@ -102,7 +107,7 @@ describe("链接面板的全局保存注册", () => {
     const user = userEvent.setup();
     const calls = await renderManager();
 
-    await user.click(screen.getByRole("button", { name: /添加链接/ }));
+    await user.click(topAddButton());
     await waitFor(() => expect(fab()).not.toBeNull());
 
     await user.click(fab()!);

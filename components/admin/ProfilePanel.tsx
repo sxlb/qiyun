@@ -44,6 +44,9 @@ interface Profile {
   songApi: string;
   songServer: string;
   songId: string;
+  /** 音乐账户 Cookie（可选）：透传给官方接口，用站主的会员权限取播放地址 */
+  songCookieNetease: string;
+  songCookieTencent: string;
   siteUrl: string;
   siteIcp: string;
   siteMps: string;
@@ -118,6 +121,8 @@ const INITIAL: Profile = {
   songApi: "https://api.injahow.cn/meting",
   songServer: "netease",
   songId: "3778678",
+  songCookieNetease: "",
+  songCookieTencent: "",
   siteUrl: "",
   siteIcp: "",
   siteMps: "",

@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { Plus, Trash2, Loader2, GripVertical, FolderGit2, Star, Eye } from "lucide-react";
-import { PanelHeader, EmptyState, PanelLoading } from "./panel";
+import { PanelHeader, EmptyState, PanelLoading, AddRowButton } from "./panel";
 import { useListCrud } from "./useListCrud";
 import MediaPicker from "./MediaPicker";
 
@@ -73,7 +73,7 @@ export default function ProjectsPanel() {
           }
         />
         {items.length === 0 && (
-          <EmptyState icon={<FolderGit2 className="h-5 w-5" />} title="暂无作品，点击右上角「添加作品」创建" />
+          <EmptyState icon={<FolderGit2 className="h-5 w-5" />} title="暂无作品，点击「添加作品」创建" />
         )}
         {items.map((it, i) => (
           <div key={it.id ?? it.clientId ?? i} className="group relative rounded-xl border bg-card p-3 pl-12 transition-all hover:border-primary/30 hover:shadow-sm">
@@ -136,6 +136,8 @@ export default function ProjectsPanel() {
             </div>
           </div>
         ))}
+        {/* 列表底部再放一个添加入口：条目多时不必滚回顶部 */}
+        <AddRowButton label="添加作品" onClick={() => addItem()} />
         <Button onClick={save} disabled={saving} className={`w-full gap-1.5 ${dirty ? "ring-2 ring-primary/40" : ""}`}>
           {saving ? (<><Loader2 className="h-4 w-4 animate-spin" />保存中...</>) : dirty ? "● 有未保存的更改" : "保存作品"}
         </Button>

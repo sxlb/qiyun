@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Plus, Trash2, Loader2, ChevronUp, ChevronDown, Pencil, Globe, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import { useListCrud } from "./useListCrud";
-import { PanelHeader, EmptyState, PanelLoading } from "./panel";
+import { PanelHeader, EmptyState, PanelLoading, AddRowButton } from "./panel";
 import MediaPicker from "./MediaPicker";
 import MediaImagePicker from "./MediaImagePicker";
 import UploadButton from "./UploadButton";
@@ -271,6 +271,8 @@ export default function LinksPanel({
             onUpdate={(field, value) => handleUpdate(index, field, value)}
           />
         ))}
+        {/* 列表底部再放一个添加入口：条目多时不必滚回顶部 */}
+        <AddRowButton label="添加链接" onClick={handleAdd} />
         <Button
           onClick={handleSave}
           disabled={saving}

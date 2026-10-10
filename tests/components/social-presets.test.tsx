@@ -41,8 +41,8 @@ async function renderManager() {
       <LinksManager />
     </GlobalSaveProvider>
   );
-  // 等首个面板加载完成（加载态结束后才出现「添加链接」）
-  await screen.findByRole("button", { name: /添加链接/ });
+  // 等首个面板加载完成（加载态结束后才出现「添加链接」；顶部的与列表底部各一个）
+  await screen.findAllByRole("button", { name: /添加链接/ });
 }
 
 describe("社交链接常用平台预设", () => {

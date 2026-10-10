@@ -20,6 +20,10 @@ export interface ProfileShape {
   songApi: string;
   songServer: string;
   songId: string;
+  /** 网易云账户 Cookie（可选）：用会员权限取播放地址，VIP 曲目也能播 */
+  songCookieNetease: string;
+  /** QQ 音乐账户 Cookie（可选）：不填则 QQ 音乐取不到任何播放地址 */
+  songCookieTencent: string;
   musicAutoplay: boolean;
   siteUrl: string;
   siteIcp: string;
@@ -105,6 +109,8 @@ export const INITIAL_PROFILE: ProfileShape = {
   songApi: "https://api.injahow.cn/meting",
   songServer: "netease",
   songId: "3778678",
+  songCookieNetease: "",
+  songCookieTencent: "",
   musicAutoplay: false,
   siteUrl: "",
   siteIcp: "",
@@ -309,16 +315,16 @@ export const SONG_API_PRESETS = [
   {
     value: "https://api.injahow.cn/meting",
     label: "Meting 公共 API（推荐）",
-    desc: "公益接口，支持网易云 / QQ 音乐",
-  },
-  {
-    value: "https://netease-cloud-music-api-five-roan.vercel.app",
-    label: "NeteaseCloudMusicApi（Vercel 示例）",
-    desc: "开源网易云 API，支持完整功能",
+    desc: "公益接口，支持网易云 / QQ 音乐，无需填写 Cookie",
   },
   {
     value: "https://music.163.com/api",
     label: "网易云官方 API（直连）",
-    desc: "网易云官方接口，部分功能可能受限",
+    desc: "直连网易云官方接口，无需自建服务；填了下面的账户 Cookie 就能播 VIP 曲目",
+  },
+  {
+    value: "https://y.qq.com",
+    label: "QQ 音乐官方（直连）",
+    desc: "直连 QQ 音乐官方接口；必须填下面的账户 Cookie，否则取不到播放地址",
   },
 ];

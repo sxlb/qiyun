@@ -34,6 +34,11 @@ model Profile {
   songApi              String   @default("")
   songServer           String   @default("netease")
   songId               String   @default("")
+  // 音乐账户 Cookie（可选）：填站主自己的会员登录态，服务端取歌单与播放地址时带上，
+  // 让 VIP / 无版权曲目也能正常播放（不填则只播放免费曲目）。
+  // 属敏感信息：操作日志只记「已配置 / 未配置」，不写真实值。
+  songCookieNetease    String   @default("") // 网易云：MUSIC_U=xxx
+  songCookieTencent    String   @default("") // QQ 音乐：uin=xxx; qm_keyst=xxx
   // 音乐自动播放开关：开启后前台歌单加载完成即尝试自动播放（浏览器拦截时静默放弃）
   musicAutoplay        Boolean  @default(false)
   siteUrl              String   @default("")

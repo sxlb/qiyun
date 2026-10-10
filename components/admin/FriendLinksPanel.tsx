@@ -9,7 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Plus, Trash2, Loader2, GripVertical, Users, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import { useListCrud, CrudItem } from "./useListCrud";
-import { PanelHeader, EmptyState, PanelLoading } from "./panel";
+import { PanelHeader, EmptyState, PanelLoading, AddRowButton } from "./panel";
 import MediaPicker from "./MediaPicker";
 
 interface FriendLinkItem extends CrudItem {
@@ -101,7 +101,7 @@ export default function FriendLinksPanel() {
         {links.length === 0 && (
           <EmptyState
             icon={<Users className="h-5 w-5" />}
-            title="暂无友情链接，点击右上角「添加链接」创建"
+            title="暂无友情链接，点击「添加链接」创建"
           />
         )}
         {links.map((link, index) => (
@@ -224,6 +224,8 @@ export default function FriendLinksPanel() {
             </div>
           </div>
         ))}
+        {/* 列表底部再放一个添加入口：条目多时不必滚回顶部 */}
+        <AddRowButton label="添加链接" onClick={() => addItem()} />
         <Button
           onClick={save}
           disabled={saving}

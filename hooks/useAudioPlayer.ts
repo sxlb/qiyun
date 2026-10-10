@@ -16,6 +16,20 @@ import {
 export type PlayMode = "order" | "loop" | "single" | "shuffle";
 
 /**
+ * 歌单加载状态，决定前台提示的措辞。
+ *
+ * 区分「压根没配置」与「配置了但拉不到歌单」很关键：二者此前共用同一句
+ * 「尚未配置音乐歌单」，于是接口不可用、歌单为空、曲目全无版权这些情况
+ * 全被误报成「没配置」——访客看不出哪里不对，站主也不知道该改哪一项。
+ *
+ * - loading：请求进行中（或尚未开始）
+ * - unconfigured：后台没填接口地址或歌单 ID
+ * - empty：配置了，但拿不到可播放的歌单
+ * - ready：拿到了可播放的歌单
+ */
+export type PlaylistStatus = "loading" | "unconfigured" | "empty" | "ready";
+
+/**
  * 根据播放模式计算下一首曲目的下标（纯函数，便于单元测试）
  * @param mode 播放模式
  * @param playlistLength 歌单长度（≤0 视为无歌单）
@@ -317,6 +331,8 @@ export function useAudioPlayer({
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
   const [playlist, setPlaylist] = useState<Track[]>([]);
+  /** 歌单状态：前台据此区分「未配置」与「配置了但拉不到」（见 PlaylistStatus 注释） */
+  const [playlistStatus, setPlaylistStatus] = useState<PlaylistStatus>("loading");
   const [playMode, setPlayMode] = useState<PlayMode>("loop");
   const [volume, setVolume] = useState(DEFAULT_VOLUME);
   const [muted, setMuted] = useState(false);
@@ -402,6 +418,7 @@ export function useAudioPlayer({
     // 未配置 songApi/songId 时返回空列表（无内置示例兜底）
     if (!songApi.trim() || !songId.trim()) {
       setPlaylist([]);
+      setPlaylistStatus("unconfigured");
       return;
     }
     const query = `${songApi.trim()}|${songServer}|${songId}`;
@@ -414,6 +431,7 @@ export function useAudioPlayer({
     loadPlaylistRef.current?.abort();
     const controller = new AbortController();
     loadPlaylistRef.current = controller;
+    setPlaylistStatus("loading");
     try {
       const res = await fetch(
         `/api/music?api=${encodeURIComponent(songApi.trim())}&server=${songServer}&type=playlist&id=${encodeURIComponent(songId)}`,
@@ -423,12 +441,22 @@ export function useAudioPlayer({
         const data: unknown = await res.json();
         // /api/music 返回归一化后的 Track[]；meting/home 源返回原始数组，再做一次字段归一化
         if (Array.isArray(data)) {
-          setPlaylist(normalizeTracks(data as RawTrack[], 0));
+          const list = normalizeTracks(data as RawTrack[], 0);
+          setPlaylist(list);
+          // 有歌才算就绪；空数组是「配置了但拉不到」，与「没配置」是两回事
+          setPlaylistStatus(list.length > 0 ? "ready" : "empty");
+          return;
         }
       }
+      // HTTP 非 2xx，或上游返回的是业务错误对象（非数组）：同样归为「拿不到歌单」
+      setPlaylist([]);
+      setPlaylistStatus("empty");
     } catch (e) {
-      if ((e as Error).name === "AbortError") return; // 请求被取消，正常忽略
+      // 被后来的请求取消：状态交给新的那一次，此处不覆盖
+      if ((e as Error).name === "AbortError") return;
       if (process.env.NODE_ENV === "development") console.error("[MusicPlayer] 加载播放列表失败:", e);
+      setPlaylist([]);
+      setPlaylistStatus("empty");
     } finally {
       // 只有自己仍是在途请求时才清空，避免把后来者顶掉
       if (loadPlaylistRef.current === controller) loadPlaylistRef.current = null;
@@ -894,6 +922,7 @@ export function useAudioPlayer({
     togglePlay,
     currentTrack,
     playlist,
+    playlistStatus,
     playMode,
     cyclePlayMode,
     volume,

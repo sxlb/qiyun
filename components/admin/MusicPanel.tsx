@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { PanelLoading } from "./panel";
 import { useProfileForm } from "./useProfileForm";
@@ -101,7 +102,7 @@ export default function MusicPanel() {
                 placeholder="https://music.example.com"
               />
               <p className="text-xs text-muted-foreground">
-                支持 NeteaseCloudMusicApi / meting 类接口，须为 http(s) 开头的完整地址。
+                支持 NeteaseCloudMusicApi、meting 类接口与网易云官方地址，须为 http(s) 开头的完整地址。
               </p>
             </div>
 
@@ -154,6 +155,45 @@ export default function MusicPanel() {
                     </button>
                   );
                 })}
+              </div>
+            </div>
+
+            {/* ── 账户 Cookie（可选）：用站主自己的会员权限播 VIP 曲目 ── */}
+            <div className="space-y-3 rounded-lg border border-dashed border-border bg-muted/20 px-4 py-3">
+              <div className="space-y-1">
+                <p className="text-sm font-medium">账户 Cookie（可选）</p>
+                <p className="text-xs text-muted-foreground">
+                  填站主自己的会员登录态后，服务端取播放地址时会带上它，VIP 与无版权曲目也能正常播放；
+                  留空则只播放免费曲目。做法：在浏览器里登录对应音乐网站，打开开发者工具复制整串 Cookie 粘进来。
+                  属敏感信息，只存在本站数据库，操作日志中仅记为「已配置 / 未配置」。
+                </p>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="songCookieNetease">网易云 Cookie</Label>
+                  <Textarea
+                    id="songCookieNetease"
+                    rows={2}
+                    className="min-h-[52px] font-mono text-xs"
+                    placeholder="MUSIC_U=..."
+                    value={profile.songCookieNetease}
+                    onChange={(e) => set("songCookieNetease", e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="songCookieTencent">QQ 音乐 Cookie</Label>
+                  <Textarea
+                    id="songCookieTencent"
+                    rows={2}
+                    className="min-h-[52px] font-mono text-xs"
+                    placeholder="uin=...; qm_keyst=..."
+                    value={profile.songCookieTencent}
+                    onChange={(e) => set("songCookieTencent", e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    QQ 音乐官方接口必须带 Cookie，否则取不到任何播放地址（Meting 等第三方源不需要）。
+                  </p>
+                </div>
               </div>
             </div>
 
