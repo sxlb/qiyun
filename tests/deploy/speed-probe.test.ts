@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import type { AddressInfo } from "node:net";
@@ -30,53 +30,74 @@ function has(cmd: string): boolean {
 const ENV_READY = has("timeout") && has("awk") && has("mktemp");
 const PYTHON_READY = has("python3") || has("python");
 
-function runHarness(...args: string[]): Record<string, string> {
-  const res = spawnSync("bash", [HARNESS, ...args], { encoding: "utf8", timeout: 90_000 });
-  if (res.error) throw res.error;
-  const stdout = `${res.stdout ?? ""}`;
-  if (res.status !== 0) {
-    throw new Error(
-      `夹具执行失败 status=${res.status}\n参数：${args.join(" ")}\nstdout:\n${stdout}\nstderr:\n${res.stderr ?? ""}`
-    );
-  }
-  const parsed: Record<string, string> = {};
-  for (const line of stdout.split("\n")) {
-    const at = line.indexOf("=");
-    if (at > 0) parsed[line.slice(0, at)] = line.slice(at + 1);
-  }
-  return parsed;
+function runHarness(...args: string[]): Promise<Record<string, string>> {
+  // 必须用异步 spawn 而非 spawnSync：端到端用例的假 registry 靠事件循环里的
+  // 定时器限速吐字节，spawnSync 会把整个事件循环阻塞住，泵停摆、socket 缓冲被
+  // 读空后探测端只能干等到超时，量出来的速度必然失真。
+  return new Promise((resolve, reject) => {
+    const child = spawn("bash", [HARNESS, ...args]);
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error(`夹具执行超时 90s\n参数：${args.join(" ")}\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+    }, 90_000);
+    child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
+    child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(
+          new Error(
+            `夹具执行失败 status=${code}\n参数：${args.join(" ")}\nstdout:\n${stdout}\nstderr:\n${stderr}`
+          )
+        );
+        return;
+      }
+      const parsed: Record<string, string> = {};
+      for (const line of stdout.split("\n")) {
+        const at = line.indexOf("=");
+        if (at > 0) parsed[line.slice(0, at)] = line.slice(at + 1);
+      }
+      resolve(parsed);
+    });
+  });
 }
 
 describe.skipIf(!ENV_READY)("deploy.sh · 按实测速度选源（rank_pull_chain）", () => {
   const rank = (chain: string) => runHarness("rank", chain);
 
-  it("首个来源就达标 → 不跳过任何来源，且不再探测后面的（短路，避免白花测速时间）", () => {
-    const r = rank("fast.example/a slow.example/b");
+  it("首个来源就达标 → 不跳过任何来源，且不再探测后面的（短路，避免白花测速时间）", async () => {
+    const r = await rank("fast.example/a slow.example/b");
     expect(r.SKIPPED).toBe("");
     expect(r.SUMMARY).toBe("fast.example/a=5000KB/s");
     // 关键：只探了第一个。若把整条链都探一遍，快源场景每次更新都要多等好几秒。
     expect(r.PROBED).toBe("fast.example/a");
   });
 
-  it("慢源在前、快源在后 → 跳过慢源（这正是「卡在上海外源半小时」要解决的场景）", () => {
-    const r = rank("slow.example/a fast.example/b");
+  it("慢源在前、快源在后 → 跳过慢源（这正是「卡在上海外源半小时」要解决的场景）", async () => {
+    const r = await rank("slow.example/a fast.example/b");
     expect(r.SKIPPED).toBe(" slow.example/a");
   });
 
-  it("全部来源都偏慢 → 一个都不跳过（跳过谁都无益，绝不能把候选清空）", () => {
-    const r = rank("slow.example/a slow.example/b");
+  it("全部来源都偏慢 → 一个都不跳过（跳过谁都无益，绝不能把候选清空）", async () => {
+    const r = await rank("slow.example/a slow.example/b");
     expect(r.SKIPPED).toBe("");
     expect(r.SUMMARY).toContain("slow.example/a=100KB/s");
   });
 
-  it("测不到速度的来源不参与判定，但也不阻断对后续来源的探测", () => {
-    const r = rank("dead.example/a slow.example/b fast.example/c");
+  it("测不到速度的来源不参与判定，但也不阻断对后续来源的探测", async () => {
+    const r = await rank("dead.example/a slow.example/b fast.example/c");
     expect(r.SKIPPED).toBe(" slow.example/b");
     expect(r.SUMMARY).toBe("dead.example/a=未知 slow.example/b=100KB/s fast.example/c=5000KB/s");
   });
 
-  it("候选链只有一个来源 → 省掉整段测速（跳过与否都无意义）", () => {
-    const r = rank("slow.example/a");
+  it("候选链只有一个来源 → 省掉整段测速（跳过与否都无意义）", async () => {
+    const r = await rank("slow.example/a");
     expect(r.SKIPPED).toBe("");
     expect(r.SUMMARY).toBe("");
     expect(r.PROBED).toBe("");
@@ -84,26 +105,26 @@ describe.skipIf(!ENV_READY)("deploy.sh · 按实测速度选源（rank_pull_chai
 });
 
 describe.skipIf(!ENV_READY)("deploy.sh · 测速缺失时优雅降级（speed_probe_kbps）", () => {
-  it("SPEED_PROBE=0 → 完全不做测速", () => {
-    const r = runHarness("speed", "disabled", "http://127.0.0.1:1/x/y");
+  it("SPEED_PROBE=0 → 完全不做测速", async () => {
+    const r = await runHarness("speed", "disabled", "http://127.0.0.1:1/x/y");
     expect(r.KPBS).toBe("");
     expect(r.RC).toBe("0");
   });
 
-  it("机器上没有 python → 静默返回空，不报错", () => {
-    const r = runHarness("speed", "nopy", "http://127.0.0.1:1/x/y");
+  it("机器上没有 python → 静默返回空，不报错", async () => {
+    const r = await runHarness("speed", "nopy", "http://127.0.0.1:1/x/y");
     expect(r.KPBS).toBe("");
     expect(r.RC).toBe("0");
   });
 
-  it("python 输出非数字 → 一律当「测不到」（日志/告警不能污染判定）", () => {
-    const r = runHarness("speed", "garbage", "http://127.0.0.1:1/x/y");
+  it("python 输出非数字 → 一律当「测不到」（日志/告警不能污染判定）", async () => {
+    const r = await runHarness("speed", "garbage", "http://127.0.0.1:1/x/y");
     expect(r.KPBS).toBe("");
     expect(r.RC).toBe("0");
   });
 
-  it("python 输出数字 → 原样透传（验证参数与输出管路是通的）", () => {
-    const r = runHarness("speed", "stub", "http://127.0.0.1:1/x/y");
+  it("python 输出数字 → 原样透传（验证参数与输出管路是通的）", async () => {
+    const r = await runHarness("speed", "stub", "http://127.0.0.1:1/x/y");
     expect(r.KPBS).toBe("1234");
     expect(r.RC).toBe("0");
   });
@@ -219,7 +240,7 @@ describe.skipIf(!ENV_READY || !PYTHON_READY)(
       async () => {
         const reg = await startRegistry();
         try {
-          const r = runHarness("speed", "real", `http://127.0.0.1:${reg.port}/fast/sxlb/qiyun`);
+          const r = await runHarness("speed", "real", `http://127.0.0.1:${reg.port}/fast/sxlb/qiyun`);
           expect(r.RC).toBe("0");
           const kbps = Number(r.KPBS);
           expect(Number.isFinite(kbps)).toBe(true);
@@ -236,7 +257,7 @@ describe.skipIf(!ENV_READY || !PYTHON_READY)(
       async () => {
         const reg = await startRegistry();
         try {
-          const r = runHarness("speed", "real", `http://127.0.0.1:${reg.port}/slow/sxlb/qiyun`);
+          const r = await runHarness("speed", "real", `http://127.0.0.1:${reg.port}/slow/sxlb/qiyun`);
           expect(r.RC).toBe("0");
           const kbps = Number(r.KPBS);
           expect(Number.isFinite(kbps)).toBe(true);
@@ -254,7 +275,7 @@ describe.skipIf(!ENV_READY || !PYTHON_READY)(
       async () => {
         const reg = await startRegistry();
         try {
-          const r = runHarness("speed", "real", `http://127.0.0.1:${reg.port}/missing/sxlb/qiyun`);
+          const r = await runHarness("speed", "real", `http://127.0.0.1:${reg.port}/missing/sxlb/qiyun`);
           expect(r.KPBS).toBe("");
           expect(r.RC).toBe("0");
         } finally {
