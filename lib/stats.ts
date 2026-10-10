@@ -1,3 +1,5 @@
+import { detectBrowser } from "./browser";
+
 /** 单日统计记录（VisitStat 行） */
 export interface DailyStat {
   date: string; // YYYY-MM-DD
@@ -157,25 +159,8 @@ export function parseUserAgent(ua: string): UaInfo {
     os = "";
   }
 
-  // 浏览器（顺序：Edge 需在 Chrome 前，Safari 需剔除 Chromium 内核）
-  let browser = "";
-  if (/Edg[Ae]?\//i.test(ua)) {
-    browser = "Edge";
-  } else if (/MicroMessenger/i.test(ua)) {
-    browser = "微信";
-  } else if (/OPR\//i.test(ua)) {
-    browser = "Opera";
-  } else if (/SamsungBrowser/i.test(ua)) {
-    browser = "Samsung 浏览器";
-  } else if (/Firefox\//i.test(ua)) {
-    browser = "Firefox";
-  } else if (/Chrome\//i.test(ua) || /CriOS\//i.test(ua)) {
-    browser = "Chrome";
-  } else if (/Safari\//i.test(ua)) {
-    browser = "Safari";
-  } else {
-    browser = "";
-  }
+  // 浏览器：套娃陷阱与判定顺序集中在 lib/browser.ts，统计与前台欢迎语共用同一份口径
+  const browser = detectBrowser(ua);
 
   return { device, os, browser };
 }

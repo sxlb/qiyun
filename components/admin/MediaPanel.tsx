@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { PanelHeader, EmptyState } from "./panel";
 import { useDataFetcher } from "./useDataFetcher";
+import { groupCachedWallpapers, cacheTagLabel, type WallpaperCacheTag } from "@/lib/wallpaperTags";
 
 interface ImageAsset {
   id: number;
@@ -62,7 +63,7 @@ interface CachedWallpaper {
   sourceUrl: string;
   addedAt: number;
   size: number;
-  tag: string | null;
+  tag: WallpaperCacheTag | null;
   exists: boolean;
 }
 
@@ -127,6 +128,10 @@ export default function MediaPanel() {
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
   const page = data?.page ?? 1;
+
+  // 壁纸缓存按「预算组 → 来源」两级归类。平铺时每张只在角上标个 anime:pc，
+  // 既看不出占的是哪台设备的额度，也看不出题材；归类后先按电脑/手机/必应共享分段。
+  const cacheGroups = useMemo(() => groupCachedWallpapers(cache?.items ?? []), [cache]);
 
   // 删除最后一张后当前页可能越界（total 已变小，但服务端原样回显旧页码）：
   // 此时会出现「共 24 个媒体资产 / 2 / 1」且列表空白的自相矛盾状态。
@@ -467,61 +472,86 @@ export default function MediaPanel() {
           </p>
 
           {cacheOpen && cache && cache.items.length > 0 && (
-            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-              {cache.items.map((item) => (
-                <div key={item.fileName} className="overflow-hidden rounded-xl border border-border bg-background">
-                  <button
-                    onClick={() => setPreviewUrl(item.url)}
-                    disabled={!item.exists}
-                    className="relative block w-full cursor-zoom-in bg-muted disabled:cursor-not-allowed"
-                    aria-label={`预览 ${item.fileName}`}
-                  >
-                    {/* 缓存图片经 /api/wallpaper/file 动态路由提供，与媒体库同理不走 next/image */}
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={item.url} alt={item.fileName} loading="lazy" className="aspect-square w-full object-cover" />
-                    {!item.exists && (
-                      <span className="absolute inset-0 flex items-center justify-center bg-black/60 p-2 text-center text-[11px] text-white">
-                        文件已不在磁盘上
-                      </span>
-                    )}
-                  </button>
+            <div className="mt-4 space-y-5">
+              {cacheGroups.map((group) => (
+                <div key={group.budget}>
+                  {/* 一级：预算组（谁在用，决定占哪份额度） */}
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="text-sm font-medium text-foreground">{group.label}</span>
+                    <span className="text-xs tabular-nums text-muted-foreground">{group.count} 张</span>
+                    <span className="h-px flex-1 bg-border" />
+                  </div>
+                  <div className="space-y-3">
+                    {group.sources.map((sub) => (
+                      <div key={sub.source}>
+                        {/* 二级：来源（图从哪来）。该预算组只有一种来源时不重复渲染标题 ——
+                            卡片角标已写明来源，再加一行「必应共享 / 必应」纯属冗余 */}
+                        {group.sources.length > 1 && (
+                          <p className="mb-1.5 text-xs text-muted-foreground">
+                            {sub.label} · {sub.items.length} 张
+                          </p>
+                        )}
+                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                          {sub.items.map((item) => (
+                            <div key={item.fileName} className="overflow-hidden rounded-xl border border-border bg-background">
+                              <button
+                                onClick={() => setPreviewUrl(item.url)}
+                                disabled={!item.exists}
+                                className="relative block w-full cursor-zoom-in bg-muted disabled:cursor-not-allowed"
+                                aria-label={`预览 ${item.fileName}`}
+                              >
+                                {/* 缓存图片经 /api/wallpaper/file 动态路由提供，与媒体库同理不走 next/image */}
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={item.url} alt={item.fileName} loading="lazy" className="aspect-square w-full object-cover" />
+                                {!item.exists && (
+                                  <span className="absolute inset-0 flex items-center justify-center bg-black/60 p-2 text-center text-[11px] text-white">
+                                    文件已不在磁盘上
+                                  </span>
+                                )}
+                              </button>
 
-                  <div className="space-y-2 p-3">
-                    <p className="truncate text-xs font-medium text-foreground" title={item.fileName}>
-                      {item.fileName}
-                    </p>
-                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                      <span>{formatBytes(item.size)}</span>
-                      <span title="分池标签（来源:设备）">{item.tag ?? "未分组"}</span>
-                    </div>
+                              <div className="space-y-2 p-3">
+                                <p className="truncate text-xs font-medium text-foreground" title={item.fileName}>
+                                  {item.fileName}
+                                </p>
+                                <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                                  <span>{formatBytes(item.size)}</span>
+                                  <span>{cacheTagLabel(item.tag)}</span>
+                                </div>
 
-                    {cacheConfirming === item.fileName ? (
-                      <div className="flex items-center gap-1.5">
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          className="h-7 flex-1 text-xs"
-                          onClick={() => deleteCacheItem(item.fileName)}
-                          disabled={cacheBusy}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                          确认删除
-                        </Button>
-                        <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setCacheConfirming(null)}>
-                          <X className="h-3 w-3" />
-                        </Button>
+                                {cacheConfirming === item.fileName ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <Button
+                                      size="sm"
+                                      variant="destructive"
+                                      className="h-7 flex-1 text-xs"
+                                      onClick={() => deleteCacheItem(item.fileName)}
+                                      disabled={cacheBusy}
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                      确认删除
+                                    </Button>
+                                    <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setCacheConfirming(null)}>
+                                      <X className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 w-full text-xs text-destructive hover:bg-destructive/10"
+                                    onClick={() => setCacheConfirming(item.fileName)}
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                    删除
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 w-full text-xs text-destructive hover:bg-destructive/10"
-                        onClick={() => setCacheConfirming(item.fileName)}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                        删除
-                      </Button>
-                    )}
+                    ))}
                   </div>
                 </div>
               ))}

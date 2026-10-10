@@ -133,4 +133,30 @@ describe("MediaPicker 图标来源（弹层形态的多种来源入口）", () =
     expect(container.querySelector('[data-testid="iconify-icon"]')).toBeNull();
     expect(container.querySelector("svg")).not.toBeNull();
   });
+
+  it("URL/路径页签内嵌图片选择器：可直接挑媒体库 / 壁纸缓存，无需手敲路径", () => {
+    // 内嵌的 MediaImagePicker 挂载即请求两份数据源，桩掉 fetch 避免真实网络
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ items: [], total: 0 }) }) as unknown as Response)
+    );
+    try {
+      const { container } = render(<MediaPicker value="" onChange={() => {}} />);
+      openDialog(container);
+      fireEvent.click(findButton(container, "URL/路径")!);
+
+      const entry = findButton(container, "打开图片选择器");
+      expect(entry).toBeTruthy();
+      fireEvent.click(entry!);
+
+      // 嵌套弹层出现，提供两个来源页签
+      const dialogs = container.querySelectorAll('[role="dialog"]');
+      expect(dialogs.length).toBe(2);
+      const texts = buttonTexts(container);
+      expect(texts).toContain("媒体库");
+      expect(texts).toContain("壁纸缓存");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

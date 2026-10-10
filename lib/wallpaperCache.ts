@@ -3,6 +3,19 @@ import path from "node:path";
 import { fetchFollowingSafeRedirects } from "@/lib/ssrf";
 import { contentTypeFromExt, isSafeFileName, newFileName } from "@/lib/uploads";
 import type { WallpaperDevice } from "@/lib/external-api";
+import {
+  CACHE_BUDGETS,
+  CACHE_BUDGET_LABELS,
+  cacheBudgetFor,
+  type WallpaperCacheBudget,
+  type WallpaperCacheTag,
+} from "@/lib/wallpaperTags";
+
+// 标签 / 预算组的定义与映射已抽到 lib/wallpaperTags.ts —— 后台界面（MediaPanel、图片选择器）
+// 也要用同一份映射，而本文件引了 node:fs，客户端组件不能直接引用。这里原样转出，
+// 保持既有引用点（app/api/wallpaper/route.ts、单测）不变。
+export { CACHE_BUDGET_LABELS, CACHE_BUDGETS, cacheBudgetFor };
+export type { WallpaperCacheTag, WallpaperCacheBudget };
 
 /**
  * ===== 壁纸服务端缓存 =====
@@ -47,16 +60,6 @@ const MANIFEST_NAME = "manifest.json";
 
 const MANIFEST_FILE = () => path.join(getWallpaperCacheDir(), MANIFEST_NAME);
 
-/**
- * 缓存分池标签。
- *
- * 必须同时带上「壁纸源」与「设备」两个维度：
- * - 只按设备切池是不够的 —— 风景端的手机默认值仍是横图源（上游没有竖版风景），
- *   若与动漫端共用一个池，手机选「动漫」时仍可能抽到那张横图，等于没做到"手机只加载手机壁纸"；
- * - 与设备无关的源（必应每日壁纸）用 `shared`，手机与电脑共用一池，同一张图不必存两份。
- */
-export type WallpaperCacheTag = "shared" | `landscape:${WallpaperDevice}` | `anime:${WallpaperDevice}`;
-
 /** 参与分池的壁纸源（其余种类一律走 shared） */
 const POOLED_SOURCES = ["landscape", "anime"] as const;
 
@@ -84,37 +87,6 @@ interface Manifest {
   lastRefreshAt: number | null;
   /** 上次下载/尝试时刻（用于节流，持久化避免重启后突发请求） */
   lastDownloadAt: number | null;
-}
-
-/**
- * 缓存预算组：上限既不看分池总数、也不看全局总数，而是按「谁在用」分组。
- *
- * - `pc`     电脑：风景:pc + 动漫:pc
- * - `mobile` 手机：风景:mobile + 动漫:mobile
- * - `shared` 必应这类与设备无关的源（含升级前没有标签的历史条目）
- *
- * 这样「手机别占电脑的额度」才成立：手机池攒满了也不会挤掉电脑的图。
- */
-export type WallpaperCacheBudget = "pc" | "mobile" | "shared";
-
-/** 预算组的中文名（后台用量展示用） */
-export const CACHE_BUDGET_LABELS: Record<WallpaperCacheBudget, string> = {
-  pc: "电脑",
-  mobile: "手机",
-  shared: "必应共享",
-};
-
-/** 后台展示用的预算组顺序 */
-export const CACHE_BUDGETS: WallpaperCacheBudget[] = ["pc", "mobile", "shared"];
-
-/**
- * 分池标签 → 预算组。
- * 升级前的历史条目没有标签，只有 `shared` 允许复用它们，因此一律计入 `shared`。
- */
-export function cacheBudgetFor(tag: WallpaperCacheTag | null | undefined): WallpaperCacheBudget {
-  if (tag === "landscape:pc" || tag === "anime:pc") return "pc";
-  if (tag === "landscape:mobile" || tag === "anime:mobile") return "mobile";
-  return "shared";
 }
 
 /** 统计某个预算组已有的条目数 */

@@ -16,6 +16,9 @@
  *   - Iconify 图标："prefix:name"（如 "mdi:home"、"fa6-solid:user"）
  *   - 内联 SVG：以 "<svg" 开头的整段代码（阿里 iconfont 直接复制）
  *
+ * URL/路径页签内嵌 MediaImagePicker：图标字段也能直接挑媒体库图片或壁纸缓存，
+ * 不必先记下 /api/uploads/... 路径再手敲进输入框。
+ *
  * 注：本组件刻意使用原生 <img> 而非 next/image —— 预览对象是管理员即时输入/第三方搜索返回的
  * 任意外部 URL，走 next/image 需要远程域名白名单且会把不可信图片经优化器代理，故不使用。
  */
@@ -37,6 +40,7 @@ import {
 } from "lucide-react";
 import LucideIconPicker from "./LucideIconPicker";
 import IconifyPicker from "./IconifyPicker";
+import MediaImagePicker from "./MediaImagePicker";
 import { resolveLucideIcon, LUCIDE_PREFIX, extractLucideIconName } from "@/lib/lucideIconResolver";
 import { useIconfontSymbols } from "@/components/home/Iconfont";
 import IconifyIcon from "@/components/home/IconifyIcon";
@@ -328,8 +332,24 @@ export default function MediaPicker({
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
               {tab === "url" && (
                 <div className="space-y-3">
+                  {/* 直接挑图：省掉「先记住 /api/uploads/... 再手敲」的来回。
+                      选中后回填字段行的输入框，弹层保持打开，方便继续核对当前值。 */}
+                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-3">
+                    <p className="text-xs font-medium text-foreground">从媒体库 / 壁纸缓存选择</p>
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                      挑一张已上传的图片或已缓存的壁纸，选中后自动填入地址，无需手动复制路径。
+                    </p>
+                    <div className="mt-2.5">
+                      <MediaImagePicker
+                        value={value}
+                        onSelect={(url) => onChange(url)}
+                        label="打开图片选择器"
+                      />
+                    </div>
+                  </div>
+
                   <p className="text-xs leading-relaxed text-muted-foreground">
-                    图片地址请填在字段行的输入框中，支持两种写法：
+                    也可以直接在字段行的输入框中手填地址，支持两种写法：
                   </p>
                   <ul className="space-y-1.5 text-xs text-muted-foreground">
                     <li className="flex gap-2">
@@ -346,9 +366,6 @@ export default function MediaPicker({
                       </span>
                     </li>
                   </ul>
-                  <p className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
-                    想用已上传的图片当图标？先到「媒体库」面板上传，再把它对应的 /api/uploads/... 路径填进输入框。
-                  </p>
                 </div>
               )}
 

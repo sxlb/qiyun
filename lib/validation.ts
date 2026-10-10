@@ -36,9 +36,11 @@ export const DEFAULT_WELCOME_MESSAGES = [
   "欢迎回来，好久不见",
 ];
 
-// 图片地址：允许 http(s) 外链，以及后台「上传」按钮产出的媒体库相对路径（/api/uploads/file/xxx）。
+// 图片地址：允许 http(s) 外链，以及后台「上传」按钮产出的媒体库相对路径（/api/uploads/file/xxx）、
+// 壁纸缓存路径（/api/wallpaper/file/xxx）。
 // 注意：只写 ^https?:// 会导致「上传成功但保存失败」—— 上传接口返回的正是相对路径。
-const IMAGE_SRC_RE = /^(https?:\/\/|\/api\/uploads\/)/;
+// 壁纸缓存同样要放行：后台图片选择器允许直接挑一张已缓存的壁纸，漏掉这一支会「选中了却保存不了」。
+const IMAGE_SRC_RE = /^(https?:\/\/|\/api\/uploads\/|\/api\/wallpaper\/file\/)/;
 
 // 站点 SEO 默认文案：后台留空时前后台统一使用（避免搜索引擎抓到空描述/空关键词）
 export const DEFAULT_SITE_TITLE = "个人主页";

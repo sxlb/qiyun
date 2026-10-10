@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { useListCrud } from "./useListCrud";
 import { PanelHeader, EmptyState, PanelLoading } from "./panel";
 import MediaPicker from "./MediaPicker";
+import MediaImagePicker from "./MediaImagePicker";
 import UploadButton from "./UploadButton";
 import { resolveLucideIcon, isLucideIcon } from "@/lib/lucideIconResolver";
 import { resolveIconImageSrc, isInlineSvgValue, isIconifyValue, renderInlineSvg } from "@/lib/iconValue";
@@ -491,13 +492,13 @@ function LinkRow({
                 留空则点击直接跳转上面的链接
               </span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Input
                 id={`link-popup-${index}`}
                 value={link.popupImage ?? ""}
                 onChange={(e) => onUpdate("popupImage", e.target.value)}
                 placeholder="上传二维码，或填 https://…/qrcode.png"
-                className="h-10 sm:h-8"
+                className="h-10 min-w-0 flex-1 sm:h-8"
               />
               {link.popupImage?.trim() ? (
                 <Button
@@ -512,6 +513,11 @@ function LinkRow({
                 </Button>
               ) : null}
               <UploadButton label="上传二维码" onUploaded={(url) => onUpdate("popupImage", url)} />
+              <MediaImagePicker
+                value={link.popupImage ?? ""}
+                onSelect={(url) => onUpdate("popupImage", url)}
+                label="选择图片"
+              />
             </div>
             {link.popupImage?.trim() ? (
               // 管理员上传/配置的图片，走原生 img（同 LinkIconPreview 的做法）

@@ -1208,6 +1208,11 @@ Cookie 头中会设置 `qiyun-uv=1`（httpOnly, sameSite=lax, maxAge=365 天）�
 > **前台如何产生坐标**：由后台「天气设置 → 访客定位 → 浏览器精确定位」开关控制（默认关闭）。
 > 开启后 `lib/geolocation.ts` 在安全上下文请求 `navigator.geolocation`，被拒绝后记忆到
 > localStorage 不再自动弹窗，仅保留欢迎弹窗上的「使用精确位置」按钮供手动重试。
+>
+> **前置条件**：站点必须在响应头 `Permissions-Policy` 里放行同源定位（`geolocation=(self)`，
+> 见 `next.config.ts`）。若写成 `geolocation=()`，浏览器会**静默**拒绝 —— 不弹授权框，
+> `getCurrentPosition` 直接回调 `PERMISSION_DENIED`，前台只表现为「点了没反应」，
+> 控制台也没有任何报错，排查时容易误判为前端代码问题。
 
 ---
 

@@ -16,8 +16,15 @@ export interface PreciseCoords {
   lat: number;
 }
 
-/** 被拒绝过的记忆键（localStorage）：只用于"不再自动请求"，用户手动点按钮仍可重试 */
-const DENIED_KEY = "qiyun-precise-location-denied";
+/**
+ * 被拒绝过的记忆键（localStorage）：只用于"不再自动请求"，用户手动点按钮仍可重试。
+ *
+ * 键名带 `-v2`：0.0.14 期间站点响应头把定位写成了 `geolocation=()`，浏览器**静默**拒绝
+ * （不弹授权框，直接回调 PERMISSION_DENIED），于是被记下的"拒绝"其实是假拒绝。
+ * 换键名让这批历史标记作废，访客在修复后能重新自动请求一次；否则他们会继续停在
+ * 「不弹窗、按钮点了才动」的状态里，看起来像没修。
+ */
+const DENIED_KEY = "qiyun-precise-location-denied-v2";
 /** 定位超时：超过这个时间还没结果就放弃，不能拖住首屏天气 */
 const LOCATE_TIMEOUT_MS = 6000;
 

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Megaphone, Pin, X, BellRing } from "lucide-react";
 import { fetchWeatherShared } from "@/lib/weatherClient";
 import { requestPreciseCoords, hasPreciseCoords } from "@/lib/geolocation";
+import { detectCurrentBrowser } from "@/lib/browser";
 
 interface Announcement {
   id: number;
@@ -26,19 +27,6 @@ interface AnnouncementNotificationProps {
 }
 
 const DISMISS_KEY = "qiyun-announcement-dismissed";
-
-/** 解析浏览器名称（本地获取 navigator.userAgent） */
-function getBrowserName(): string {
-  if (typeof navigator === "undefined") return "";
-  const ua = navigator.userAgent;
-  if (ua.includes("MicroMessenger")) return "微信内置浏览器";
-  if (ua.includes("Edg/")) return "Edge";
-  if (ua.includes("QQBrowser")) return "QQ 浏览器";
-  if (ua.includes("Firefox/")) return "Firefox";
-  if (ua.includes("Chrome/")) return "Chrome";
-  if (ua.includes("Safari/")) return "Safari";
-  return "";
-}
 
 /** 获取访客 IP 归属地（复用后端 ip2region 离线库；5s 超时，失败静默返回空） */
 async function fetchVisitorLocation(): Promise<string> {
@@ -100,6 +88,9 @@ export default function AnnouncementNotification({
   // 首次失败等情形都能靠它再试一次。
   const [showPreciseBtn, setShowPreciseBtn] = useState(false);
   const [locating, setLocating] = useState(false);
+  // 手动重试也没拿到坐标（授权被拒/超时/浏览器不支持）时给一句原因，
+  // 否则按钮点完界面毫无变化，会被当成"按钮坏了"
+  const [locateFailed, setLocateFailed] = useState(false);
 
   // 解析当前生效欢迎语（纯函数，每次渲染结果一致）
   let welcomeText = "";
@@ -147,7 +138,7 @@ export default function AnnouncementNotification({
     void (async () => {
       const region = await fetchVisitorRegion(preciseLocation);
       if (cancelled) return;
-      const parts = [getBrowserName(), region].filter(Boolean);
+      const parts = [detectCurrentBrowser(), region].filter(Boolean);
       setVisitorInfo(parts.length > 0 ? `来自 ${parts.join(" · ")}` : "");
       // 开关开着却没拿到坐标 → 自动定位没成功，给出手动重试入口
       if (preciseLocation && !hasPreciseCoords()) setShowPreciseBtn(true);
@@ -162,14 +153,21 @@ export default function AnnouncementNotification({
   /** 用户主动点「使用精确位置」：忽略「曾被拒绝」的记忆重新定位，成功后刷新地域标签 */
   async function applyPreciseLocation() {
     setLocating(true);
+    setLocateFailed(false);
     try {
       const coords = await requestPreciseCoords(true);
-      if (!coords) return;
+      if (!coords) {
+        // 授权被拒 / 超时 / 浏览器不支持：明确告知，并保留按钮供再次尝试
+        setLocateFailed(true);
+        return;
+      }
       const { data } = await fetchWeatherShared({ precise: true, force: true });
       const region = data?.region || (await fetchVisitorLocation());
-      const parts = [getBrowserName(), region].filter(Boolean);
+      const parts = [detectCurrentBrowser(), region].filter(Boolean);
       if (parts.length > 0) setVisitorInfo(`来自 ${parts.join(" · ")}`);
       setShowPreciseBtn(!region);
+      // 坐标拿到了但逆地理没给出地域：同样属于"没成功"，别让按钮静默消失
+      if (!region) setLocateFailed(true);
     } finally {
       setLocating(false);
     }
@@ -267,7 +265,7 @@ export default function AnnouncementNotification({
           {welcomeText && (
             <div className="notice-welcome">
               <p className="notice-welcome-text">{welcomeText}</p>
-              {(visitorInfo || showPreciseBtn) && (
+              {(visitorInfo || showPreciseBtn || locateFailed) && (
                 <p className="notice-visitor">
                   {visitorInfo && <span>{visitorInfo}</span>}
                   {/* 自动定位没成功时的兜底入口：文案直白说明"能得到什么"，不写"开启定位"这种术语 */}
@@ -281,6 +279,9 @@ export default function AnnouncementNotification({
                     >
                       {locating ? "定位中…" : "使用精确位置"}
                     </button>
+                  )}
+                  {locateFailed && (
+                    <span className="notice-precise-hint">未能获取位置，请检查浏览器的定位权限</span>
                   )}
                 </p>
               )}

@@ -14,6 +14,7 @@ import { MUSIC_PANEL_STYLE_OPTIONS } from "@/lib/musicPanelThemes";
 import { loadProfile, setCachedProfile, hasCachedProfile, profileFieldPatch, selectClass } from "./profileShared";
 import { useGlobalSaveState, useRegisterSave, useEditRevision, type SaveOutcome } from "./GlobalSave";
 import UploadButton from "./UploadButton";
+import MediaImagePicker from "./MediaImagePicker";
 
 /**
  * 个性签名字数计数的配色：接近上限转警示色、超出转错误色。
@@ -364,24 +365,27 @@ export default function ProfilePanel() {
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="avatar">头像 URL</Label>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <Input
                         id="avatar"
                         value={profile.avatar}
                         onChange={(e) => set("avatar", e.target.value)}
                         placeholder="https://example.com/avatar.png"
+                        className="min-w-0 flex-1"
                       />
                       <UploadButton onUploaded={(url) => set("avatar", url)} label="上传" />
+                      <MediaImagePicker value={profile.avatar} onSelect={(url) => set("avatar", url)} />
                     </div>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="siteIcon">网站图标 URL</Label>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <Input
                         id="siteIcon"
                         value={profile.siteIcon}
                         onChange={(e) => set("siteIcon", e.target.value)}
                         placeholder="留空使用默认图标"
+                        className="min-w-0 flex-1"
                       />
                       {profile.siteIcon && (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -395,6 +399,7 @@ export default function ProfilePanel() {
                         />
                       )}
                       <UploadButton onUploaded={(url) => set("siteIcon", url)} label="上传" />
+                      <MediaImagePicker value={profile.siteIcon} onSelect={(url) => set("siteIcon", url)} />
                     </div>
                     <p className="text-xs text-muted-foreground">
                       浏览器标签页 / 收藏夹图标（支持 png / svg / ico）

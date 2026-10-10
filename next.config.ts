@@ -44,7 +44,11 @@ const nextConfig: NextConfig = {
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           {
             key: "Permissions-Policy",
-            value: "camera=(), microphone=(), geolocation=(), interest-cohort=()",
+            // geolocation 必须放行同源（self）：后台开启「浏览器精确定位」后，访客端要调用
+            // navigator.geolocation 取设备坐标。写成 geolocation=() 是把 allowlist 置空，
+            // 浏览器会**静默**拒绝 —— 不弹授权框，getCurrentPosition 直接回调 PERMISSION_DENIED，
+            // 前台表现为「点了没反应、地域标签还是 IP 归属地」。摄像头与麦克风本站不用，继续禁用。
+            value: "camera=(), microphone=(), geolocation=(self), interest-cohort=()",
           },
           { key: "Content-Security-Policy", value: csp },
         ],

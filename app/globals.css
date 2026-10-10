@@ -1404,6 +1404,13 @@
     text-decoration: none;
     cursor: default;
   }
+  /* 手动重试失败后的原因提示：与 .notice-visitor 同排、比正文再弱一档，
+     用来解释"为什么点了没变化"，不抢欢迎语的注意力 */
+  .notice-precise-hint {
+    font-size: 0.6875rem;
+    line-height: 1.4;
+    color: rgba(255, 255, 255, 0.55);
+  }
   .notice-list {
     display: flex;
     flex-direction: column;
