@@ -4,9 +4,11 @@
 # 关键点：它从**真实 deploy.sh** 里抽取函数再执行，断言的是实际代码而不是副本——
 # 复制一份函数来测，只能证明副本是对的，改动原文件后测试照样绿。
 #
-# 用法：deploy-logic.sh <probe|pull|pref|snap|wal> [参数...]
+# 用法：deploy-logic.sh <probe|pull|rank|speed|pref|snap|wal|setup> [参数...]
 #   probe <假docker行为> <repo>   输出 VERDICT=allow|exclude、PROBE_ERR=<首行>
 #   pull  <chain> <budget>        输出 PULLED_REPO=...、PULL_FAILED=...
+#   rank  <chain> [tag]           输出 SKIPPED=...、SUMMARY=...、PROBED=...
+#   speed <模式> [url]            输出 KPBS=...、RC=...
 #   pref  <saved> <chain>         输出 PULL_CHAIN=...、SAVED=...
 #   snap  <场景>                  输出快照/还原后的目录内容（文件级断言）
 #   wal   （无参数）              用真实 SQLite 复现「未 checkpoint 的 WAL」并断言数据是否还在
@@ -139,6 +141,93 @@ cmd_pull() { # chain budget
   printf 'PULLED_REPO=%s\n' "$PULLED_REPO"
   printf 'PULL_FAILED=%s\n' "$PULL_FAILED"
 }
+
+# ---------- 拉取测速选源：rank_pull_chain 的跳过规则 ----------
+# 把 speed_probe_kbps 桩掉，只验证「按速度决定跳过谁」这段纯逻辑。
+# 同时记录被真正探测过的来源，用来钉住「遇到达标来源就停止探测」的短路行为。
+cmd_rank() { # chain [tag]
+  local chain="$1" tag="${2:-1.0.0}"
+  PULL_CHAIN="$chain"
+  SPEED_PROBE=1
+  PROBE_MIN_KBPS=600
+  local probed="$STUB_DIR/rank_probed.txt"
+  : > "$probed"
+  # 桩：按仓库名给出速度（slow=100KB/s 偏慢；fast=5000KB/s 达标；其余=测不到）
+  speed_probe_kbps() {
+    printf '%s\n' "$1" >> "$probed"
+    case "$1" in
+      *slow*) printf '100' ;;
+      *fast*) printf '5000' ;;
+      *)      : ;;
+    esac
+  }
+  SPEED_SKIPPED=""
+  SPEED_SUMMARY=""
+  eval "$(extract_fn rank_pull_chain)"
+  rank_pull_chain "$tag" >/dev/null
+  printf 'SKIPPED=%s\n' "$SPEED_SKIPPED"
+  printf 'SUMMARY=%s\n' "$SPEED_SUMMARY"
+  printf 'PROBED=%s\n' "$(tr '\n' ' ' < "$probed" | sed 's/ *$//')"
+}
+
+# 造一个「只有 timeout、没有 python」的 PATH，用来验证缺 python 时静默降级。
+# 桩一律用绝对解释器（#!/bin/sh + 绝对路径 exec）：这些用例会把 PATH 收窄到桩目录本身，
+# 用 «#!/usr/bin/env bash» 会因 PATH 里找不到 bash 而起不来，测出来的「空」是假的。
+make_stub_timeout_only() { # dir
+  local d="$1" rt
+  mkdir -p "$d"
+  rt="$(command -v timeout)"
+  printf '#!/bin/sh\nexec "%s" "$@"\n' "$rt" > "$d/timeout"
+  chmod +x "$d/timeout"
+}
+
+# 造一个「有 timeout、且有假 python3」的 PATH。假 python 按 $1 决定输出内容。
+make_stub_python() { # dir pyprint
+  local d="$1" print="$2"
+  make_stub_timeout_only "$d"
+  printf '#!/bin/sh\nprintf "%%s" %s\n' "$print" > "$d/python3"
+  chmod +x "$d/python3"
+}
+
+# ---------- 拉取测速：speed_probe_kbps 的取值与降级 ----------
+# real 模式需要真实网络（由上层用例起本地假 registry 提供），其余模式纯本地确定。
+cmd_speed() { # mode [url]
+  local mode="$1" url="${2:-}" out="" rc=0
+  DAEMON_HTTP_PROXY=""
+  DAEMON_HTTPS_PROXY=""
+  SPEED_PROBE_BYTES=1048576
+  SPEED_PROBE_TIMEOUT=4
+  SPEED_PROBE=1
+  eval "$(extract_fn speed_probe_kbps)"
+  case "$mode" in
+    real)
+      out="$(speed_probe_kbps "$url" 1.0.0)" || rc=$?
+      ;;
+    disabled)
+      SPEED_PROBE=0
+      out="$(speed_probe_kbps "$url" 1.0.0)" || rc=$?
+      ;;
+    nopy)
+      # 只有 timeout、没有 python3/python：应静默返回空而不是报错
+      make_stub_timeout_only "$STUB_DIR/only-timeout"
+      out="$(PATH="$STUB_DIR/only-timeout" speed_probe_kbps "$url" 1.0.0)" || rc=$?
+      ;;
+    garbage)
+      # python 吐出非数字：应被过滤成空
+      make_stub_python "$STUB_DIR/py-garbage" '"not-a-number"'
+      out="$(PATH="$STUB_DIR/py-garbage" speed_probe_kbps "$url" 1.0.0)" || rc=$?
+      ;;
+    stub)
+      # python 吐出固定数字：应原样透传（验证参数与输出管路是通的）
+      make_stub_python "$STUB_DIR/py-stub" '"1234"'
+      out="$(PATH="$STUB_DIR/py-stub" speed_probe_kbps "$url" 1.0.0)" || rc=$?
+      ;;
+    *) echo "未知模式: $mode" >&2; exit 2 ;;
+  esac
+  printf 'KPBS=%s\n' "$out"
+  printf 'RC=%s\n' "$rc"
+}
+
 
 cmd_pref() { # saved chain
   local saved="$1"
@@ -375,9 +464,11 @@ FAKE
 case "${1:-}" in
   probe) write_fake_docker_probe; PATH="$STUB_DIR:$PATH"; shift; cmd_probe "$@" ;;
   pull)  write_fake_docker_pull;  PATH="$STUB_DIR:$PATH"; shift; cmd_pull "$@" ;;
+  rank)  shift; cmd_rank "$@" ;;
+  speed) shift; cmd_speed "$@" ;;
   pref)  shift; cmd_pref "$@" ;;
   snap)  shift; cmd_snap "$@" ;;
   wal)   shift; cmd_wal "$@" ;;
   setup) shift; cmd_setup "$@" ;;
-  *)     echo "用法: $0 <probe|pull|pref|snap|wal|setup> ..." >&2; exit 2 ;;
+  *)     echo "用法: $0 <probe|pull|rank|speed|pref|snap|wal|setup> ..." >&2; exit 2 ;;
 esac

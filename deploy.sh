@@ -19,6 +19,8 @@
 #   DEPLOY_NO_PROMPT=1               不询问镜像源，直接走自动链路
 #   PULL_SOURCE_TIMEOUT=300          单个来源的拉取预算（秒）；只作用于「后面还有候选」的来源，
 #                                    链上最后一个来源不设预算，置 0 表示全部不设
+#   SPEED_PROBE=0                    关闭「拉取前实测下载速度选源」
+#   PROBE_MIN_KBPS=600               测速达标线（KB/s）：实测低于它、且链上另有更快来源时跳过该源
 #   GITHUB_REPO=owner/repo           查询最新版本时使用的仓库
 #
 # 关于镜像源：发布链路同时推 GHCR 与 Docker Hub，两边是同一份构建（digest 一致），
@@ -57,6 +59,18 @@ PROBE_TIMEOUT="${PROBE_TIMEOUT:-15}"
 # 超额即换下一个来源：镜像层按 digest 寻址，已下好的层会被下一个来源直接复用，切换成本很低。
 # 链上最后一个来源不设预算，保留「绝不误杀慢速链路」的原始保证。
 PULL_SOURCE_TIMEOUT="${PULL_SOURCE_TIMEOUT:-300}"
+
+# ---------- 拉取前的「实测下载速度」预判 ----------
+# 可达性探测（probe_repo）只能回答「连不连得上」，回答不了「拉得快不快」。
+# 线上实测过一个典型形态：manifest 探测 7s 通过，实际吞吐只有约 150KB/s，
+# 按 267MB 的镜像估算要 30 分钟——而换源只在「失败」时发生，于是整次更新都挂在它上面。
+# 因此拉取前真拉一小段镜像层测吞吐，把「可达但极慢」的来源在几秒内识别出来。
+# 测不到速度（无 python3 / 无 timeout / 站点拒绝 / 自定义仓库）时不参与判定，
+# 行为与加此功能之前完全一致，只是多花一次探测时间。
+SPEED_PROBE="${SPEED_PROBE:-1}"
+PROBE_MIN_KBPS="${PROBE_MIN_KBPS:-600}"           # 达标线：低于它视为慢源
+SPEED_PROBE_TIMEOUT="${SPEED_PROBE_TIMEOUT:-6}"   # 单个来源的取样时长上限（秒）
+SPEED_PROBE_BYTES="${SPEED_PROBE_BYTES:-6291456}" # 取样字节上限（6MB）
 
 die()  { echo "✗ $*" >&2; exit 1; }
 warn() { echo "⚠ $*" >&2; }
@@ -293,6 +307,272 @@ probe_repo() { # repo:tag
   # 的代价是整次部署变慢甚至失败，后者严重得多。
   return 0
 }
+
+# 实测某个来源的镜像层下载速度，输出整数 KB/s；测不到则无任何输出（不报错）。
+#
+# 为什么用内嵌 python 而不是 curl：要按 registry 协议取匿名令牌、下钻多架构索引到子清单、
+# 再挑最大的一层做 Range 限时取样，用 shell + sed 解析这些 JSON 既脆弱又难维护。
+# python3/node 在本项目的更新链路里本就被依赖（版本缓存、versions.json），缺失时优雅降级。
+#
+# 关键：探测要与「守护进程」走同一条网络路径。python 的 urllib 会读 shell 的代理变量，
+# 而真正的 pull 由守护进程发起；不照搬 docker info 里的代理配置就会误判（同 probe_repo）。
+speed_probe_kbps() { # repo tag
+  [ "${SPEED_PROBE:-1}" = "1" ] || return 0
+  local py out=""
+  py="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
+  [ -n "$py" ] || return 0
+  # 没有 timeout 就整段放弃：单次取样本身也需要墙钟兜底，宁可退回到旧行为
+  command -v timeout >/dev/null 2>&1 || return 0
+  # 命令替换即子 shell：里面 export/unset 的代理变量不会污染外层（外层还要跑 docker）
+  out="$(
+    if [ -n "${DAEMON_HTTP_PROXY:-}" ] || [ -n "${DAEMON_HTTPS_PROXY:-}" ]; then
+      export http_proxy="$DAEMON_HTTP_PROXY" https_proxy="$DAEMON_HTTPS_PROXY"
+      export HTTP_PROXY="$DAEMON_HTTP_PROXY" HTTPS_PROXY="$DAEMON_HTTPS_PROXY"
+    else
+      unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
+    fi
+    timeout -k 5 "$(( ${SPEED_PROBE_TIMEOUT:-6} + 20 ))" \
+      "$py" - "$1" "$2" "${SPEED_PROBE_BYTES:-6291456}" "${SPEED_PROBE_TIMEOUT:-6}" <<'PY'
+import json
+import os
+import platform
+import re
+import sys
+import time
+import urllib.error
+import urllib.request
+
+UA = "qiyun-speed-probe"
+ACCEPT = ", ".join([
+    "application/vnd.oci.image.index.v1+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+    "application/vnd.oci.image.manifest.v1+json",
+    "application/vnd.docker.distribution.manifest.v2+json",
+])
+ARCH = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
+DEBUG = os.environ.get("QIYUN_PROBE_DEBUG") == "1"
+
+
+def dbg(msg):
+    if DEBUG:
+        sys.stderr.write("[probe] %s\n" % msg)
+        sys.stderr.flush()
+
+
+def split_ref(ref):
+    # 拆出 (scheme, host, path)；允许显式带协议前缀（http 私有仓库）
+    scheme = "https"
+    rest = ref
+    m = re.match(r"^(https?)://(.+)$", ref)
+    if m:
+        scheme, rest = m.group(1), m.group(2)
+    host, _, path = rest.partition("/")
+    return scheme, host, path
+
+
+def api_base_of(scheme, host):
+    # Docker Hub 的 registry API 不在 docker.io 上，而在 registry-1.docker.io（仅 https）
+    if host in ("docker.io", "index.docker.io", "registry-1.docker.io"):
+        return "https://registry-1.docker.io"
+    return scheme + "://" + host
+
+
+def fetch_token(opener, challenge, repo_path, timeout):
+    # 按 401 响应里的 WWW-Authenticate 取匿名拉取令牌；公开镜像不需要登录
+    realm = re.search(r'realm="([^"]+)"', challenge)
+    if not realm:
+        return None
+    url = realm.group(1)
+    params = []
+    service = re.search(r'service="([^"]+)"', challenge)
+    if service:
+        params.append("service=" + service.group(1))
+    params.append("scope=repository:%s:pull" % repo_path)
+    url += ("&" if "?" in url else "?") + "&".join(params)
+    dbg("token url: %s" % url)
+    try:
+        with opener.open(urllib.request.Request(url, headers={"User-Agent": UA}), timeout=timeout) as r:
+            data = json.loads(r.read().decode("utf-8", "replace"))
+    except Exception as e:
+        dbg("token failed: %s: %s" % (type(e).__name__, e))
+        return None
+    return data.get("token") or data.get("access_token") or ""
+
+
+def slurp(opener, url, headers, timeout):
+    with opener.open(urllib.request.Request(url, headers=headers), timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8", "replace"))
+
+
+def pick_matching_manifest(doc):
+    # 多架构索引里挑一个子清单：优先本机架构，挑不到就用第一个。
+    # 测速只关心到 registry 的网络吞吐，与具体架构的层内容无关，不匹配也不影响结论。
+    entries = doc.get("manifests") or []
+    if not entries:
+        return None
+    want = ARCH.get(platform.machine().lower(), "")
+    if want:
+        for e in entries:
+            plat = e.get("platform") or {}
+            if plat.get("architecture") == want and plat.get("os", "linux") == "linux":
+                return e.get("digest")
+    return entries[0].get("digest")
+
+
+def main():
+    if len(sys.argv) < 3:
+        return 1
+    ref = sys.argv[1]
+    tag = sys.argv[2]
+    want = int(sys.argv[3]) if len(sys.argv) > 3 else 6 * 1024 * 1024
+    budget = float(sys.argv[4]) if len(sys.argv) > 4 else 6.0
+    sock_timeout = min(4.0, budget)
+
+    scheme, host, repo_path = split_ref(ref)
+    if not repo_path:
+        dbg("bad ref: %s" % ref)
+        return 1
+    base = api_base_of(scheme, host)
+    # 回环地址不走代理：代理通常也回不到 127.0.0.1，只会白等一次超时。
+    # （本地/内网自建 registry 与自动化测试都会命中这条。）
+    if re.match(r"^(localhost|127\.\d+\.\d+\.\d+|\[?::1\]?)$", host):
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    else:
+        opener = urllib.request.build_opener()
+    headers = {"User-Agent": UA, "Accept": ACCEPT}
+    dbg("base=%s path=%s tag=%s" % (base, repo_path, tag))
+
+    # 取清单；401 时就地用 challenge 换令牌重试，省掉一次独立的 /v2/ 往返
+    man_url = "%s/v2/%s/manifests/%s" % (base, repo_path, tag)
+    token = ""
+    try:
+        doc = slurp(opener, man_url, headers, sock_timeout)
+    except urllib.error.HTTPError as e:
+        if e.code != 401:
+            dbg("manifest HTTP %s" % e.code)
+            return 1
+        token = fetch_token(opener, e.headers.get("WWW-Authenticate", ""), repo_path, sock_timeout)
+        if token is None:
+            return 1
+        try:
+            doc = slurp(opener, man_url, dict(headers, Authorization="Bearer " + token), sock_timeout)
+        except Exception as e:
+            dbg("manifest(auth) failed: %s: %s" % (type(e).__name__, e))
+            return 1
+    except Exception as e:
+        dbg("manifest failed: %s: %s" % (type(e).__name__, e))
+        return 1
+
+    auth = {"Authorization": "Bearer " + token} if token else {}
+    man_headers = dict(headers, **auth)
+
+    # 多架构索引再下一层取子清单
+    if not doc.get("layers"):
+        digest = pick_matching_manifest(doc)
+        if not digest:
+            dbg("no sub manifest")
+            return 1
+        try:
+            doc = slurp(opener, "%s/v2/%s/manifests/%s" % (base, repo_path, digest), man_headers, sock_timeout)
+        except Exception as e:
+            dbg("sub manifest failed: %s: %s" % (type(e).__name__, e))
+            return 1
+
+    layers = doc.get("layers") or []
+    if not layers:
+        return 1
+    # 挑最大的一层：太小的层在快链路上测不出有效样本
+    layer = max(layers, key=lambda x: int(x.get("size") or 0))
+    digest = layer.get("digest")
+    if not digest:
+        return 1
+
+    # 限时拉一段，按实际收到的字节估算吞吐
+    blob = "%s/v2/%s/blobs/%s" % (base, repo_path, digest)
+    dbg("blob=%s size=%s" % (blob, layer.get("size")))
+    got = 0
+    elapsed = 0.0
+    start = 0.0
+    try:
+        req = urllib.request.Request(blob, headers=dict(man_headers, Range="bytes=0-%d" % (want - 1)))
+        with opener.open(req, timeout=sock_timeout) as r:
+            # 计时从「响应头到达」开始：连接与 TLS 握手在慢速链路上本身就要几秒，
+            # 算进去会把预算提前耗光、取样恒为 0（本地实测踩过）。这里要的是稳态吞吐。
+            start = time.time()
+            dbg("blob status=%s len=%s" % (r.status, r.headers.get("Content-Length")))
+            while got < want:
+                if time.time() - start >= budget:
+                    break
+                chunk = r.read(min(65536, want - got))
+                if not chunk:
+                    break
+                got += len(chunk)
+            elapsed = time.time() - start
+    except Exception as e:
+        # 中途超时/断流属正常：已收到的字节足以估算速度
+        elapsed = (time.time() - start) if start else 0.0
+        dbg("blob interrupted: %s: %s" % (type(e).__name__, e))
+    if got <= 0 or elapsed <= 0:
+        dbg("no bytes received (%d in %.1fs)" % (got, elapsed))
+        return 1
+    kbps = int(got / elapsed / 1024)
+    if kbps <= 0:
+        return 1
+    dbg("got=%d bytes in %.1fs -> %d KB/s" % (got, elapsed, kbps))
+    sys.stdout.write("%d\n" % kbps)
+    return 0
+
+
+try:
+    sys.exit(main())
+except Exception as e:
+    dbg("fatal: %s: %s" % (type(e).__name__, e))
+    sys.exit(1)
+PY
+  )" 2>/dev/null || out=""
+  # 只认纯数字：日志、告警、半截输出一律当「测不到」
+  case "$out" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  printf '%s' "$out"
+}
+
+# 按实测下载速度决定「跳过哪些来源」，结果写入 SPEED_SKIPPED / SPEED_SUMMARY。
+#
+# 规则与理由：
+#   1) 逐个探测，遇到「达标」的就停止——它会先被使用，后面的候选只有在前面全部失败时才轮到，
+#      交给拉取预算兜底即可，没必要为它们再花测速时间（常见情形下只探一个，代价约 1 秒）。
+#   2) 测到明确偏慢的记入跳过集合；测不到速度的（无 python3 / 站点拒绝）不参与判定。
+#   3) 跳过集合只在「确实存在更快来源」时才生效。若所有候选都慢，跳过谁都无益，
+#      此时一个都不跳，交由拉取预算与末位不设预算的保证兜底——绝不把候选清空。
+rank_pull_chain() { # tag
+  SPEED_SKIPPED=""
+  SPEED_SUMMARY=""
+  [ "${SPEED_PROBE:-1}" = "1" ] || return 0
+  # 链上只有一个候选时「跳过」没有意义，直接省掉整段测速
+  case "$PULL_CHAIN" in
+    *" "*) ;;
+    *) return 0 ;;
+  esac
+  local _repo _kbps _slow="" _detail="" _fast=0
+  for _repo in $PULL_CHAIN; do
+    _kbps="$(speed_probe_kbps "$_repo" "$1")"
+    case "$_kbps" in
+      ''|*[!0-9]*) _detail="$_detail ${_repo}=未知"; continue ;;
+    esac
+    _detail="$_detail ${_repo}=${_kbps}KB/s"
+    if [ "$_kbps" -ge "${PROBE_MIN_KBPS:-600}" ]; then
+      _fast=1
+      break
+    fi
+    _slow="$_slow $_repo"
+  done
+  SPEED_SUMMARY="${_detail# }"
+  [ "$_fast" = "1" ] || return 0
+  SPEED_SKIPPED="$_slow"
+  return 0
+}
+
 
 # 校验拉到的镜像架构与当前主机一致。多架构 manifest 下 docker 会自动选对平台，
 # 这条只兜住「目标版本只有单架构」的过渡情况：不拦的话容器会以
@@ -747,6 +1027,13 @@ if [ -n "$DAEMON_HTTP_PROXY" ] || [ -n "$DAEMON_HTTPS_PROXY" ]; then
   info "检测到 Docker 守护进程配置了代理，探测将沿用同一代理"
 fi
 
+# 拉取前实测各来源的下载速度，把「可达但极慢」的来源剔除掉（见 rank_pull_chain）。
+# 必须在 info "拉取" 之前完成：那一行之后就是 harness 抽取的拉取循环本体。
+rank_pull_chain "$IMAGE_TAG"
+if [ -n "${SPEED_SUMMARY:-}" ]; then
+  info "各来源实测下载速度：${SPEED_SUMMARY}"
+fi
+
 info "拉取 ${IMAGE_TAG} 镜像，依次尝试：${PULL_CHAIN// /、}"
 PULLED_REPO=""
 PULL_FAILED=""
@@ -756,6 +1043,13 @@ LAST_PROBE_ERR=""
 LAST_REPO=""
 for _r in $PULL_CHAIN; do LAST_REPO="$_r"; done
 for repo in $PULL_CHAIN; do
+  # 测速判定为过慢的来源直接跳过；SPEED_SKIPPED 未设（未启用测速）时这里是空串，不影响流程
+  case " ${SPEED_SKIPPED:-} " in
+    *" $repo "*)
+      warn "来源 ${repo} 实测下载速度低于 ${PROBE_MIN_KBPS:-600}KB/s，跳过（已下载的层会被后续来源复用）"
+      PULL_FAILED="${PULL_FAILED} ${repo}(过慢)"
+      continue ;;
+  esac
   if ! probe_repo "${repo}:${IMAGE_TAG}"; then
     LAST_PROBE_ERR="$PROBE_ERR"
     warn "来源 ${repo} 探测不通，跳过"
