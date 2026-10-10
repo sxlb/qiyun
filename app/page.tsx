@@ -11,6 +11,7 @@ import ClockWeatherCapsule from "@/components/home/ClockWeatherCapsule";
 import SocialLinks from "@/components/home/SocialLinks";
 import LinkTabs from "@/components/home/LinkTabs";
 import CommandPalette from "@/components/home/CommandPalette";
+import ExpandableContent from "@/components/home/ExpandableContent";
 import SkillCloud from "@/components/home/SkillCloud";
 import ThemeProvider from "@/components/home/ThemeProvider";
 import LogoFontLoader from "@/components/home/LogoFontLoader";
@@ -236,10 +237,24 @@ export default async function Home() {
                 {/* 社交链接 */}
                 <SocialLinks initialLinks={d.socialLinks} iconifyApi={d.iconifyApi} />
 
-                {/* 简介卡片 */}
+                {/* 简介卡片。正文超过固定行数就收起，底部给「展开全文」入口（弹窗里读全文）——
+                    简介写长了不再把整页顶出屏幕；两侧引号图标固定在卡片上，不跟着收起。
+                    弹窗内容用 whitespace-pre-wrap 保留后台里敲的换行。 */}
                 <div className="card-glass card-info mt-6 flex max-w-[500px] w-full items-start justify-between gap-4 p-5">
                   <Quote className="mt-0.5 h-[20px] w-[20px] shrink-0 rotate-180 text-white/50" />
-                  <p className="min-w-0 flex-1 break-words text-[17px] leading-relaxed text-white/90">{d.bio}</p>
+                  <ExpandableContent
+                    className="min-w-0 flex-1"
+                    clampClass="bio-clamp"
+                    label="展开全文"
+                    dialogTitle="个人简介"
+                    dialogContent={
+                      <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed text-white/90">
+                        {d.bio}
+                      </p>
+                    }
+                  >
+                    <p className="break-words text-[17px] leading-relaxed text-white/90">{d.bio}</p>
+                  </ExpandableContent>
                   <Quote className="mt-0.5 h-[20px] w-[20px] shrink-0 text-white/50" />
                 </div>
 
