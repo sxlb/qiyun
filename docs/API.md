@@ -1209,6 +1209,19 @@ Cookie 头中会设置 `qiyun-uv=1`（httpOnly, sameSite=lax, maxAge=365 天）�
 > 开启后 `lib/geolocation.ts` 在安全上下文请求 `navigator.geolocation`，被拒绝后记忆到
 > localStorage 不再自动弹窗，仅保留欢迎弹窗上的「使用精确位置」按钮供手动重试。
 >
+> **坐标会落盘复用 30 分钟**（`qiyun-precise-coords-v1`，带时间戳与 TTL）：刷新页面或切走标签页
+> 再回来直接复用上次坐标，不必重新定位；超过窗口自动作废并重新定位。写不进去（隐私模式）
+> 时降级为仅本次会话有效，功能不受影响。
+>
+> **手动刷新入口**：时钟天气卡片右上角有「刷新定位与天气」按钮，一次调用同时作废旧坐标
+> （强制重新定位）与短时缓存（强制重取天气）—— 两者必须一起做，否则会出现"定位刷新了但
+> 天气还是老位置"的半生效状态。欢迎弹窗的「使用精确位置」走同一个入口
+> （`refreshWeather`，见 `lib/weatherClient.ts`）。
+>
+> **两处展示同步**：时钟卡片与欢迎弹窗各自持有一份状态，靠 `weatherClient` 的轻量广播
+> （`subscribeWeather`）对齐 —— 任一处刷新成功后广播新结果，另一处随即更新；
+> 少了这层订阅，用户点完按钮会看到两处位置各说各话。
+>
 > **前置条件**：站点必须在响应头 `Permissions-Policy` 里放行同源定位（`geolocation=(self)`，
 > 见 `next.config.ts`）。若写成 `geolocation=()`，浏览器会**静默**拒绝 —— 不弹授权框，
 > `getCurrentPosition` 直接回调 `PERMISSION_DENIED`，前台只表现为「点了没反应」，

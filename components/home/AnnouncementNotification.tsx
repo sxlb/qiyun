@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Megaphone, Pin, X, BellRing } from "lucide-react";
-import { fetchWeatherShared } from "@/lib/weatherClient";
-import { requestPreciseCoords, hasPreciseCoords } from "@/lib/geolocation";
+import { fetchWeatherShared, refreshWeather, subscribeWeather } from "@/lib/weatherClient";
+import { hasPreciseCoords } from "@/lib/geolocation";
 import { detectCurrentBrowser } from "@/lib/browser";
 
 interface Announcement {
@@ -150,18 +150,36 @@ export default function AnnouncementNotification({
     // 仅组件挂载时预取一次；公告/访客信息在切换 site 后会重新挂载，由组件层面保证刷新
   }, [preciseLocation]);
 
+  /**
+   * 跟随天气共享层的广播更新地域。
+   *
+   * 场景：用户点的是**时钟卡片**上的「刷新定位与天气」，弹窗这行「来自 X · Y」也该跟着变；
+   * 反之亦然。没有这层订阅，两处的位置就会各说各话。
+   */
+  useEffect(() => {
+    return subscribeWeather(({ data }) => {
+      if (!data?.region) return;
+      const parts = [detectCurrentBrowser(), data.region].filter(Boolean);
+      setVisitorInfo(`来自 ${parts.join(" · ")}`);
+      // 拿到地域说明定位链路是通的：清掉失败态与兜底按钮
+      setShowPreciseBtn(false);
+      setLocateFailed(false);
+    });
+  }, []);
+
   /** 用户主动点「使用精确位置」：忽略「曾被拒绝」的记忆重新定位，成功后刷新地域标签 */
   async function applyPreciseLocation() {
     setLocating(true);
     setLocateFailed(false);
     try {
-      const coords = await requestPreciseCoords(true);
-      if (!coords) {
+      // 走统一刷新入口：强制重新定位 + 重取天气，成功后广播给时钟卡片，
+      // 两处展示的位置一起变（这就是「定位后天气位置没变」的修复点）
+      const { data, precise } = await refreshWeather({ precise: true });
+      if (!precise) {
         // 授权被拒 / 超时 / 浏览器不支持：明确告知，并保留按钮供再次尝试
         setLocateFailed(true);
         return;
       }
-      const { data } = await fetchWeatherShared({ precise: true, force: true });
       const region = data?.region || (await fetchVisitorLocation());
       const parts = [detectCurrentBrowser(), region].filter(Boolean);
       if (parts.length > 0) setVisitorInfo(`来自 ${parts.join(" · ")}`);

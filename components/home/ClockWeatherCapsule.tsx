@@ -1,41 +1,82 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { fetchWeatherShared, type WeatherPayload } from "@/lib/weatherClient";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { RefreshCw } from "lucide-react";
+import {
+  fetchWeatherShared,
+  refreshWeather,
+  subscribeWeather,
+  type WeatherFetchResult,
+  type WeatherPayload,
+} from "@/lib/weatherClient";
 
 // ===== 天气数据加载 Hook =====
 // 走共享层（lib/weatherClient.ts）：欢迎通知也要用这次请求顺带解析出的访客地域，
 // 两处共用同一次请求而不是各发一次。
-function useWeather(precise: boolean): { data: WeatherPayload; error?: string } {
+//
+// 除首次加载与 10 分钟定时重取之外，还订阅共享层的广播：用户在欢迎弹窗点
+// 「使用精确位置」、或在本卡片点「刷新定位与天气」时，两处展示的位置与天气一起变。
+// 少了这层订阅，用户在弹窗里定位成功后，时钟卡片仍显示旧城市 —— 看起来就像"定位没生效"。
+function useWeather(precise: boolean): {
+  data: WeatherPayload;
+  error?: string;
+  hint?: string;
+  refreshing: boolean;
+  refresh: () => Promise<WeatherFetchResult>;
+} {
   const [data, setData] = useState<WeatherPayload>({});
   const [error, setError] = useState<string>();
+  // 手动刷新后的补充说明（如"未能获取精确位置"）：与 error 分开，
+  // 避免把「网络正常但定位被拒」说成网络故障
+  const [hint, setHint] = useState<string>();
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     let disposed = false;
 
-    async function load() {
-      const { data: next, error: err } = await fetchWeatherShared({ precise });
-      // 过期结果（组件已卸载）不写进 state
+    function apply(result: WeatherFetchResult) {
       if (disposed) return;
-      if (next) {
-        setData(next);
+      if (result.data) {
+        setData(result.data);
         // 恢复成功要清掉上一次的错误，否则失败过的提示会一直挂着
         setError(undefined);
       }
-      if (err) setError(err);
+      if (result.error) setError(result.error);
+    }
+
+    async function load() {
+      apply(await fetchWeatherShared({ precise }));
     }
 
     load();
     const timer = setInterval(load, 10 * 60 * 1000);
+    const unsubscribe = subscribeWeather(apply);
     return () => {
       disposed = true;
       clearInterval(timer);
+      unsubscribe();
       // 这里**不**需要处理在途请求：请求在共享层发起，不绑定本组件生命周期，
       // 因此开发模式 StrictMode 的「挂载→清理→再挂载」不会把它打断
     };
   }, [precise]);
 
-  return { data, error };
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    setHint(undefined);
+    try {
+      const result = await refreshWeather({ precise });
+      // 开了精确定位开关却没拿到坐标 → 明确告知，否则用户只看到"转了一圈还是老位置"，
+      // 会以为按钮坏了
+      if (precise && !result.precise) {
+        setHint("未能获取精确位置，请检查浏览器定位权限");
+      }
+      return result;
+    } finally {
+      setRefreshing(false);
+    }
+  }, [precise]);
+
+  return { data, error, hint, refreshing, refresh };
 }
 
 // ===== 格式化辅助函数 =====
@@ -94,7 +135,7 @@ export default function ClockWeatherCapsule({
   const timeRef = useRef<HTMLSpanElement>(null);
   const dateRef = useRef<HTMLDivElement>(null);
 
-  const { data, error: weatherError } = useWeather(preciseLocation);
+  const { data, error: weatherError, hint, refreshing, refresh } = useWeather(preciseLocation);
   const { city, weather, temperature, winddirection, windpower } = data;
 
   // 每秒更新时钟与日期（ref 直写 DOM，无 state 变更）
@@ -121,7 +162,21 @@ export default function ClockWeatherCapsule({
     : `${windpower || ""}级`;
 
   return (
-       <div className="flex h-full w-full flex-col justify-end">
+       <div className="relative flex h-full w-full flex-col justify-end">
+         {/* 刷新按钮（定位 + 天气一体）：自动定位不准时的唯一手动入口。
+             放在卡片右上角 —— 时钟与天气都居中排布，右侧是空白区，不会压到任何文字。
+             一个按钮同时做两件事，避免"刷新了定位但天气没变"这类半生效状态。 */}
+         <button
+           type="button"
+           onClick={() => void refresh()}
+           disabled={refreshing}
+           title="刷新定位与天气"
+           aria-label="刷新定位与天气"
+           className="absolute right-0 top-0 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white/60 transition-colors hover:bg-white/20 hover:text-white/90 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-white/60 disabled:cursor-default disabled:bg-white/10 disabled:text-white/35"
+         >
+           <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} aria-hidden />
+         </button>
+
          {/* 时钟+天气合并为一个紧凑组 */}
          <div className="flex flex-col items-center gap-1.5">
            {/* 日期行 — 移动端 12px，桌面端（md+）14px 提升可读性 */}
@@ -170,7 +225,10 @@ export default function ClockWeatherCapsule({
            </div>
          </div>
 
-      {weatherError && <p className="text-center text-xs text-white/60">{weatherError}</p>}
+      {/* 提示优先级：定位类说明（hint）比网络错误更具体、更可操作，先展示它 */}
+      {(hint || weatherError) && (
+        <p className="text-center text-xs text-white/60">{hint || weatherError}</p>
+      )}
     </div>
   );
 }

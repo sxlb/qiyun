@@ -17,10 +17,14 @@
  * - 失败结果**不缓存** —— 缓存住失败会让后续调用者连重试的机会都没有
  * - 成功结果只复用 60 秒，远短于胶囊 10 分钟的重取间隔，因此不会展示过期天气
  *
+ * 另外提供一层**极轻量的广播**：任一处拿到新数据就把结果推给所有订阅者。
+ * 这是「用户在欢迎弹窗点了『使用精确位置』/ 点了时钟卡片的刷新按钮，但另一处纹丝不动」
+ * 的解药 —— 两个组件各自持有一份 state，没有广播就永远对不上。
+ *
  * 注意：这是客户端模块（依赖浏览器的 fetch 与相对路径），不要被服务端组件引入。
  */
 
-import { requestPreciseCoords, type PreciseCoords } from "@/lib/geolocation";
+import { requestPreciseCoords, clearPreciseCoords, type PreciseCoords } from "@/lib/geolocation";
 
 export interface WeatherPayload {
   city?: string;
@@ -61,6 +65,37 @@ function locateKey(coords: PreciseCoords | null): string {
 let inflight: { key: string; promise: Promise<WeatherFetchResult> } | null = null;
 let cached: { at: number; key: string; data: WeatherPayload; precise: boolean } | null = null;
 
+/* ---------------- 轻量广播：一处拿到新数据，所有消费方一起更新 ---------------- */
+
+type WeatherListener = (result: WeatherFetchResult) => void;
+
+const listeners = new Set<WeatherListener>();
+
+/**
+ * 订阅天气更新。返回取消订阅函数（组件卸载时调用）。
+ *
+ * 触发时机：某次请求**真正拿到响应**之后（含成功与失败）。
+ * 刻意不在命中短时缓存时广播 —— 那种情况下调用方本来就已经同步拿到了结果，
+ * 再广播一次只会让各组件白跑一次 setState。
+ */
+export function subscribeWeather(listener: WeatherListener): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/** 逐个通知订阅者；单个订阅者抛错不能连累其余订阅者（组件里的 bug 不该拖垮整页天气） */
+function emit(result: WeatherFetchResult): void {
+  for (const listener of listeners) {
+    try {
+      listener(result);
+    } catch {
+      // 忽略：订阅方自身的异常由它自己负责
+    }
+  }
+}
+
 async function request(coords: PreciseCoords | null): Promise<WeatherFetchResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -71,7 +106,9 @@ async function request(coords: PreciseCoords | null): Promise<WeatherFetchResult
     if (!res.ok) return { data: null, error: "天气数据获取失败", precise };
     const data = (await res.json()) as WeatherPayload;
     cached = { at: Date.now(), key: locateKey(coords), data, precise };
-    return { data, precise };
+    const result: WeatherFetchResult = { data, precise };
+    emit(result);
+    return result;
   } catch (e) {
     // 超时（AbortError）不报错：与共享前胶囊的行为一致 —— 慢网络下弹一句"网络错误"没有意义，
     // 何况欢迎通知那边只要拿得到 region 就够了
@@ -95,8 +132,10 @@ export async function fetchWeatherShared(opts: FetchWeatherOptions = {}): Promis
   if (!opts.force && cached && cached.key === key && Date.now() - cached.at < SHARE_TTL_MS) {
     return { data: cached.data, precise: cached.precise };
   }
-  // 在途去重只在「定位依据相同」时生效：坐标与 IP 是两次不同的请求，不能互相顶替
-  if (inflight && inflight.key === key) return inflight.promise;
+  // 在途去重只在「定位依据相同」时生效：坐标与 IP 是两次不同的请求，不能互相顶替。
+  // force（用户主动刷新）时一律不复用：手动刷新要的正是"重新走一遍"，
+  // 复用一个按旧依据发起的在途请求会让按钮看起来没反应。
+  if (!opts.force && inflight && inflight.key === key) return inflight.promise;
 
   const promise = request(coords).finally(() => {
     if (inflight?.promise === promise) inflight = null;
@@ -105,8 +144,30 @@ export async function fetchWeatherShared(opts: FetchWeatherOptions = {}): Promis
   return promise;
 }
 
+export interface RefreshWeatherOptions {
+  /** 是否启用浏览器精确定位（后台「浏览器精确定位」开关）：开启时同时强制重新定位 */
+  precise?: boolean;
+}
+
+/**
+ * 「刷新定位 + 刷新天气」的统一入口（时钟卡片的刷新按钮、欢迎弹窗的「使用精确位置」共用）。
+ *
+ * 一次调用做完三件事：
+ * 1. 作废旧坐标（仅当启用精确定位）—— 否则 `requestPreciseCoords` 会把旧坐标原样返回；
+ * 2. 作废短时缓存并强制重取，忽略「曾被拒绝」的记忆，重新走一遍定位授权；
+ * 3. 请求成功后由 `request` 广播给所有订阅者，两个组件的位置与天气一起刷新。
+ *
+ * 永不抛异常；被拒绝/超时时 `precise` 为 false，调用方可据此提示用户检查浏览器权限。
+ */
+export async function refreshWeather(opts: RefreshWeatherOptions = {}): Promise<WeatherFetchResult> {
+  cached = null;
+  if (opts.precise) clearPreciseCoords();
+  return fetchWeatherShared({ precise: opts.precise ?? false, force: true });
+}
+
 /** 供测试清空共享状态，保证用例隔离（模块级缓存不清会串场） */
 export function resetWeatherShare(): void {
   inflight = null;
   cached = null;
+  listeners.clear();
 }

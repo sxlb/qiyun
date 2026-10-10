@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import ClockWeatherCapsule from "@/components/home/ClockWeatherCapsule";
 import { resetWeatherShare } from "@/lib/weatherClient";
 
@@ -82,5 +82,54 @@ describe("ClockWeatherCapsule · 风向风力", () => {
 
     const wind = await screen.findByText(/西北风/);
     expect(wind.textContent?.replace(/\s+/g, " ")).toContain("西北风 3-4级");
+  });
+});
+
+/**
+ * 卡片自带的「刷新定位与天气」按钮。
+ *
+ * 回归背景：自动定位不准时用户需要手动重来一次；且刷新必须"定位与天气一起刷"，
+ * 否则会出现"定位刷新了但天气还是老位置"的半生效状态。
+ */
+describe("ClockWeatherCapsule · 刷新定位与天气", () => {
+  it("渲染刷新按钮，点击后强制重新请求天气", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ city: "杭州市", weather: "多云", temperature: "26℃" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ClockWeatherCapsule />);
+    await screen.findByText("杭州市");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新定位与天气" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("开了精确定位却没拿到坐标时，给出可照做的提示（否则像按钮坏了）", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ city: "盐城市", weather: "晴", temperature: "20℃" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          })
+      )
+    );
+    // 无 geolocation：精确定位必然拿不到坐标，走 IP 定位兜底
+    vi.stubGlobal("navigator", {});
+
+    render(<ClockWeatherCapsule preciseLocation />);
+    await screen.findByText("盐城市");
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新定位与天气" }));
+
+    expect(await screen.findByText(/未能获取精确位置/)).toBeTruthy();
   });
 });
