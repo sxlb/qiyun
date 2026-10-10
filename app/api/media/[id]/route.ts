@@ -3,6 +3,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import { prisma } from "@/lib/db";
 import { getUploadsDir, isSafeFileName } from "@/lib/uploads";
+import { removeThumbnails } from "@/lib/thumbnails";
 import {
   requireSession,
   error,
@@ -46,6 +47,8 @@ export async function DELETE(
       if (filePath.startsWith(getUploadsDir() + path.sep)) {
         await fs.rm(filePath, { force: true }).catch(() => {});
       }
+      // 缩略图是原图的派生缓存，原图没了就该一起清掉，否则越攒越多
+      await removeThumbnails("uploads", asset.fileName);
     }
 
     const username = session.user?.name || "unknown";

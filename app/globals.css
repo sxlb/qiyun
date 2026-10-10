@@ -2268,7 +2268,93 @@
   opacity: 1;
 }
 
+/* ===== 后台图片网格：视口外的卡片跳过渲染与解码 =====
+   媒体库一页 24 张、壁纸缓存最多 300 张，且都是原图直出（后台不做缩略图）。
+   若让它们全部参与布局绘制，浏览器会一次性解码上百张大图（每张解码后位图
+   可达数十 MB），主线程被解码任务占满 —— 表现为「图片还没加载完，页面先卡住」。
+   content-visibility: auto 让视口外的卡片既不做布局绘制、也不触发内部 <img> 的
+   加载与解码，滚动到附近时才按需处理；contain-intrinsic-size 的 auto 关键字
+   会记住卡片实测高度，滚动条不会因估算值而跳动。 */
+.media-grid-cell {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 340px;
+}
+
+/* 弹层里的图片格子只有图、没有文件名与按钮，高度约为面板卡片的一半。
+   沿用 340px 估算会让这一侧的滚动条先长后短地跳一下，故单独给一个更贴近的值。 */
+.media-grid-cell--compact {
+  contain-intrinsic-size: auto 150px;
+}
+
 /* ===== 首屏单屏适配（任意窗口下内容不滚动、全部可见） ===== */
+
+/* 简介正文与技能标签是站内仅有的两处「内容量可变」区域：简介多写几句、技能多加几个，
+   高度就一路增长，最终把整个外壳顶出屏幕（实测手机端曾因此溢出 1200px 以上，
+   桌面 1416×745 也溢出 239px）。给它们各自设上限后，外壳高度不再由文字多少决定。
+   （导航卡已按页拆分，高度天然稳定，不在此列。）
+
+   收起形态选择「固定几行 + 展开弹窗」而不是内嵌滚动条：玻璃卡片里塞一条细滚动条
+   既不好看也不好按（触摸设备上尤其），且滚动区会与卡片 hover 抬升的动效打架；
+   折叠给的是一个有文案的明确入口，点开后在弹窗里读全文更舒展。 */
+.bio-clamp,
+.skills-clamp {
+  overflow: hidden;
+}
+/* 底部渐隐：截断处看起来是渐隐，而不是被硬生生切断。
+   只在真的溢出时挂上（由 ExpandableContent 判定），否则短内容也会被淡掉一截。 */
+.bio-clamp.is-clamped,
+.skills-clamp.is-clamped {
+  -webkit-mask-image: linear-gradient(to bottom, #000 72%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 72%, transparent 100%);
+}
+
+/* 手机：单列堆叠，六个区块的总量本身已超过一屏，只能收到更紧的行数以减少滚动 */
+.bio-clamp {
+  max-height: 7.5rem;
+}
+.skills-clamp {
+  max-height: 7rem;
+}
+
+/* 桌面 / 平板：上限按「视口高度减去固定块」对半分配。
+   34rem 是这两处之外的固定高度（头像行、社交、功能卡、导航卡、页脚、间距，
+   以及两张卡片自身的 padding 与标题 —— 实测约 33rem，多取 1rem 吸收窄平板下
+   功能卡堆叠变高的差异）。下限保证极矮窗口仍留得下几行；上限则让大屏不去截断
+   本就放得下的简介（1440 高时原样显示）。 */
+@media (min-width: 768px) {
+  .bio-clamp,
+  .skills-clamp {
+    max-height: clamp(5rem, calc((100dvh - 34rem) / 2), 22rem);
+  }
+}
+
+/* 「展开」入口：绝对定位压在底部渐隐区上，不额外占用卡片高度 */
+.expand-trigger {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.625rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.85);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+.expand-trigger:hover {
+  background: rgba(0, 0, 0, 0.68);
+  color: #fff;
+}
+
 /* 导航卡格子高度默认 100px，矮视口下收紧，保证双栏+页脚落在一屏内 */
 .site-links-container {
   --nav-cell: 100px;

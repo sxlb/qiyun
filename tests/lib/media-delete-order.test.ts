@@ -23,6 +23,15 @@ const rmMock = vi.fn(async () => {
 });
 const opLogMock = vi.fn(async () => ({}));
 
+/** 缩略图清理独立成桩：它也走 node:fs，混进来会污染下面的删除顺序断言 */
+const removeThumbsMock =
+  vi.hoisted(() => vi.fn<(source: string, fileName: string) => Promise<void>>(async () => {}));
+
+vi.mock("@/lib/thumbnails", () => ({
+  removeThumbnails: removeThumbsMock,
+  clearThumbnails: vi.fn(async () => {}),
+}));
+
 // 说明：这里刻意不写 `(...args) => mock(...args)`。带实现的 vi.fn(impl) 其签名由 impl 推断，
 // 是「无参」的，透传展开会触发 TS2556；而本文件只断言调用顺序、不关心入参，零参包装即可。
 vi.mock("@/lib/db", () => ({
@@ -76,6 +85,20 @@ describe("DELETE /api/media/[id]（记录与文件的删除顺序）", () => {
     expect(calls, `实际顺序为 ${calls.join(" → ")}`).toEqual(["db-delete", "fs-rm"]);
   });
 
+  it("原图删除后一并清掉它的缩略图（避免派生缓存越攒越多）", async () => {
+    await DELETE(deleteRequest(), ctx());
+
+    expect(removeThumbsMock).toHaveBeenCalledWith("uploads", "abc.webp");
+  });
+
+  it("删记录失败时不清理缩略图（原图还在，缩略图仍是它的有效派生）", async () => {
+    deleteMock.mockRejectedValueOnce(new Error("database is locked"));
+
+    await DELETE(deleteRequest(), ctx());
+
+    expect(removeThumbsMock).not.toHaveBeenCalled();
+  });
+
   it("删记录失败时，磁盘文件必须保持原样（不能先删文件）", async () => {
     deleteMock.mockRejectedValueOnce(new Error("database is locked"));
 
@@ -98,5 +121,7 @@ describe("DELETE /api/media/[id]（记录与文件的删除顺序）", () => {
 
     expect(res.status).toBe(200);
     expect(calls).toEqual(["db-delete"]);
+    // 文件名不可信就绝不参与任何路径拼接，缩略图清理同样跳过
+    expect(removeThumbsMock).not.toHaveBeenCalled();
   });
 });

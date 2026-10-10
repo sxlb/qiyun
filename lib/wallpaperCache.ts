@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fetchFollowingSafeRedirects } from "@/lib/ssrf";
 import { contentTypeFromExt, isSafeFileName, newFileName } from "@/lib/uploads";
+import { clearThumbnails, removeThumbnails } from "@/lib/thumbnails";
 import type { WallpaperDevice } from "@/lib/external-api";
 import {
   CACHE_BUDGETS,
@@ -317,6 +318,8 @@ async function addWallpaperLocked(
           .catch(() => {
             /* 删除失败不影响主流程 */
           });
+        // 被替换掉的旧图，其缩略图一并清理
+        await removeThumbnails("wallpaper", oldest.fileName);
       }
     }
 
@@ -600,6 +603,8 @@ export async function deleteCachedWallpaper(fileName: string): Promise<boolean> 
     manifest.entries.splice(idx, 1);
     await saveManifest(manifest);
     await fs.rm(path.join(getWallpaperCacheDir(), fileName), { force: true }).catch(() => {});
+    // 缩略图是原图的派生缓存，原图删了就该一起清掉
+    await removeThumbnails("wallpaper", fileName);
     return true;
   });
 }
@@ -632,6 +637,8 @@ export async function clearWallpaperCache(): Promise<number> {
       names.map((name) => fs.rm(path.join(dir, name), { force: true }).catch(() => {}))
     );
     await saveManifest(emptyManifest());
+    // 缩略图整目录清掉：缓存已空，派生缓存没有保留意义
+    await clearThumbnails("wallpaper");
     return names.length;
   });
 }

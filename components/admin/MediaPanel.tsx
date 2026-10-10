@@ -21,6 +21,7 @@ import {
 import { PanelHeader, EmptyState } from "./panel";
 import { useDataFetcher } from "./useDataFetcher";
 import { groupCachedWallpapers, cacheTagLabel, type WallpaperCacheTag } from "@/lib/wallpaperTags";
+import { gridThumbAttrs } from "@/lib/mediaThumb";
 
 interface ImageAsset {
   id: number;
@@ -319,7 +320,7 @@ export default function MediaPanel() {
             {items.map((item) => (
               <div
                 key={item.id}
-                className="group overflow-hidden rounded-xl border border-border bg-background transition-all hover:shadow-md"
+                className="media-grid-cell group overflow-hidden rounded-xl border border-border bg-background transition-all hover:shadow-md"
               >
                 <button
                   onClick={() => setPreviewUrl(item.url)}
@@ -327,11 +328,16 @@ export default function MediaPanel() {
                   aria-label={`预览 ${item.fileName}`}
                 >
                   {/* 后台内部图像经 /api/uploads|wallpaper 动态路由提供，走 next/image 优化无公开收益且多一层回源风险，故用原生 img */}
+                  {/* gridThumbAttrs 让网格请求 ?w=320/640 的缩略图（含高分屏 2x），避免原图直出 */}
+                  {/* decoding=async 让解码在后台线程进行；fetchPriority=low 让缩略图给同页接口请求让路 ——
+                      否则一批大图会占满浏览器连接池，分页 / 筛选请求排在后面，表现为「图片没加载完就一直卡」 */}
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={item.url}
+                    {...gridThumbAttrs(item.url)}
                     alt={item.fileName}
                     loading="lazy"
+                    decoding="async"
+                    fetchPriority="low"
                     className="aspect-square w-full object-cover"
                   />
                   <span className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md bg-black/40 text-white opacity-0 backdrop-blur transition-opacity group-hover:opacity-100">
@@ -493,7 +499,7 @@ export default function MediaPanel() {
                         )}
                         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
                           {sub.items.map((item) => (
-                            <div key={item.fileName} className="overflow-hidden rounded-xl border border-border bg-background">
+                            <div key={item.fileName} className="media-grid-cell overflow-hidden rounded-xl border border-border bg-background">
                               <button
                                 onClick={() => setPreviewUrl(item.url)}
                                 disabled={!item.exists}
@@ -502,7 +508,14 @@ export default function MediaPanel() {
                               >
                                 {/* 缓存图片经 /api/wallpaper/file 动态路由提供，与媒体库同理不走 next/image */}
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src={item.url} alt={item.fileName} loading="lazy" className="aspect-square w-full object-cover" />
+                                <img
+                                  {...gridThumbAttrs(item.url)}
+                                  alt={item.fileName}
+                                  loading="lazy"
+                                  decoding="async"
+                                  fetchPriority="low"
+                                  className="aspect-square w-full object-cover"
+                                />
                                 {!item.exists && (
                                   <span className="absolute inset-0 flex items-center justify-center bg-black/60 p-2 text-center text-[11px] text-white">
                                     文件已不在磁盘上
@@ -581,6 +594,7 @@ export default function MediaPanel() {
             <img
               src={previewUrl}
               alt="媒体预览"
+              decoding="async"
               className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             />

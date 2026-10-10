@@ -33,6 +33,7 @@ import {
   cacheTagLabel,
   type WallpaperCacheTag,
 } from "@/lib/wallpaperTags";
+import { gridThumbAttrs } from "@/lib/mediaThumb";
 
 /** GET /api/media 返回的图片资产（与 MediaPanel 保持一致） */
 interface ImageAsset {
@@ -119,9 +120,10 @@ function MediaPickerDialog({
     void run(p);
   };
 
-  /** 网格单元：选中态高亮 + 勾选角标 */
+  /** 网格单元：选中态高亮 + 勾选角标；media-grid-cell 让视口外的单元跳过渲染与解码
+   *  （--compact：弹层格子只有图，占位高度比带文字的面板卡片小） */
   const cellClass = (active: boolean) =>
-    `group relative overflow-hidden rounded-lg border transition-all ${
+    `media-grid-cell media-grid-cell--compact group relative overflow-hidden rounded-lg border transition-all ${
       active ? "border-primary ring-2 ring-primary/40" : "border-border hover:border-primary/50"
     }`;
 
@@ -214,9 +216,11 @@ function MediaPickerDialog({
                       {/* 后台内部图像经 /api/uploads 动态路由提供，走 next/image 无公开收益，故用原生 img */}
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={item.url}
+                        {...gridThumbAttrs(item.url)}
                         alt={item.fileName}
                         loading="lazy"
+                        decoding="async"
+                        fetchPriority="low"
                         className="aspect-square w-full object-cover"
                       />
                       {active && (
@@ -279,9 +283,11 @@ function MediaPickerDialog({
                                 {/* 缓存图片经 /api/wallpaper/file 动态路由提供，与媒体库同理不走 next/image */}
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                 <img
-                                  src={item.url}
+                                  {...gridThumbAttrs(item.url)}
                                   alt={item.fileName}
                                   loading="lazy"
+                                  decoding="async"
+                                  fetchPriority="low"
                                   className="aspect-square w-full object-cover"
                                 />
                                 {!item.exists && (

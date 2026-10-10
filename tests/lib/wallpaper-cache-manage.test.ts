@@ -23,6 +23,20 @@ const fsMock = vi.hoisted(() => ({
 
 vi.mock("node:fs", () => ({ promises: fsMock }));
 
+/**
+ * 缩略图清理独立成桩：它同样走 node:fs，不隔离会让下面的 rm 调用计数把
+ * 「删原图」和「删派生缓存」混在一起，断言失去意义。
+ */
+const thumbsMock = vi.hoisted(() => ({
+  remove: vi.fn<(source: string, fileName: string) => Promise<void>>(async () => {}),
+  clear: vi.fn<(source: string) => Promise<void>>(async () => {}),
+}));
+
+vi.mock("@/lib/thumbnails", () => ({
+  removeThumbnails: thumbsMock.remove,
+  clearThumbnails: thumbsMock.clear,
+}));
+
 const { listCachedWallpapers, deleteCachedWallpaper, clearWallpaperCache } = await import(
   "@/lib/wallpaperCache"
 );
@@ -146,6 +160,15 @@ describe("deleteCachedWallpaper", () => {
 
     expect(fsMock.writeFile).not.toHaveBeenCalled();
     expect(fsMock.rm).not.toHaveBeenCalled();
+    expect(thumbsMock.remove).not.toHaveBeenCalled();
+  });
+
+  it("删除原图时一并清掉它的缩略图", async () => {
+    manifestWith([{ fileName: "a.jpg" }]);
+
+    await deleteCachedWallpaper("a.jpg");
+
+    expect(thumbsMock.remove).toHaveBeenCalledWith("wallpaper", "a.jpg");
   });
 
   it("拒绝不安全文件名，且完全不触碰文件系统", async () => {
@@ -156,6 +179,8 @@ describe("deleteCachedWallpaper", () => {
 
     expect(fsMock.writeFile).not.toHaveBeenCalled();
     expect(fsMock.rm).not.toHaveBeenCalled();
+    // 文件名不可信时绝不参与路径拼接，缩略图清理同样跳过
+    expect(thumbsMock.remove).not.toHaveBeenCalled();
   });
 
   it("文件已不在磁盘上时仍能把清单里的残留记录清掉", async () => {
@@ -189,12 +214,16 @@ describe("clearWallpaperCache", () => {
     // 归零后下次访问会重新预取一张，不会出现「清空后首页长时间没有背景」
     expect(written.lastRefreshAt).toBeNull();
     expect(written.lastDownloadAt).toBeNull();
+    // 缓存已空，缩略图整目录清掉，不留下无主的派生缓存
+    expect(thumbsMock.clear).toHaveBeenCalledWith("wallpaper");
   });
 
   it("本来就没有缓存时返回 0，不删任何文件", async () => {
     manifestWith([]);
     expect(await clearWallpaperCache()).toBe(0);
     expect(fsMock.rm).not.toHaveBeenCalled();
+    // 缩略图仍会清一次：上次异常可能在缩略图目录留下孤儿，清空应当清彻底
+    expect(thumbsMock.clear).toHaveBeenCalledWith("wallpaper");
   });
 
   it("以目录为准：清单被写坏成空时，磁盘上的孤儿文件仍会被清掉", async () => {

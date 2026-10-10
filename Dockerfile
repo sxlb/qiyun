@@ -75,6 +75,12 @@ COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 
 # 显式复制 bcryptjs：seed.js 在 Next standalone 之外运行，需确保依赖可用
 COPY --from=builder /app/node_modules/bcryptjs ./node_modules/bcryptjs
+# 显式复制 sharp 及其平台二进制：后台图片网格的缩略图依赖它（见 lib/thumbnails.ts）。
+# 实测 Next 16 的依赖追踪已能把 sharp 与 @img/sharp-<平台> 收进 standalone，这两行属于
+# 防御性兜底：平台包由运行期动态 require 选择，一旦某次升级漏收，线上缩略图会整片
+# 失败（静默回退原图、卡顿复现）。路径必然存在（sharp 已在 dependencies），不会阻断构建。
+COPY --from=builder /app/node_modules/sharp ./node_modules/sharp
+COPY --from=builder /app/node_modules/@img ./node_modules/@img
 COPY --from=builder /app/node_modules/.bin ./node_modules/.bin
 
 # 更新通道脚本：让「只拉镜像、没有发布包」的部署也能直接取出脚本
